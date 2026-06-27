@@ -1,5 +1,7 @@
 # Python POC Plan: Local Agentic Coding Environment Management
 
+> **Implementation status (2026):** The **Rust CLI** in `crates/` is the supported control plane. See [README.md](../README.md). Hyprland keybinds and Walker use `~/.local/share/lae/bin/lae`. Waybar uses the Rust **CFFI module** (`cffi/lae`) with Hyprland socket2 for instant updates. The Python package in `src/lae/` remains for deferred features (daemon IPC, Distrobox terminals, git clone on `task new`, window routing). Command names: prefer **`taskspace`** / **`workspace`**; **`context`** / **`desktop`** are legacy aliases in the Rust CLI.
+
 This plan expands on [ai-convo-notes.md](./ai-convo-notes.md) into an implementable proof-of-concept. The POC validates the core abstraction:
 
 **task > workspace/desktop > window**
@@ -52,13 +54,19 @@ with Hyprland as the presentation/routing layer and Distrobox as the per-task ex
 │  Host (Hyprland session)                                        │
 │                                                                 │
 │  ┌──────────────┐   hyprctl/IPC   ┌──────────────────────────┐ │
-│  │ Waybar module│◄───────────────►│  lae daemon (Python)      │ │
-│  │ fuzzel (P2)  │   UNIX socket   │  - task registry          │ │
-│  └──────────────┘                 │  - current task           │ │
-│                                   │  - window ↔ task map      │ │
-│  ┌──────────────┐   CLI          │  - hyprland event listener│ │
-│  │ lae CLI      │───────────────►└───────────┬──────────────┘ │
-│  └──────────────┘                            │                  │
+│  │ Waybar CFFI  │   socket2/IPC   │  lae CLI + lae-core (Rust) │ │
+│  │ cffi/lae     │◄───────────────►│  - task registry (SQLite)  │ │
+│  └──────────────┘                 │  - taskspace navigation    │ │
+│                                   │  - hyprland event listener │ │
+│  ┌──────────────┐   CLI          └───────────┬──────────────┘ │
+│  │ lae CLI      │───────────────►              │
+│  │ (Rust)       │                              │ (optional legacy)
+│  └──────────────┘                              ▼
+│                                   ┌──────────────────────────┐ │
+│                                   │  lae daemon (Python)     │ │
+│                                   │  - window router         │ │
+│                                   │  - distrobox terminal    │ │
+│                                   └──────────────────────────┘ │
 │                                              │ distrobox/podman │
 │  Hyprland workspaces (context-scoped nav)  ▼                  │
 │  ┌──────────┬─────────┬─────────┐  ┌──────────────────────┐   │
@@ -343,12 +351,38 @@ Shipped templates live in the repo under `share/`. **`lae install`** copies them
 
 Keep dependencies minimal for POC.
 
-### CLI surface (Phase 1)
+### CLI surface (Rust — current)
+
+```bash
+# Install (builds lae + Waybar CFFI, patches configs)
+LAE_WORKSPACE=$PWD cargo run -p lae-cli --release -- install all|hypr|waybar|status
+lae uninstall hypr|waybar
+lae doctor                         # verify bindings, Walker menu, Waybar CFFI, SUPER+1
+
+# Taskspace (alias: context)
+lae taskspace default|global|restore|toggle-global|current
+
+# Workspace navigation (alias: desktop) — Hyprland keybinds call these
+lae workspace go <1-10>|next|prev|goto <name>
+
+# Tasks (Rust: no --repo / no terminal yet)
+lae task new <name> [--no-switch]
+lae task list [--json]
+lae task switch|current|archive|menu|menu-json
+
+lae status
+lae windows [--task <id>]
+lae waybar refresh-cache|status|module
+```
+
+Legacy Python-only (see `src/lae/`): `lae daemon *`, `lae task new --repo`, `lae task terminal`.
+
+### CLI surface (Python POC — original plan)
 
 ```bash
 lae daemon start|stop|status     # background control plane
 
-# Context (which desktop set is navigable)
+# Context (which desktop set is navigable) — use taskspace in Rust
 lae context default              # switch to system default desktops (no task)
 lae context global               # escape hatch: all desktops
 lae context restore              # exit global, return to saved context

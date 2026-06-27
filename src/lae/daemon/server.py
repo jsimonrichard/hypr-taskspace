@@ -65,12 +65,12 @@ class DaemonServer:
             self.socket_path.unlink()
 
     def _waybar_cache_loop(self) -> None:
-        """Keep Waybar module cache warm so polls never stampede into refresh."""
+        """Keep module cache warm for exec fallback; CFFI module owns live updates."""
         while not self._stop.is_set():
             try:
                 from lae.waybar_cache import refresh_modules_cache
 
-                refresh_modules_cache(notify=True)
+                refresh_modules_cache(notify=False)
             except Exception:
                 pass
             self._stop.wait(1.0)

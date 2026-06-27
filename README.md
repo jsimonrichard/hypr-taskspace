@@ -1,96 +1,101 @@
 # lae — Local Agentic Environment
 
-Task-centric Hyprland + Distrobox control plane. Each task gets its own **taskspace** with named **workspaces** (`auth-fix-1`, `auth-fix-2`, …), an isolated Distrobox container, and a repo clone. The **default** taskspace uses plain Hyprland workspace names **`1`–`10`** for everyday host work.
+Task-centric Hyprland control plane. Each task gets its own **taskspace** with named **workspaces** (`auth-fix-1`, `auth-fix-2`, …). The **default** taskspace uses plain Hyprland workspace names **`1`–`10`** for everyday host work.
+
+The **Rust CLI** (`crates/lae-cli`) is the supported control plane. Hyprland keybinds and Walker menus call `~/.local/share/lae/bin/lae`, built and installed by `lae install hypr`.
 
 ## Prerequisites
 
 - Hyprland (Omarchy or similar)
-- Python ≥ 3.11
-- `distrobox` + Podman (optional but recommended for task containers)
+- **Rust toolchain** (stable) — [rustup](https://rustup.rs/)
 - Walker + Elephant (Omarchy ships these)
-- Git
+- `hyprctl` on PATH
+
+Optional (not required for the Rust CLI):
+
+- Python ≥ 3.11 — legacy Python package under `src/lae/` (daemon, distrobox, git clone); kept for future ports
+- `distrobox` + Podman — deferred; `lae task terminal` is not in the Rust CLI yet
 
 ---
 
 ## Install
 
-### 1. Install the CLI (editable)
+### 1. Build and install integrations
 
 From the repo root:
 
 ```bash
 cd ~/Desktop/local-agentic-env
-pip install -e .
+LAE_WORKSPACE=$PWD cargo run -p lae-cli --release -- install all --dry-run   # optional preview
+LAE_WORKSPACE=$PWD cargo run -p lae-cli --release -- install all
 ```
 
-This is an **editable install**: Python code changes under `src/lae/` take effect immediately. Re-run the integration steps below when files under `share/` change (keybinds, Waybar modules, Walker menu).
+This builds the Rust `lae` binary and Waybar CFFI module, copies Hyprland templates to `~/.local/share/lae/`, patches Waybar config, and reloads Hyprland, Walker, and Waybar.
 
-Verify the CLI:
+After install, the CLI used by keybinds lives at:
+
+```text
+~/.local/share/lae/bin/lae
+```
+
+Add that directory to your shell PATH if you want to run `lae` outside Hyprland exec contexts:
 
 ```bash
-lae --help
-lae status
+export PATH="$HOME/.local/share/lae/bin:$PATH"
+```
+
+Verify:
+
+```bash
+~/.local/share/lae/bin/lae --help
+~/.local/share/lae/bin/lae status
+lae doctor
 ```
 
 On first run, lae creates `~/.config/lae/config.toml` and `~/.local/share/lae/state.db`.
 
-### 2. Integrate with Hyprland, Walker, and Waybar
-
-One command installs everything and reloads Hyprland, Walker, and Waybar:
-
-```bash
-lae install all --dry-run   # optional: preview changes
-lae install all
-```
-
-Or install step by step (each step reloads what it changed):
-
-```bash
-lae install hypr --dry-run   # optional: preview changes
-lae install hypr
-
-lae install waybar --dry-run   # optional
-lae install waybar
-```
-
-Hyprland install copies templates to `~/.local/share/lae/`, adds a `source` line to your Hyprland config (with a full-file backup), and installs the Walker task menu. Waybar install patches your Waybar config (with backup).
-
-| Artifact | Location |
-|----------|----------|
-| Hyprland keybinds + Omarchy unbinds | `~/.local/share/lae/hypr/bindings.conf`, `unbind-omarchy.conf` |
-| `lae` wrapper (for keybinds / Walker) | `~/.local/share/lae/bin/lae` |
-| Walker menu helper | `~/.local/share/lae/bin/lae-task-menu-json` |
-| Elephant menu | `~/.config/elephant/menus/lae_tasks.lua` |
-| Config backup | `~/.local/share/lae/install/hypr/backups/<timestamp>/` |
-
-Waybar install replaces the stock workspace indicator with the current task name and scoped desktop buttons. Backs up `~/.config/waybar/config.jsonc` before patching.
-
-### 3. Check installation
+### 2. Check installation
 
 ```bash
 lae doctor
 lae install status
 ```
 
+| Artifact | Location |
+|----------|----------|
+| Rust CLI + Waybar module | `~/.local/share/lae/bin/lae`, `~/.local/share/lae/lib/liblae_waybar.so` |
+| Hyprland keybinds + Omarchy unbinds | `~/.local/share/lae/hypr/bindings.conf`, `unbind-omarchy.conf` |
+| Walker menu helper | `~/.local/share/lae/bin/lae-task-menu-json` |
+| Elephant menu | `~/.config/elephant/menus/lae_tasks.lua` |
+| Config backup | `~/.local/share/lae/install/hypr/backups/<timestamp>/` |
+
+Waybar uses a native **CFFI module** (`cffi/lae`) for instant taskspace/workspace indicators — no exec polling.
+
 ---
 
 ## Daily use
 
-### Create and enter a task
+### Create and switch tasks
 
 ```bash
-lae task new my-feature --repo git@github.com:you/project.git
+lae task new my-feature              # creates task dirs + Hyprland workspaces, switches in
+lae task new other --no-switch       # create without switching
+lae task list
 lae task switch my-feature
-lae task terminal          # Distrobox terminal (SUPER+T)
+lae task archive my-feature
 ```
 
-### Switch back to normal host desktops
+Task homes are created under `~/lae-tasks/<id>/` (notes + empty `repo/` directory). Git clone and Distrobox setup are **not** part of the Rust CLI yet.
+
+### Switch back to the default taskspace
 
 Open the **task menu** (Waybar task label, SUPER+Tab, or `lae task menu`) and choose **default**, or:
 
 ```bash
-lae context default        # SUPER+H
+lae taskspace default        # SUPER+H
 ```
+
+Legacy aliases still work: `lae context default`, `lae desktop go 1`, etc.
 
 ### Keybindings (after `lae install hypr`)
 
@@ -98,26 +103,38 @@ lae context default        # SUPER+H
 |--------|---------|
 | Task menu (Walker) | Click task name in Waybar, **SUPER+Tab**, or `lae task menu` |
 | Workspace 1–9 / 10 within current taskspace | **SUPER+1..9**, **SUPER+0** (= workspace 10) |
-| Task terminal (Distrobox) | **SUPER+T** |
 | Default / host taskspace | **SUPER+H** or Walker → **default** |
 | Global escape hatch (all Hyprland workspaces) | **SUPER+Escape** |
 | Host terminal | **SUPER+Return** (your existing Omarchy bind — unchanged) |
 
 SUPER+Space remains the normal Walker app launcher, not the task menu.
 
-Default taskspace supports **10** Hyprland workspaces (`1`–`10`). Waybar updates **immediately** on taskspace/workspace changes (signal-driven, not 1s polling). Task taskspaces still use 3 scoped workspaces. Set `workspace_count = 10` under `[default]` in `~/.config/lae/config.toml`.
+Default taskspace supports **10** Hyprland workspaces (`1`–`10`). Waybar updates on taskspace/workspace changes via Hyprland socket events. Task taskspaces use 3 scoped workspaces by default. Set `workspace_count = 10` under `[default]` in `~/.config/lae/config.toml`.
 
-CLI: `lae taskspace` and `lae workspace` (legacy aliases: `context`, `desktop`).
+### CLI reference (Rust)
+
+```text
+lae status | doctor | windows [--task ID]
+
+lae install all|hypr|waybar|status
+lae uninstall hypr|waybar
+
+lae taskspace default|global|restore|toggle-global|current   # alias: context
+lae workspace go|next|prev|goto                              # alias: desktop
+
+lae task new|list|switch|current|archive|menu|menu-json
+lae waybar refresh-cache|status|module
+```
 
 ---
 
 ## Update after pulling changes
 
 ```bash
-pip install -e .              # if dependencies changed
-lae install all               # refresh templates and reload everything
-lae daemon start              # keeps keybinds fast; Waybar uses a shared cache either way
+LAE_WORKSPACE=$PWD cargo run -p lae-cli --release -- install all
 ```
+
+Re-run when `share/` templates, Rust code, or Waybar integration changes.
 
 ---
 
@@ -125,14 +142,10 @@ lae daemon start              # keeps keybinds fast; Waybar uses a shared cache 
 
 Run in order. Integration uninstallers **restore your backed-up config files**; they do not delete task data unless you remove it manually.
 
-### 1. Remove Hyprland and Waybar integration
-
 ```bash
 lae uninstall waybar    # restores ~/.config/waybar/config.jsonc from backup
 lae uninstall hypr      # restores ~/.config/hypr/hyprland.conf from backup
 ```
-
-Each uninstall restores your backed-up config and reloads the affected component.
 
 To keep lae-owned files under `~/.local/share/lae/hypr/` for inspection:
 
@@ -140,37 +153,33 @@ To keep lae-owned files under `~/.local/share/lae/hypr/` for inspection:
 lae uninstall hypr --keep-files
 ```
 
-### 2. Remove the Python package
+Optional: remove task data and state (not done by uninstall):
 
 ```bash
-pip uninstall local-agentic-env
+rm -rf ~/.local/share/lae/state.db
+rm -rf ~/lae-tasks/
+rm -rf ~/.config/lae/
 ```
 
-### 3. Optional: remove task data and state
+---
 
-These are **not** removed by `lae uninstall` (your clones and state are preserved):
+## Legacy Python package
+
+The Python package in `src/lae/` is **not** required for daily use with the Rust CLI. It still contains:
+
+- Background **daemon** (UNIX socket IPC)
+- **`lae task terminal`** (Distrobox)
+- **`lae task new --repo`** (git clone)
+- Window routing on open/close events
+
+To run the legacy Python CLI (development only):
 
 ```bash
-rm -rf ~/.local/share/lae/state.db    # task registry
-rm -rf ~/lae-tasks/                   # repo clones and containers' home dirs
-rm -rf ~/.config/lae/                 # user config
+pip install -e .
+python -m lae.cli.main --help
 ```
 
-Distrobox containers (`lae-<task-id>`) must be removed separately if desired:
-
-```bash
-distrobox list
-distrobox rm lae-my-feature
-```
-
-### Manual rollback (if uninstall fails)
-
-Restore Hyprland config from the latest backup:
-
-```bash
-cp ~/.local/share/lae/install/hypr/backups/*/hyprland.conf ~/.config/hypr/hyprland.conf
-hyprctl reload
-```
+Do not mix pip-installed `lae` on PATH with `~/.local/share/lae/bin/lae` unless you know which one Hyprland is calling.
 
 ---
 
@@ -178,12 +187,19 @@ hyprctl reload
 
 **Walker task menu is empty**
 
-Elephant may not see `lae` on PATH. Re-run `lae install hypr` (reloads Walker automatically):
+Re-run install (reloads Walker automatically):
 
 ```bash
+LAE_WORKSPACE=$PWD cargo run -p lae-cli --release -- install hypr
 ~/.local/share/lae/bin/lae-task-menu-json   # should list default + tasks
 omarchy-restart-walker
 systemctl --user restart elephant.service   # if still empty
+```
+
+**Waybar taskspace indicator stuck or laggy**
+
+```bash
+LAE_WORKSPACE=$PWD cargo run -p lae-cli --release -- install waybar
 ```
 
 **Check overall health**

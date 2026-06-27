@@ -1,5 +1,7 @@
 # Task-Centric Agentic Coding UX Notes
 
+> **Note:** The active implementation is the **Rust CLI** (`crates/lae-cli`) and **Waybar CFFI module** (`crates/lae-waybar`). See [README.md](../README.md). These notes describe the original product vision; Python/distrobox pieces are deferred.
+
 ## Goal
 
 Explore a middle-ground agentic coding UX between:

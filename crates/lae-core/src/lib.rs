@@ -1,0 +1,49 @@
+//! Shared LAE library — models, config, registry, Hyprland, and Waybar export.
+
+pub mod config;
+pub mod context_sync;
+pub mod error;
+pub mod hyprland;
+pub mod hyprland_events;
+pub mod install;
+pub mod models;
+pub mod registry;
+pub mod service;
+pub mod taskspaces;
+pub mod trace;
+pub mod waybar;
+pub mod workspace_nav;
+pub mod workspaces;
+pub mod xdg;
+
+pub use config::{ensure_config, load_config, LaeConfig};
+pub use error::{LaeError, Result};
+pub use install::{
+    install_hypr, install_hypr_status, install_waybar, install_waybar_status, run_doctor_checks,
+    uninstall_hypr, uninstall_waybar, DoctorCheck, InstallHyprOptions, InstallWaybarOptions,
+};
+pub use models::{ContextMode, SessionState, Task, TaskStatus};
+pub use registry::Registry;
+pub use service::{MenuTask, TaskService};
+pub use workspace_nav::{
+    focus_last_workspace, restore_taskspace, set_taskspace, toggle_global, workspace_go,
+    workspace_goto_name, workspace_next, workspace_prev,
+};
+pub use context_sync::sync_from_workspace_name;
+pub use taskspaces::visible_default_workspace_count;
+pub use trace::{
+    analyze_recent_latency, clear_log, enable_for_process, enabled as trace_enabled, event as trace_event,
+    format_report, tail_raw, trace_path,
+};
+pub use workspaces::allowed_workspace_names;
+pub use workspaces::workspace_display_label;
+pub use waybar::{
+    build_all_modules, build_all_modules_for_active_name, fetch_occupied_indices,
+    fetch_occupied_names, read_waybar_modules_cache, refresh_modules_cache, write_modules_cache,
+    workspace_label, workspace_module_key, WaybarModuleJson, WaybarModulesCache,
+    ACTIVE_WORKSPACE_ICON, WAYBAR_MODULE_COUNT, WAYBAR_SIGNAL,
+};
+pub use hyprland_events::{
+    diagnose_socket2, is_full_refresh_event, is_monitor_focus_event, is_workspace_focus_event,
+    parse_focusedmon_v2, parse_workspace_v2, socket2_path, HyprlandEventListener,
+};

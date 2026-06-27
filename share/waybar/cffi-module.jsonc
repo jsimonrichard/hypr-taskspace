@@ -1,0 +1,5 @@
+{
+  "cffi/lae": {
+    "module_path": "~/.local/share/lae/lib/liblae_waybar.so"
+  }
+}

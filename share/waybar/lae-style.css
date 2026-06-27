@@ -1,4 +1,42 @@
 /* LAE Waybar styles — appended to waybar/style.css by lae install waybar */
+
+/* CFFI module (cffi/lae) — root must be named cffi-lae in lib.rs */
+#cffi-lae #lae-task {
+  padding: 0 4px 0 6px;
+  margin-right: 2px;
+}
+#cffi-lae #lae-task.global {
+  color: #fab387;
+}
+#cffi-lae #lae-task.task {
+  color: #89b4fa;
+}
+#cffi-lae #lae-task.default {
+  color: inherit;
+}
+
+/* Fallback if inline CssProvider is unavailable */
+#cffi-lae #lae-workspaces button {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 0 6px;
+  margin: 0 1.5px;
+  min-width: 9px;
+  min-height: 0;
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+}
+#cffi-lae #lae-workspaces button label {
+  padding: 0;
+  margin: 0;
+}
+#cffi-lae #lae-workspaces button.empty {
+  opacity: 0.5;
+}
+
+/* Legacy exec modules (custom/lae-workspace-*) */
 #custom-lae-task {
   padding: 0 8px;
   margin-right: 4px;

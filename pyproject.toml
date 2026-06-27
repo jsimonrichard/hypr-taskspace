@@ -1,7 +1,7 @@
 [project]
 name = "local-agentic-env"
 version = "0.1.0"
-description = "Local Agentic Environment — task-centric Hyprland + Distrobox control plane"
+description = "Local Agentic Environment — legacy Python control plane (Rust CLI in crates/lae-cli is primary)"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
