@@ -21,9 +21,13 @@ def restart_walker() -> bool:
 
 
 def restart_waybar() -> bool:
-    if not sp.which("omarchy-restart-waybar"):
+    if sp.which("omarchy-restart-waybar"):
+        sp.run(["omarchy-restart-waybar"], check=False)
+        return True
+    if not sp.which("waybar"):
         return False
-    sp.run(["omarchy-restart-waybar"], check=False)
+    sp.run(["pkill", "-9", "-x", "waybar"], check=False)
+    sp.run(["setsid", "waybar"], check=False)
     return True
 
 

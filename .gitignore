@@ -1,10 +1,4 @@
-# Python-generated files
+/target/
+**/*.rs.bk
 __pycache__/
-*.py[oc]
-build/
-dist/
-wheels/
-*.egg-info
-
-# Virtual environments
-.venv
+*.py[cod]

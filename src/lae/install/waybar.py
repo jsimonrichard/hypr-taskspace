@@ -60,6 +60,66 @@ def _is_lae_module(name: str) -> bool:
     )
 
 
+def _config_has_lae(data: dict) -> bool:
+    if any(_is_lae_module(m) for m in data.get("modules-left", [])):
+        return True
+    return any(
+        key == LAE_TASK_MODULE
+        or key.startswith(("custom/lae-desktop-", "custom/lae-workspace-"))
+        for key in data
+    )
+
+
+def _pristine_backup_dir(cfg: LaeConfig) -> Path:
+    return cfg.install_hypr_share_dir / "install" / "waybar" / "backups" / "pristine"
+
+
+def _seed_pristine_from_oldest_backup(cfg: LaeConfig) -> bool:
+    """One-time bootstrap when pristine was never saved (e.g. reinstall overwrote backups)."""
+    pristine = _pristine_backup_dir(cfg)
+    if (pristine / "config.jsonc").exists():
+        return False
+
+    backups_root = cfg.install_hypr_share_dir / "install" / "waybar" / "backups"
+    if not backups_root.is_dir():
+        return False
+
+    candidates = sorted(
+        d
+        for d in backups_root.iterdir()
+        if d.is_dir() and d.name not in {"pristine", "original"}
+    )
+    for backup_dir in candidates:
+        config_backup = backup_dir / "config.jsonc"
+        if not config_backup.is_file():
+            continue
+        try:
+            data = _load_jsonc(config_backup)
+        except (json.JSONDecodeError, OSError):
+            continue
+        if _config_has_lae(data):
+            continue
+        pristine.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(config_backup, pristine / "config.jsonc")
+        style_backup = backup_dir / "style.css"
+        if style_backup.is_file():
+            shutil.copy2(style_backup, pristine / "style.css")
+        return True
+    return False
+
+
+def _ensure_pristine_backup(
+    config_path: Path, style_path: Path, cfg: LaeConfig
+) -> None:
+    pristine = _pristine_backup_dir(cfg)
+    if (pristine / config_path.name).exists():
+        return
+    pristine.mkdir(parents=True, exist_ok=True)
+    backup.backup_file(config_path, pristine)
+    if style_path.is_file():
+        backup.backup_file(style_path, pristine)
+
+
 def plan_install(cfg: LaeConfig | None = None) -> WaybarInstallPlan:
     cfg = cfg or load_config()
     share_src = _repo_share()
@@ -124,6 +184,65 @@ def _patch_style(config_dir: Path, share_dest: Path) -> None:
     style_path.write_text(content + f"\n\n{marker}\n{snippet}\n")
 
 
+def _unpatch_config(config_path: Path) -> bool:
+    """Remove lae modules and put hyprland/workspaces back on the bar."""
+    if not config_path.is_file():
+        return False
+
+    data = _load_jsonc(config_path)
+    changed = False
+
+    for key in list(data.keys()):
+        if key == LAE_TASK_MODULE or key.startswith(
+            ("custom/lae-desktop-", "custom/lae-workspace-")
+        ):
+            del data[key]
+            changed = True
+
+    modules_left = [m for m in data.get("modules-left", []) if not _is_lae_module(m)]
+    if "hyprland/workspaces" not in modules_left:
+        insert_at = (
+            1
+            if modules_left and modules_left[0].startswith("custom/omarchy")
+            else 0
+        )
+        modules_left.insert(insert_at, "hyprland/workspaces")
+        changed = True
+
+    if modules_left != data.get("modules-left"):
+        data["modules-left"] = modules_left
+        changed = True
+
+    if changed:
+        config_path.write_text(_dump_jsonc(data))
+    return changed
+
+
+def _unpatch_style(config_dir: Path) -> bool:
+    style_path = config_dir / "style.css"
+    marker = "/* lae-waybar */"
+    if not style_path.is_file():
+        return False
+    content = style_path.read_text()
+    if marker not in content:
+        return False
+    style_path.write_text(content[: content.index(marker)].rstrip() + "\n")
+    return True
+
+
+def _restore_from_pristine(cfg: LaeConfig, config_path: Path) -> bool:
+    pristine = _pristine_backup_dir(cfg)
+    config_backup = pristine / config_path.name
+    if not config_backup.is_file():
+        return False
+    backup.restore_file(config_backup, config_path)
+    style_backup = pristine / "style.css"
+    style_path = config_path.parent / "style.css"
+    if style_backup.is_file() and style_path.parent.exists():
+        backup.restore_file(style_backup, style_path)
+    return True
+
+
 def install_waybar(*, dry_run: bool = False, cfg: LaeConfig | None = None) -> WaybarInstallPlan:
     cfg = cfg or load_config()
     plan = plan_install(cfg)
@@ -136,10 +255,13 @@ def install_waybar(*, dry_run: bool = False, cfg: LaeConfig | None = None) -> Wa
         shutil.copy2(src, dest)
 
     if plan.config_path.exists():
-        backup.backup_file(plan.config_path, plan.backup_dir)
         style_path = plan.config_path.parent / "style.css"
-        if style_path.exists():
-            backup.backup_file(style_path, plan.backup_dir)
+        data = _load_jsonc(plan.config_path)
+        if not _config_has_lae(data):
+            backup.backup_file(plan.config_path, plan.backup_dir)
+            if style_path.exists():
+                backup.backup_file(style_path, plan.backup_dir)
+            _ensure_pristine_backup(plan.config_path, style_path, cfg)
         _patch_config(plan.config_path)
         _patch_style(plan.config_path.parent, share_dest)
     else:
@@ -167,20 +289,37 @@ def install_waybar(*, dry_run: bool = False, cfg: LaeConfig | None = None) -> Wa
 
 def uninstall_waybar(*, cfg: LaeConfig | None = None) -> list[str]:
     cfg = cfg or load_config()
+    config_path = _default_waybar_config()
     m = manifest.load_manifest(cfg.install_hypr_share_dir, "waybar")
-    if m is None:
-        raise RuntimeError("No lae Waybar installation found")
 
-    backup_root = Path(m.backup_dir)
-    for entry in m.user_files_backed_up:
-        src = backup_root / entry["backup"]
-        dest = Path(entry["path"]).expanduser()
-        if src.exists():
-            backup.restore_file(src, dest)
+    _seed_pristine_from_oldest_backup(cfg)
+
+    restored = _restore_from_pristine(cfg, config_path)
+    if not restored and m is not None:
+        backup_root = Path(m.backup_dir)
+        for entry in m.user_files_backed_up:
+            src = backup_root / entry["backup"]
+            dest = Path(entry["path"]).expanduser()
+            if src.is_file():
+                backup.restore_file(src, dest)
+
+    if config_path.is_file():
+        _unpatch_config(config_path)
+    _unpatch_style(config_path.parent)
 
     manifest_path = cfg.install_hypr_share_dir / "install" / "waybar" / "manifest.json"
     if manifest_path.exists():
         manifest_path.unlink()
+
+    if m is None and not restored:
+        has_lae = False
+        if config_path.is_file():
+            try:
+                has_lae = _config_has_lae(_load_jsonc(config_path))
+            except (json.JSONDecodeError, OSError):
+                pass
+        if not has_lae:
+            raise RuntimeError("No lae Waybar installation found")
 
     return apply_after_waybar()
 
