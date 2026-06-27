@@ -1,0 +1,55 @@
+/* LAE Waybar styles — appended to waybar/style.css by lae install waybar */
+#custom-lae-task {
+  padding: 0 8px;
+  margin-right: 4px;
+}
+#custom-lae-task.global {
+  color: #fab387;
+}
+#custom-lae-task.task {
+  color: #89b4fa;
+}
+#custom-lae-workspace-1,
+#custom-lae-workspace-2,
+#custom-lae-workspace-3,
+#custom-lae-workspace-4,
+#custom-lae-workspace-5,
+#custom-lae-workspace-6,
+#custom-lae-workspace-7,
+#custom-lae-workspace-8,
+#custom-lae-workspace-9,
+#custom-lae-workspace-10 {
+  all: initial;
+  padding: 0 6px;
+  margin: 0 1.5px;
+  min-width: 9px;
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+}
+#custom-lae-workspace-1.hidden,
+#custom-lae-workspace-2.hidden,
+#custom-lae-workspace-3.hidden,
+#custom-lae-workspace-4.hidden,
+#custom-lae-workspace-5.hidden,
+#custom-lae-workspace-6.hidden,
+#custom-lae-workspace-7.hidden,
+#custom-lae-workspace-8.hidden,
+#custom-lae-workspace-9.hidden,
+#custom-lae-workspace-10.hidden {
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+#custom-lae-workspace-1.empty,
+#custom-lae-workspace-2.empty,
+#custom-lae-workspace-3.empty,
+#custom-lae-workspace-4.empty,
+#custom-lae-workspace-5.empty,
+#custom-lae-workspace-6.empty,
+#custom-lae-workspace-7.empty,
+#custom-lae-workspace-8.empty,
+#custom-lae-workspace-9.empty,
+#custom-lae-workspace-10.empty {
+  opacity: 0.5;
+}

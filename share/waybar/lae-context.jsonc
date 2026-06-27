@@ -1,0 +1,8 @@
+// LAE Waybar modules — installed via `lae install waybar`
+// Replaces hyprland/workspaces with task-scoped desktop indicators.
+//
+// Modules:
+//   custom/lae-task       — current task name (click: task menu, right-click: default)
+//   custom/lae-desktop-1  — desktop 1 within current context (SUPER+1 equivalent)
+//   custom/lae-desktop-2  — desktop 2
+//   custom/lae-desktop-3  — desktop 3
