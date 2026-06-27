@@ -4,31 +4,33 @@ from __future__ import annotations
 
 import typer
 
-from lae.cli import context, daemon, desktop, install, task, taskspace, waybar, workspace
-
 app = typer.Typer(
     name="lae",
     help="Local Agentic Environment — task-centric Hyprland + Distrobox control plane.",
     no_args_is_help=True,
 )
 
-app.add_typer(taskspace.app, name="taskspace")
-app.add_typer(context.app, name="context", hidden=True)
-app.add_typer(daemon.app, name="daemon")
-app.add_typer(workspace.app, name="workspace")
-app.add_typer(desktop.app, name="desktop", hidden=True)
-app.add_typer(task.app, name="task")
-app.add_typer(install.app, name="install")
-app.add_typer(waybar.app, name="waybar")
+uninstall_app = typer.Typer(help="Remove lae integrations.")
+
+
+def _register_commands() -> None:
+    """Import subcommand modules only when the CLI starts."""
+    from lae.cli import context, daemon, desktop, install, task, taskspace, waybar, workspace
+
+    app.add_typer(taskspace.app, name="taskspace")
+    app.add_typer(context.app, name="context", hidden=True)
+    app.add_typer(daemon.app, name="daemon")
+    app.add_typer(workspace.app, name="workspace")
+    app.add_typer(desktop.app, name="desktop", hidden=True)
+    app.add_typer(task.app, name="task")
+    app.add_typer(install.app, name="install")
+    app.add_typer(waybar.app, name="waybar")
+    app.add_typer(uninstall_app, name="uninstall")
 
 
 @app.callback()
 def _root() -> None:
     """Local Agentic Environment control plane."""
-
-
-uninstall_app = typer.Typer(help="Remove lae integrations.")
-app.add_typer(uninstall_app, name="uninstall")
 
 
 @uninstall_app.command("hypr")
@@ -111,6 +113,7 @@ def windows(
 @app.command()
 def doctor() -> None:
     """Verify lae installation and daemon health."""
+    from lae.daemon.server import is_daemon_running
     from lae.install.hypr import doctor_checks as hypr_doctor
     from lae.install.waybar import install_status as waybar_status
 
@@ -120,6 +123,12 @@ def doctor() -> None:
         typer.echo(f"[{mark}] {label}: {detail}")
         if not passed:
             ok = False
+
+    if not is_daemon_running():
+        typer.echo(
+            "[WARN] Daemon not running — Waybar will refresh a shared cache "
+            "instead of per-poll DB writes; run `lae daemon start` for best performance"
+        )
 
     w = waybar_status()
     wb_ok = w["lae_modules_present"]
@@ -134,6 +143,7 @@ def doctor() -> None:
 
 
 def main() -> None:
+    _register_commands()
     app()
 
 

@@ -116,6 +116,7 @@ CLI: `lae taskspace` and `lae workspace` (legacy aliases: `context`, `desktop`).
 ```bash
 pip install -e .              # if dependencies changed
 lae install all               # refresh templates and reload everything
+lae daemon start              # keeps keybinds fast; Waybar uses a shared cache either way
 ```
 
 ---

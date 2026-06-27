@@ -10,6 +10,28 @@ import typer
 app = typer.Typer(help="Waybar module helpers.", hidden=True)
 
 
+def _module_key(name: str, index: int | None = None) -> str:
+    if name in ("task",):
+        return "task"
+    if name in ("workspace", "desktop") and index is not None:
+        return f"workspace-{index}"
+    raise typer.BadParameter(f"Unknown waybar target: {name}")
+
+
+def _emit(module: str) -> None:
+    from lae.waybar_cache import emit_module
+
+    sys.stdout.write(json.dumps(emit_module(module), separators=(",", ":")))
+
+
+@app.command("refresh-cache")
+def refresh_cache() -> None:
+    """Rebuild Waybar module cache (one heavy pass for all modules)."""
+    from lae.waybar_cache import refresh_modules_cache
+
+    refresh_modules_cache()
+
+
 @app.command("task")
 def waybar_task() -> None:
     """JSON for custom/lae-task module."""
@@ -30,17 +52,6 @@ def waybar_desktop(
 ) -> None:
     """Deprecated alias for waybar workspace."""
     _emit(f"workspace-{index}")
-
-
-def _emit(module: str) -> None:
-    from lae.daemon.service import TaskService
-    from lae.daemon.waybar_export import module_json
-
-    service = TaskService()
-    state = service.get_state()
-    payload = module_json(state, module)
-    service.save_state(state)
-    sys.stdout.write(json.dumps(payload))
 
 
 def main() -> None:

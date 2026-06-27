@@ -16,8 +16,9 @@ ACTIVE_WORKSPACE_ICON = "󱓻"
 WAYBAR_MODULE_COUNT = 10
 
 
-def build_waybar_state(state: SessionState) -> dict[str, Any]:
-    context_sync.sync_from_active_workspace(state)
+def build_waybar_data(state: SessionState, *, sync: bool = True) -> dict[str, Any]:
+    if sync:
+        context_sync.sync_from_active_workspace(state)
     allowed = workspace_nav.allowed_workspaces(state)
     active = hyprland.get_active_workspace() if hyprland.available() else None
     active_name = active.name if active else None
@@ -63,18 +64,29 @@ def occupied_relative_indices(allowed: list[str]) -> set[int]:
     return occupied
 
 
+def build_all_modules(state: SessionState, *, sync: bool = True) -> dict[str, dict[str, Any]]:
+    data = build_waybar_data(state, sync=sync)
+    modules: dict[str, dict[str, Any]] = {"task": _task_module(data)}
+    for index in range(1, WAYBAR_MODULE_COUNT + 1):
+        modules[f"workspace-{index}"] = _workspace_module(data, index)
+    return modules
+
+
 def write_waybar_file(state: SessionState) -> None:
     try:
         runtime = xdg.lae_runtime_dir()
         runtime.mkdir(parents=True, exist_ok=True)
-        data = build_waybar_state(state)
+        data = build_waybar_data(state, sync=True)
         xdg.lae_waybar_file().write_text(json.dumps(data) + "\n")
+        from lae.waybar_cache import write_modules_cache
+
+        write_modules_cache(build_all_modules(state, sync=False))
     except RuntimeError:
         pass
 
 
 def module_json(state: SessionState, module: str) -> dict[str, Any]:
-    data = build_waybar_state(state)
+    data = build_waybar_data(state, sync=True)
 
     if module == "task":
         return _task_module(data)
@@ -85,6 +97,10 @@ def module_json(state: SessionState, module: str) -> dict[str, Any]:
         index = int(module.split("-", 1)[1])
         return _workspace_module(data, index)
     raise ValueError(f"Unknown waybar module: {module}")
+
+
+# Deprecated alias
+build_waybar_state = build_waybar_data
 
 
 def _task_module(data: dict[str, Any]) -> dict[str, Any]:
@@ -114,7 +130,9 @@ def _workspace_module(data: dict[str, Any], index: int) -> dict[str, Any]:
         return {"text": "", "class": "hidden"}
     if index > data["workspace_count"]:
         return {"text": "", "class": "hidden"}
-    if index > data["visible_workspace_count"]:
+
+    is_active = data["active_workspace"] == index
+    if index > data["visible_workspace_count"] and not is_active:
         return {"text": "", "class": "hidden"}
 
     workspace_name = (
@@ -122,7 +140,6 @@ def _workspace_module(data: dict[str, Any], index: int) -> dict[str, Any]:
         if index <= len(data["workspaces"])
         else str(index)
     )
-    is_active = data["active_workspace"] == index
     occupied = set(data.get("occupied_workspace_indices", []))
     classes: list[str] = []
     if is_active:

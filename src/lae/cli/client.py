@@ -4,12 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from lae.daemon.server import daemon_request, is_daemon_running
-from lae.daemon.service import TaskService
-
 
 def call(method: str, params: dict[str, Any] | None = None) -> Any:
     params = params or {}
+    from lae.daemon.server import daemon_request, is_daemon_running
+
     if is_daemon_running():
         response = daemon_request(method, params)
         if not response.get("ok"):
@@ -20,9 +19,9 @@ def call(method: str, params: dict[str, Any] | None = None) -> Any:
 
 
 def _direct(method: str, params: dict[str, Any]) -> Any:
-    from lae.daemon import workspace_nav
     from lae.core.models import ContextMode
-
+    from lae.daemon import workspace_nav
+    from lae.daemon.service import TaskService
     service = TaskService()
 
     if method == "get_state":

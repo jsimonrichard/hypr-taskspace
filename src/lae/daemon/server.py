@@ -37,6 +37,11 @@ class DaemonServer:
         self._listener = HyprlandEventListener(handler)
         self._listener.start()
 
+        self._cache_thread = threading.Thread(
+            target=self._waybar_cache_loop, name="lae-waybar-cache", daemon=True
+        )
+        self._cache_thread.start()
+
         xdg.lae_runtime_dir().mkdir(parents=True, exist_ok=True)
         if self.socket_path.exists():
             self.socket_path.unlink()
@@ -58,6 +63,17 @@ class DaemonServer:
             self._listener.stop()
         if self.socket_path.exists():
             self.socket_path.unlink()
+
+    def _waybar_cache_loop(self) -> None:
+        """Keep Waybar module cache warm so polls never stampede into refresh."""
+        while not self._stop.is_set():
+            try:
+                from lae.waybar_cache import refresh_modules_cache
+
+                refresh_modules_cache()
+            except Exception:
+                pass
+            self._stop.wait(1.0)
 
     def _serve(self, server: socket.socket) -> None:
         server.settimeout(1.0)

@@ -11,7 +11,7 @@ from lae.core.config import LaeConfig, load_config
 from lae.install import backup, manifest
 from lae.install.reload import apply_after_hypr
 from lae.install.reload import apply_after_hypr
-from lae.install.wrapper import bin_dir, write_lae_wrapper, write_menu_helper
+from lae.install.wrapper import bin_dir, write_lae_wrapper, write_menu_helper, write_waybar_helper
 from lae.integrations import hyprland
 from lae.util import xdg
 
@@ -102,6 +102,7 @@ def install_hypr(*, dry_run: bool = False, cfg: LaeConfig | None = None) -> Inst
 
     elephant_installed = _install_elephant_menu(cfg)
     write_menu_helper(cfg)
+    write_waybar_helper(cfg)
     lae_wrapper = write_lae_wrapper(cfg)
 
     config_path = plan.config_path
@@ -125,6 +126,7 @@ def install_hypr(*, dry_run: bool = False, cfg: LaeConfig | None = None) -> Inst
     templates_installed.extend(elephant_installed)
     templates_installed.append({"generated": str(lae_wrapper)})
     templates_installed.append({"generated": str(bin_dir(cfg) / "lae-task-menu-json")})
+    templates_installed.append({"generated": str(bin_dir(cfg) / "lae-waybar-json")})
 
     m = manifest.Manifest(
         integration="hypr",
