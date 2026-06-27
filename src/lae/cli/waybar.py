@@ -29,7 +29,7 @@ def refresh_cache() -> None:
     """Rebuild Waybar module cache (one heavy pass for all modules)."""
     from lae.waybar_cache import refresh_modules_cache
 
-    refresh_modules_cache()
+    refresh_modules_cache(notify=True)
 
 
 @app.command("task")

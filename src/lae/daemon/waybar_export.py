@@ -80,7 +80,7 @@ def write_waybar_file(state: SessionState) -> None:
         xdg.lae_waybar_file().write_text(json.dumps(data) + "\n")
         from lae.waybar_cache import write_modules_cache
 
-        write_modules_cache(build_all_modules(state, sync=False))
+        write_modules_cache(build_all_modules(state, sync=False), notify=True)
     except RuntimeError:
         pass
 

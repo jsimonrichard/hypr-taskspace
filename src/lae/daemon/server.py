@@ -70,7 +70,7 @@ class DaemonServer:
             try:
                 from lae.waybar_cache import refresh_modules_cache
 
-                refresh_modules_cache()
+                refresh_modules_cache(notify=True)
             except Exception:
                 pass
             self._stop.wait(1.0)

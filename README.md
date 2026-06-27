@@ -105,7 +105,7 @@ lae context default        # SUPER+H
 
 SUPER+Space remains the normal Walker app launcher, not the task menu.
 
-Default taskspace supports **10** Hyprland workspaces (`1`–`10`). Waybar shows slots **1–5** by default and extends through occupied or active workspaces up to 10. Task taskspaces still use 3 scoped workspaces. Set `workspace_count = 10` under `[default]` in `~/.config/lae/config.toml`.
+Default taskspace supports **10** Hyprland workspaces (`1`–`10`). Waybar updates **immediately** on taskspace/workspace changes (signal-driven, not 1s polling). Task taskspaces still use 3 scoped workspaces. Set `workspace_count = 10` under `[default]` in `~/.config/lae/config.toml`.
 
 CLI: `lae taskspace` and `lae workspace` (legacy aliases: `context`, `desktop`).
 

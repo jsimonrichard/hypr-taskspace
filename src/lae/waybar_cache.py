@@ -61,15 +61,21 @@ def read_cached_module(module: str, *, allow_stale: bool = True) -> dict[str, An
     return payload if isinstance(payload, dict) else None
 
 
-def write_modules_cache(modules: dict[str, dict[str, Any]]) -> None:
+def write_modules_cache(
+    modules: dict[str, dict[str, Any]], *, notify: bool = False
+) -> None:
     runtime = _runtime_dir()
     runtime.mkdir(parents=True, exist_ok=True)
     tmp = modules_cache_path().with_suffix(".tmp")
     tmp.write_text(json.dumps(modules, separators=(",", ":")) + "\n")
     tmp.replace(modules_cache_path())
+    if notify:
+        from lae.integrations.waybar_notify import notify_waybar
+
+        notify_waybar()
 
 
-def refresh_modules_cache() -> bool:
+def refresh_modules_cache(*, notify: bool = False) -> bool:
     """Rebuild all Waybar module JSON in one pass. Returns True if state changed."""
     from lae.daemon import context_sync
     from lae.daemon.service import TaskService
@@ -78,7 +84,10 @@ def refresh_modules_cache() -> bool:
     service = TaskService()
     state = service.get_state()
     changed = context_sync.sync_from_active_workspace(state)
-    write_modules_cache(build_all_modules(state, sync=False))
+    modules = build_all_modules(state, sync=False)
+    previous = read_full_cache(allow_stale=True)
+    if modules != previous:
+        write_modules_cache(modules, notify=notify)
     if changed:
         service.save_state(state)
     return changed
