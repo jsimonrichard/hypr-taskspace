@@ -13,6 +13,7 @@ use crate::install::reload;
 use crate::xdg::{config_home, ensure_parent, expand, lae_data_dir};
 
 pub const CFFI_MODULE: &str = "cffi/lae";
+const HYPR_WORKSPACES_MODULE: &str = "hyprland/workspaces";
 const LAE_TASK_MODULE: &str = "custom/lae-task";
 const STYLE_MARKER: &str = "/* lae-waybar */";
 const LIB_NAME: &str = "liblae_waybar.so";
@@ -136,7 +137,10 @@ pub fn install_waybar(cfg: &LaeConfig, options: &InstallWaybarOptions) -> Result
     ];
     m.user_files_modified = vec![json!({
         "path": plan.config_path,
-        "actions": [{"type": "install_cffi_module", "with": CFFI_MODULE}]
+        "actions": [
+            {"type": "remove", "module": HYPR_WORKSPACES_MODULE},
+            {"type": "install_cffi_module", "with": CFFI_MODULE},
+        ]
     })];
     manifest::save_manifest(&cfg.install_hypr_share_dir, &m)?;
 
@@ -332,10 +336,11 @@ fn patch_config(config_path: &Path, module_path: &Path) -> Result<()> {
     })?;
 
     remove_lae_keys(&mut data);
+    data.remove(HYPR_WORKSPACES_MODULE);
 
     let mut left = modules_left_map(&data)
         .into_iter()
-        .filter(|m| !is_lae_module(m))
+        .filter(|m| !is_lae_module(m) && !is_replaced_workspace_module(m))
         .collect::<Vec<_>>();
 
     let insert_at = if left.first().is_some_and(|m| m.starts_with("custom/omarchy")) {
@@ -383,13 +388,13 @@ fn unpatch_config(config_path: &Path) -> Result<bool> {
         .filter(|m| !is_lae_module(m))
         .collect::<Vec<_>>();
 
-    if !left.iter().any(|m| m == "hyprland/workspaces") {
+    if !left.iter().any(|m| m == HYPR_WORKSPACES_MODULE) {
         let insert_at = if left.first().is_some_and(|m| m.starts_with("custom/omarchy")) {
             1
         } else {
             0
         };
-        left.insert(insert_at, "hyprland/workspaces".into());
+        left.insert(insert_at, HYPR_WORKSPACES_MODULE.into());
         changed = true;
     }
 
@@ -561,6 +566,10 @@ fn is_lae_module(name: &str) -> bool {
         || name.starts_with("custom/lae-workspace-")
 }
 
+fn is_replaced_workspace_module(name: &str) -> bool {
+    name == HYPR_WORKSPACES_MODULE
+}
+
 fn config_has_lae(data: &Value) -> bool {
     if modules_left(data).iter().any(|m| is_lae_module(m)) {
         return true;
@@ -602,5 +611,27 @@ mod tests {
         assert!(is_lae_module(CFFI_MODULE));
         assert!(is_lae_module("custom/lae-workspace-1"));
         assert!(!is_lae_module("hyprland/workspaces"));
+    }
+
+    #[test]
+    fn patch_config_removes_hyprland_workspaces() {
+        let mut data = Map::new();
+        data.insert(
+            "modules-left".into(),
+            json!(["custom/omarchy", HYPR_WORKSPACES_MODULE, "clock"]),
+        );
+        data.insert(HYPR_WORKSPACES_MODULE.into(), json!({"format": "{name}"}));
+
+        remove_lae_keys(&mut data);
+        data.remove(HYPR_WORKSPACES_MODULE);
+
+        let left: Vec<String> = modules_left_map(&data)
+            .into_iter()
+            .filter(|m| !is_lae_module(m) && !is_replaced_workspace_module(m))
+            .collect();
+
+        assert_eq!(left, vec!["custom/omarchy".to_string(), "clock".to_string()]);
+        assert!(data.get(HYPR_WORKSPACES_MODULE).is_none());
+        assert!(left.iter().all(|m| !is_replaced_workspace_module(m)));
     }
 }
