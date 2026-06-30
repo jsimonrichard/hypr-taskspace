@@ -6,36 +6,54 @@ use crate::workspaces::{
     allowed_workspace_names, default_taskspace_workspace_names, task_workspace_names,
 };
 
+pub fn workspace_name_for_relative(state: &SessionState, relative: i32) -> Option<String> {
+    relative_to_name(state, relative)
+}
+
+pub fn remember_workspace(state: &mut SessionState, relative: i32) {
+    state
+        .last_workspace
+        .insert(state.taskspace_key(), relative);
+}
+
+pub fn workspace_next_relative(state: &SessionState) -> Option<i32> {
+    let names = allowed_workspace_names(state);
+    if names.is_empty() {
+        return None;
+    }
+    match active_relative(state) {
+        Some(current) => Some((current % names.len() as i32) + 1),
+        None => Some(1),
+    }
+}
+
+pub fn workspace_prev_relative(state: &SessionState) -> Option<i32> {
+    let names = allowed_workspace_names(state);
+    if names.is_empty() {
+        return None;
+    }
+    match active_relative(state) {
+        Some(current) if current > 1 => Some(current - 1),
+        Some(_) => Some(names.len() as i32),
+        None => Some(names.len() as i32),
+    }
+}
+
 pub fn workspace_go(state: &mut SessionState, relative: i32) -> Option<String> {
-    let name = relative_to_name(state, relative)?;
+    let name = workspace_name_for_relative(state, relative)?;
     hyprland::switch_workspace(&name);
     remember_workspace(state, relative);
     Some(name)
 }
 
 pub fn workspace_next(state: &mut SessionState) -> Option<String> {
-    let names = allowed_workspace_names(state);
-    if names.is_empty() {
-        return None;
-    }
-    let next_rel = match active_relative(state) {
-        Some(current) => (current % names.len() as i32) + 1,
-        None => 1,
-    };
-    workspace_go(state, next_rel)
+    let relative = workspace_next_relative(state)?;
+    workspace_go(state, relative)
 }
 
 pub fn workspace_prev(state: &mut SessionState) -> Option<String> {
-    let names = allowed_workspace_names(state);
-    if names.is_empty() {
-        return None;
-    }
-    let prev_rel = match active_relative(state) {
-        Some(current) if current > 1 => current - 1,
-        Some(_) => names.len() as i32,
-        None => names.len() as i32,
-    };
-    workspace_go(state, prev_rel)
+    let relative = workspace_prev_relative(state)?;
+    workspace_go(state, relative)
 }
 
 pub fn workspace_goto_name(state: &mut SessionState, name: &str) -> Option<String> {
@@ -142,12 +160,6 @@ fn relative_to_name(state: &SessionState, relative: i32) -> Option<String> {
     let names = allowed_workspace_names(state);
     let idx = (relative - 1) as usize;
     names.get(idx).cloned()
-}
-
-fn remember_workspace(state: &mut SessionState, relative: i32) {
-    state
-        .last_workspace
-        .insert(state.taskspace_key(), relative);
 }
 
 fn active_relative(state: &SessionState) -> Option<i32> {

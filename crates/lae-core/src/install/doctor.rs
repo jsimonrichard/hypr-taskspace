@@ -77,6 +77,13 @@ pub fn run_doctor_checks(cfg: &LaeConfig) -> Result<Vec<DoctorCheck>> {
         detail: lae_bin.display().to_string(),
     });
 
+    let (path_ok, path_detail) = crate::install::path_link::path_lae_is_rust(cfg);
+    checks.push(DoctorCheck {
+        label: "PATH lae is Rust CLI".into(),
+        passed: path_ok,
+        detail: path_detail,
+    });
+
     checks.push(DoctorCheck {
         label: "Waybar CFFI module configured".into(),
         passed: waybar
@@ -177,7 +184,11 @@ fn bind_runs_lae_workspace_go(bind: &Value) -> bool {
         && bind
             .get("arg")
             .and_then(|v| v.as_str())
-            .is_some_and(|arg| arg.contains("lae workspace go") || arg.contains("lae desktop go"))
+            .is_some_and(|arg| {
+                arg.contains("lae-workspace-switch")
+                    || arg.contains("lae workspace go")
+                    || arg.contains("lae desktop go")
+            })
 }
 
 fn bind_is_omarchy_workspace_digit(bind: &Value) -> bool {

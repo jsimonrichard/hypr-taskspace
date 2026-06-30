@@ -47,6 +47,11 @@ pub fn lae_runtime_dir() -> Result<PathBuf> {
     Ok(runtime_dir()?.join("lae"))
 }
 
+/// User-local executables directory (`~/.local/bin`).
+pub fn user_bin_dir() -> PathBuf {
+    expand("~/.local/bin")
+}
+
 pub fn lae_waybar_file() -> Result<PathBuf> {
     Ok(lae_runtime_dir()?.join("waybar.json"))
 }

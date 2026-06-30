@@ -60,6 +60,7 @@ impl TaskService {
             ensure_parent(&dir.join("_"))?;
             let _ = std::fs::write(dir.join("context"), state.taskspace_label());
         }
+        crate::workspace_slots::write_slot_cache(state);
         if refresh_cache {
             let _ = refresh_modules_cache(&self.registry, false);
         }
@@ -69,15 +70,15 @@ impl TaskService {
     pub fn initialize(&self) -> Result<()> {
         let mut state = self.load_state()?;
         state.default_workspace_count = self.config.default_workspace_count;
+        self.commit_state(&state, false, None)
+    }
+
+    /// Rename default numeric slots — run once after daemon start (background).
+    pub fn provision_default_workspaces(&self) -> Result<()> {
         if hyprland::available() && self.config.hyprland_enabled {
             workspace_nav::setup_default_taskspace_workspaces(self.config.default_workspace_count);
-            for task in state.tasks.values() {
-                if task.status != TaskStatus::Archived {
-                    workspace_nav::setup_task_workspaces_for_state(&task.id, &state);
-                }
-            }
         }
-        self.commit_state(&state, false, Some(StateChangeKind::Full))
+        Ok(())
     }
 
     pub fn context_default(&self) -> Result<()> {
@@ -108,38 +109,75 @@ impl TaskService {
 
     pub fn workspace_go(&self, relative: i32) -> Result<Option<String>> {
         let mut state = self.load_state()?;
-        let name = workspace_nav::workspace_go(&mut state, relative);
-        if name.is_some() {
+        let name = workspace_nav::workspace_name_for_relative(&state, relative);
+        if let Some(ref target) = name {
+            hyprland::switch_workspace(target);
+            workspace_nav::remember_workspace(&mut state, relative);
             self.persist_workspace_switch(&state)?;
         }
         Ok(name)
+    }
+
+    pub fn remember_workspace_go(&self, relative: i32) -> Result<Option<String>> {
+        let mut state = self.load_state()?;
+        let name = workspace_nav::workspace_name_for_relative(&state, relative);
+        if name.is_some() {
+            workspace_nav::remember_workspace(&mut state, relative);
+            self.persist_workspace_switch(&state)?;
+        }
+        Ok(name)
+    }
+
+    pub fn remember_workspace_goto(&self, name: &str) -> Result<Option<String>> {
+        let mut state = self.load_state()?;
+        let allowed = crate::workspaces::allowed_workspace_names(&state);
+        if state.context_mode != crate::models::ContextMode::Global
+            && !allowed.iter().any(|n| n == name)
+        {
+            return Ok(None);
+        }
+        if let Some(idx) = allowed.iter().position(|n| n == name) {
+            workspace_nav::remember_workspace(&mut state, (idx + 1) as i32);
+            self.persist_workspace_switch(&state)?;
+        }
+        Ok(Some(name.to_string()))
     }
 
     pub fn workspace_next(&self) -> Result<Option<String>> {
-        let mut state = self.load_state()?;
-        let name = workspace_nav::workspace_next(&mut state);
-        if name.is_some() {
-            self.persist_workspace_switch(&state)?;
+        let state = self.load_state()?;
+        let relative = workspace_nav::workspace_next_relative(&state);
+        drop(state);
+        if let Some(rel) = relative {
+            return self.workspace_go(rel);
         }
-        Ok(name)
+        Ok(None)
     }
 
     pub fn workspace_prev(&self) -> Result<Option<String>> {
-        let mut state = self.load_state()?;
-        let name = workspace_nav::workspace_prev(&mut state);
-        if name.is_some() {
-            self.persist_workspace_switch(&state)?;
+        let state = self.load_state()?;
+        let relative = workspace_nav::workspace_prev_relative(&state);
+        drop(state);
+        if let Some(rel) = relative {
+            return self.workspace_go(rel);
         }
-        Ok(name)
+        Ok(None)
     }
 
     pub fn workspace_goto(&self, name: &str) -> Result<Option<String>> {
         let mut state = self.load_state()?;
-        let result = workspace_nav::workspace_goto_name(&mut state, name);
-        if result.is_some() {
+        if state.context_mode != ContextMode::Global {
+            let allowed = crate::workspaces::allowed_workspace_names(&state);
+            if !allowed.iter().any(|n| n == name) {
+                return Ok(None);
+            }
+        }
+        hyprland::switch_workspace(name);
+        let allowed = crate::workspaces::allowed_workspace_names(&state);
+        if let Some(idx) = allowed.iter().position(|n| n == name) {
+            workspace_nav::remember_workspace(&mut state, (idx + 1) as i32);
             self.persist_workspace_switch(&state)?;
         }
-        Ok(result)
+        Ok(Some(name.to_string()))
     }
 
     pub fn create_task(&self, name: &str, switch: bool) -> Result<Task> {
@@ -315,7 +353,7 @@ impl TaskService {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MenuTask {
     pub id: String,
     pub name: String,

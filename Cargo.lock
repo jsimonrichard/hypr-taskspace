@@ -685,6 +685,7 @@ name = "lae-core"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "libc",
  "regex",
  "rusqlite",
  "serde",

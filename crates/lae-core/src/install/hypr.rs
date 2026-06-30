@@ -11,9 +11,10 @@ use crate::config::LaeConfig;
 use crate::error::{LaeError, Result};
 use crate::install::backup::{self, backup_timestamp};
 use crate::install::manifest::{self, Manifest};
+use crate::install::path_link;
 use crate::install::reload;
 use crate::install::wrapper;
-use crate::xdg::{config_home, ensure_parent, expand};
+use crate::xdg::{config_home, ensure_parent, expand, user_bin_dir};
 
 #[derive(Debug, Clone)]
 pub struct InstallHyprOptions {
@@ -70,6 +71,11 @@ pub fn install_hypr(cfg: &LaeConfig, options: &InstallHyprOptions) -> Result<Vec
             format!("would copy {} → {}", share_src.display(), share_dest.display()),
             format!("would append to {}", cfg.install_hypr_config_path.display()),
             format!("would install {}", cfg.install_hypr_share_dir.join("bin/lae").display()),
+            format!(
+                "would symlink {} → {}",
+                user_bin_dir().join("lae").display(),
+                cfg.install_hypr_share_dir.join("bin/lae").display()
+            ),
         ]);
     }
 
@@ -99,7 +105,8 @@ pub fn install_hypr(cfg: &LaeConfig, options: &InstallHyprOptions) -> Result<Vec
     }
 
     install_elephant_menu(cfg, options.workspace_root.as_deref())?;
-    build_and_install_cli(cfg, options.workspace_root.as_deref())?;
+    let rust_bin = build_and_install_cli(cfg, options.workspace_root.as_deref())?;
+    path_link::install_path_symlink(cfg, &rust_bin)?;
     wrapper::write_menu_helper(cfg)?;
 
     let config_path = &cfg.install_hypr_config_path;
@@ -174,6 +181,9 @@ pub fn uninstall_hypr(cfg: &LaeConfig, keep_files: bool) -> Result<Vec<String>> 
     if elephant_link.is_symlink() {
         let _ = fs::remove_file(elephant_link);
     }
+
+    let rust_bin = cfg.install_hypr_share_dir.join("bin/lae");
+    let _ = path_link::remove_path_symlink(&rust_bin);
 
     if !keep_files {
         let hypr_dir = cfg.install_hypr_share_dir.join("hypr");

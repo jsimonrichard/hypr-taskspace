@@ -11,7 +11,8 @@ dependencies = [
 ]
 
 [project.scripts]
-lae = "lae.cli.main:main"
+# Legacy Python CLI — use `python -m lae.cli.main` or the Rust `lae` from `lae install hypr`.
+lae-py = "lae.cli.main:main"
 
 [build-system]
 requires = ["hatchling"]

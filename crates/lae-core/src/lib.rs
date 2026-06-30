@@ -2,6 +2,7 @@
 
 pub mod config;
 pub mod context_sync;
+pub mod daemon;
 pub mod error;
 pub mod hyprland;
 pub mod hyprland_events;
@@ -15,10 +16,15 @@ pub mod trace;
 pub mod walker;
 pub mod waybar;
 pub mod workspace_nav;
+pub mod workspace_slots;
 pub mod workspaces;
 pub mod xdg;
 
 pub use config::{ensure_config, load_config, LaeConfig};
+pub use daemon::{
+    daemon_pid_path, daemon_request, daemon_socket_path, is_daemon_running, ping_daemon,
+    stop_daemon, DaemonClient, DaemonServer,
+};
 pub use error::{LaeError, Result};
 pub use install::{
     install_hypr, install_hypr_status, install_waybar, install_waybar_status, run_doctor_checks,

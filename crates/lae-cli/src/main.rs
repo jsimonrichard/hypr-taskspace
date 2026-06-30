@@ -1,11 +1,12 @@
 use clap::{Parser, Subcommand};
 
 use lae_core::{
-    allowed_workspace_names, analyze_recent_latency, build_all_modules, clear_log, diagnose_socket2,
-    enable_for_process, format_report, hyprland, install_hypr, install_hypr_status, install_waybar,
-    install_waybar_status, launch_task_menu, load_config, menu_action_prefix, refresh_modules_cache, run_doctor_checks, tail_raw,
-    trace_path, uninstall_hypr, uninstall_waybar, workspace_module_key, InstallHyprOptions,
-    InstallWaybarOptions, LaeError, Registry, Result, TaskService, TaskStatus,
+    allowed_workspace_names, analyze_recent_latency, build_all_modules, clear_log, daemon_socket_path,
+    diagnose_socket2, enable_for_process, format_report, hyprland, install_hypr, install_hypr_status,
+    install_waybar, install_waybar_status, is_daemon_running, launch_task_menu, load_config,
+    menu_action_prefix, ping_daemon, refresh_modules_cache, run_doctor_checks, stop_daemon, tail_raw,
+    trace_path, uninstall_hypr, uninstall_waybar, workspace_module_key, DaemonClient, DaemonServer,
+    InstallHyprOptions, InstallWaybarOptions, LaeError, Registry, Result, TaskStatus,
 };
 
 #[derive(Parser)]
@@ -51,6 +52,8 @@ enum Commands {
         #[command(subcommand)]
         command: DebugCommands,
     },
+    #[command(subcommand)]
+    Daemon(DaemonCommands),
 }
 
 #[derive(Subcommand)]
@@ -99,6 +102,11 @@ enum TaskspaceCommands {
 #[derive(Subcommand)]
 enum WorkspaceCommands {
     Go {
+        #[arg(value_parser = clap::value_parser!(i32).range(1..=10))]
+        index: i32,
+    },
+    /// Persist the active slot after a direct hyprctl switch (used by keybind helper).
+    Remember {
         #[arg(value_parser = clap::value_parser!(i32).range(1..=10))]
         index: i32,
     },
@@ -154,6 +162,18 @@ enum DebugCommands {
     /// Diagnose Hyprland socket2 event socket (Waybar live updates)
     #[command(name = "hyprland-socket")]
     HyprlandSocket,
+}
+
+#[derive(Subcommand)]
+enum DaemonCommands {
+    /// Start the daemon in the background
+    Start,
+    /// Run the daemon in the foreground (used by start)
+    Run,
+    /// Stop the running daemon
+    Stop,
+    /// Check whether the daemon is reachable
+    Status,
 }
 
 #[derive(Subcommand)]
@@ -218,6 +238,7 @@ fn run() -> Result<()> {
         },
         Commands::Workspace(command) | Commands::Desktop(command) => match command {
             WorkspaceCommands::Go { index } => cmd_workspace_go(index),
+            WorkspaceCommands::Remember { index } => cmd_workspace_remember(index),
             WorkspaceCommands::Next => cmd_workspace_next(),
             WorkspaceCommands::Prev => cmd_workspace_prev(),
             WorkspaceCommands::Goto { name } => cmd_workspace_goto(&name),
@@ -250,15 +271,21 @@ fn run() -> Result<()> {
             },
             DebugCommands::HyprlandSocket => cmd_debug_hyprland_socket(),
         },
+        Commands::Daemon(command) => match command {
+            DaemonCommands::Start => cmd_daemon_start(),
+            DaemonCommands::Run => cmd_daemon_run(),
+            DaemonCommands::Stop => cmd_daemon_stop(),
+            DaemonCommands::Status => cmd_daemon_status(),
+        },
     }
 }
 
-fn service() -> Result<TaskService> {
-    TaskService::with_defaults()
+fn client() -> Result<DaemonClient> {
+    DaemonClient::with_defaults()
 }
 
 fn cmd_status() -> Result<()> {
-    let svc = service()?;
+    let svc = client()?;
     let state = svc.load_state()?;
     let allowed = allowed_workspace_names(&state);
     let taskspace_label = state.taskspace_label();
@@ -339,6 +366,11 @@ fn cmd_doctor() -> Result<()> {
             ok = false;
         }
     }
+    if !is_daemon_running() {
+        println!(
+            "[WARN] Daemon not running — CLI uses direct mode; run `lae daemon start` for a single control plane"
+        );
+    }
     if !ok {
         std::process::exit(1);
     }
@@ -346,7 +378,7 @@ fn cmd_doctor() -> Result<()> {
 }
 
 fn cmd_windows(task_filter: Option<&str>) -> Result<()> {
-    let state = service()?.load_state()?;
+    let state = client()?.load_state()?;
     for w in hyprland::get_clients()? {
         let task_id = state
             .windows
@@ -393,6 +425,15 @@ fn cmd_install_hypr(dry_run: bool, workspace: Option<std::path::PathBuf>) -> Res
         println!("Installed Hyprland integration.");
         if !actions.is_empty() {
             println!("Applied: {}.", actions.join(", "));
+        }
+        let (path_ok, path_detail) = lae_core::install::path_link::path_lae_is_rust(&cfg);
+        println!(
+            "CLI: {} (symlink: {})",
+            cfg.install_hypr_share_dir.join("bin/lae").display(),
+            lae_core::xdg::user_bin_dir().join("lae").display()
+        );
+        if !path_ok {
+            eprintln!("Note: {path_detail}");
         }
     }
     Ok(())
@@ -459,59 +500,64 @@ fn cmd_uninstall_waybar() -> Result<()> {
 }
 
 fn echo_taskspace() -> Result<()> {
-    println!("Taskspace: {}", service()?.taskspace_label()?);
+    println!("Taskspace: {}", client()?.taskspace_label()?);
     Ok(())
 }
 
 fn cmd_taskspace_default() -> Result<()> {
-    service()?.context_default()?;
+    client()?.context_default()?;
     echo_taskspace()
 }
 
 fn cmd_taskspace_global() -> Result<()> {
-    service()?.context_global()?;
+    client()?.context_global()?;
     echo_taskspace()
 }
 
 fn cmd_taskspace_restore() -> Result<()> {
-    service()?.context_restore()?;
+    client()?.context_restore()?;
     echo_taskspace()
 }
 
 fn cmd_taskspace_toggle() -> Result<()> {
-    service()?.toggle_global()?;
+    client()?.toggle_global()?;
     echo_taskspace()
 }
 
 fn cmd_taskspace_current() -> Result<()> {
-    println!("{}", service()?.taskspace_label()?);
+    println!("{}", client()?.taskspace_label()?);
     Ok(())
 }
 
 fn cmd_workspace_go(index: i32) -> Result<()> {
-    let name = service()?
+    let name = client()?
         .workspace_go(index)?
         .ok_or_else(|| LaeError::Other("Workspace not available in current taskspace".into()))?;
     println!("{name}");
     Ok(())
 }
 
+fn cmd_workspace_remember(index: i32) -> Result<()> {
+    client()?.remember_workspace_go(index)?;
+    Ok(())
+}
+
 fn cmd_workspace_next() -> Result<()> {
-    if let Some(name) = service()?.workspace_next()? {
+    if let Some(name) = client()?.workspace_next()? {
         println!("{name}");
     }
     Ok(())
 }
 
 fn cmd_workspace_prev() -> Result<()> {
-    if let Some(name) = service()?.workspace_prev()? {
+    if let Some(name) = client()?.workspace_prev()? {
         println!("{name}");
     }
     Ok(())
 }
 
 fn cmd_workspace_goto(name: &str) -> Result<()> {
-    let result = service()?
+    let result = client()?
         .workspace_goto(name)?
         .ok_or_else(|| LaeError::Other("Workspace not reachable".into()))?;
     println!("{result}");
@@ -519,7 +565,7 @@ fn cmd_workspace_goto(name: &str) -> Result<()> {
 }
 
 fn cmd_task_new(name: &str, switch: bool) -> Result<()> {
-    let task = service()?.create_task(name, switch)?;
+    let task = client()?.create_task(name, switch)?;
     println!(
         "Created task {} → workspaces {}-1..{}-{}",
         task.id,
@@ -532,7 +578,7 @@ fn cmd_task_new(name: &str, switch: bool) -> Result<()> {
 }
 
 fn cmd_task_archive(name_or_id: &str) -> Result<()> {
-    let svc = service()?;
+    let svc = client()?;
     let task = svc.resolve_task(name_or_id)?;
     svc.archive_task(&task.id)?;
     println!("Archived {}", task.id);
@@ -540,7 +586,7 @@ fn cmd_task_archive(name_or_id: &str) -> Result<()> {
 }
 
 fn cmd_task_list(json: bool) -> Result<()> {
-    let svc = service()?;
+    let svc = client()?;
     if json {
         let items = svc.tasks_for_menu()?;
         println!(
@@ -569,7 +615,7 @@ fn cmd_task_list(json: bool) -> Result<()> {
 }
 
 fn cmd_task_switch(name_or_id: &str) -> Result<()> {
-    let svc = service()?;
+    let svc = client()?;
     let task = svc.resolve_task(name_or_id)?;
     let switched = svc.switch_task(&task.id)?;
     println!(
@@ -581,7 +627,7 @@ fn cmd_task_switch(name_or_id: &str) -> Result<()> {
 }
 
 fn cmd_task_current() -> Result<()> {
-    let state = service()?.load_state()?;
+    let state = client()?.load_state()?;
     if let Some(id) = state.current_task_id {
         println!("{id}");
     } else {
@@ -593,7 +639,7 @@ fn cmd_task_current() -> Result<()> {
 fn cmd_task_menu_json() -> Result<()> {
     let cfg = load_config()?;
     let lae = menu_action_prefix(&cfg);
-    for item in service()?.tasks_for_menu()? {
+    for item in client()?.tasks_for_menu()? {
         let action = if item.kind == "default" {
             format!("{lae} taskspace default")
         } else {
@@ -709,6 +755,58 @@ fn cmd_debug_hyprland_socket() -> Result<()> {
     }
     if !d.available {
         std::process::exit(1);
+    }
+    Ok(())
+}
+
+fn cmd_daemon_start() -> Result<()> {
+    if is_daemon_running() {
+        println!("Daemon already running.");
+        return Ok(());
+    }
+
+    let exe = std::env::current_exe().map_err(|e| LaeError::Other(e.to_string()))?;
+    std::process::Command::new(exe)
+        .args(["daemon", "run"])
+        .envs(std::env::vars())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| LaeError::Other(format!("failed to spawn daemon: {e}")))?;
+
+    for _ in 0..100 {
+        if ping_daemon()? {
+            println!("Daemon started.");
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
+    Err(LaeError::Other(
+        "daemon process started but did not become reachable".into(),
+    ))
+}
+
+fn cmd_daemon_run() -> Result<()> {
+    eprintln!("Starting lae daemon (foreground)...");
+    DaemonServer::new()?.run_foreground()
+}
+
+fn cmd_daemon_stop() -> Result<()> {
+    if stop_daemon()? {
+        println!("Daemon stopped.");
+    } else {
+        println!("Daemon is not running.");
+    }
+    Ok(())
+}
+
+fn cmd_daemon_status() -> Result<()> {
+    if is_daemon_running() {
+        let path = daemon_socket_path()?;
+        println!("running ({})", path.display());
+    } else {
+        println!("stopped (CLI will use direct mode)");
     }
     Ok(())
 }

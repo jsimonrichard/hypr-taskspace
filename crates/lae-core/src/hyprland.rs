@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::process::Command;
 
 use serde_json::Value;
@@ -52,6 +53,26 @@ pub fn hyprctl_json(args: &[&str]) -> Result<Value> {
 }
 
 pub fn dispatch(args: &[&str]) {
+    dispatch_sync(args);
+}
+
+/// Fire-and-forget — provisioning only; not used for interactive workspace switches.
+pub fn dispatch_async(args: &[&str]) {
+    if !available() {
+        return;
+    }
+    let detail = args.join(" ");
+    let _span = Span::begin("cli", "hyprland", &format!("dispatch {detail}"));
+    let _ = Command::new("hyprctl")
+        .arg("dispatch")
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+}
+
+pub fn dispatch_sync(args: &[&str]) {
     if !available() {
         return;
     }
@@ -66,6 +87,20 @@ pub fn get_active_workspace() -> Result<Option<Workspace>> {
     }
     let data = hyprctl_json(&["activeworkspace"])?;
     parse_workspace_value(&data).map(Some)
+}
+
+pub fn list_workspaces() -> Result<Vec<Workspace>> {
+    if !available() {
+        return Ok(Vec::new());
+    }
+    let data = hyprctl_json(&["workspaces"])?;
+    let Some(items) = data.as_array() else {
+        return Ok(Vec::new());
+    };
+    Ok(items
+        .iter()
+        .filter_map(|item| parse_workspace_value(item).ok())
+        .collect())
 }
 
 pub fn get_clients() -> Result<Vec<HyprWindow>> {
@@ -139,21 +174,53 @@ pub fn rename_workspace(ws_id: i32, name: &str) {
 }
 
 pub fn ensure_workspaces(names: &[String]) {
+    if names.is_empty() {
+        return;
+    }
+
     let previous = get_active_workspace()
         .ok()
         .flatten()
         .map(|ws| ws.name)
         .filter(|n| !n.is_empty());
+
+    let existing: HashSet<String> = list_workspaces()
+        .ok()
+        .map(|workspaces| workspaces.into_iter().map(|ws| ws.name).collect())
+        .unwrap_or_default();
+
+    let mut created_named = false;
     for name in names {
         if name.chars().all(|c| c.is_ascii_digit()) {
             if let Ok(ws_id) = name.parse::<i32>() {
                 rename_workspace(ws_id, name);
             }
+            continue;
         }
-        switch_workspace(name);
+        if existing.contains(name) {
+            continue;
+        }
+        // Create at most one named workspace here; others appear on first navigation.
+        if !created_named {
+            switch_workspace(name);
+            created_named = true;
+        }
     }
+
     if let Some(prev) = previous {
-        switch_workspace(&prev);
+        let active = get_active_workspace()
+            .ok()
+            .flatten()
+            .map(|ws| ws.name)
+            .unwrap_or_default();
+        if active != prev {
+            if prev.chars().all(|c| c.is_ascii_digit()) {
+                dispatch_sync(&["workspace", &prev]);
+            } else {
+                let target = format!("name:{prev}");
+                dispatch_sync(&["workspace", &target]);
+            }
+        }
     }
 }
 

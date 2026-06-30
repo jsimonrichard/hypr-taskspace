@@ -49,7 +49,10 @@ struct WorkspaceButton {
 
 enum PendingRefresh {
     Fast(String),
+    /// Taskspace / state.db change — rebuild strip when needed.
     Full,
+    /// Window open/close — restyle occupied slots only.
+    Occupied,
 }
 
 struct Runtime {
@@ -135,14 +138,18 @@ fn normalize_hypr_workspace_name(name: &str) -> String {
 
 impl Runtime {
     fn merge_pending(slot: &mut Option<PendingRefresh>, refresh: PendingRefresh) {
-        match (&*slot, &refresh) {
-            (Some(PendingRefresh::Full), _) => {}
-            (Some(PendingRefresh::Fast(_)), PendingRefresh::Full) => {
-                *slot = Some(PendingRefresh::Full);
-            }
-            (_, PendingRefresh::Full) => *slot = Some(PendingRefresh::Full),
-            (_, PendingRefresh::Fast(_)) => *slot = Some(refresh),
+        use PendingRefresh::{Fast, Full, Occupied};
+        let upgrade = matches!(refresh, Full)
+            || matches!((slot.as_ref(), &refresh), (Some(Fast(_)), Full))
+            || matches!((slot.as_ref(), &refresh), (Some(Occupied), Full));
+        if upgrade {
+            *slot = Some(Full);
+            return;
         }
+        if slot.is_some() {
+            return;
+        }
+        *slot = Some(refresh);
     }
 
     fn queue_and_dispatch(
@@ -180,7 +187,12 @@ impl Runtime {
             .and_then(|mut g| g.take());
         match next {
             Some(PendingRefresh::Fast(name)) => self.repaint_fast(&name),
-            Some(PendingRefresh::Full) => self.refresh_occupied(),
+            Some(PendingRefresh::Full) => {
+                if !self.reconcile_db_taskspace() {
+                    self.repaint_full();
+                }
+            }
+            Some(PendingRefresh::Occupied) => self.refresh_occupied(),
             None => {}
         }
     }
@@ -196,15 +208,8 @@ impl Runtime {
     }
 
     fn taskspace_changed(&self, state: &SessionState, bar_names: &[String]) -> bool {
-        let mode_changed = self
-            .state
-            .borrow()
-            .as_ref()
-            .map(|s| s.context_mode != state.context_mode)
-            .unwrap_or(true);
         *self.taskspace_key.borrow() != state.taskspace_key()
             || *self.allowed.borrow() != bar_names
-            || mode_changed
     }
 
     /// Pick up taskspace changes written by the CLI (state.db) without a full Waybar restart.
@@ -716,7 +721,7 @@ impl LaeBar {
                     &pending,
                     &scheduled,
                     &main_ctx,
-                    PendingRefresh::Full,
+                    PendingRefresh::Occupied,
                 );
             }
         }))

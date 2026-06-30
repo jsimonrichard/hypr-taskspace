@@ -2,7 +2,7 @@
 
 Task-centric Hyprland control plane. Each task gets its own **taskspace** with named **workspaces** (`auth-fix-1`, `auth-fix-2`, …). The **default** taskspace uses plain Hyprland workspace names **`1`–`10`** for everyday host work.
 
-The **Rust CLI** (`crates/lae-cli`) is the supported control plane. Hyprland keybinds and Walker menus call `~/.local/share/lae/bin/lae`, built and installed by `lae install hypr`.
+The **Rust CLI** (`crates/lae-cli`) is the supported control plane. Hyprland keybinds and Walker menus call `~/.local/share/lae/bin/lae`, built and installed by `lae install hypr`. Run **`lae daemon start`** so one background process owns session state (recommended).
 
 ## Prerequisites
 
@@ -38,10 +38,16 @@ After install, the CLI used by keybinds lives at:
 ~/.local/share/lae/bin/lae
 ```
 
-Add that directory to your shell PATH if you want to run `lae` outside Hyprland exec contexts:
+Add that directory to your shell PATH if you want to run `lae` outside Hyprland exec contexts. **`lae install hypr` also symlinks `~/.local/bin/lae` → the Rust binary** — put `~/.local/bin` early on PATH (before mise/venv shims):
 
 ```bash
-export PATH="$HOME/.local/share/lae/bin:$PATH"
+export PATH="$HOME/.local/bin:$HOME/.local/share/lae/bin:$PATH"
+```
+
+If you previously ran `pip install -e .`, remove the old Python entry point:
+
+```bash
+pip uninstall local-agentic-env   # removes the pip `lae` script (now named lae-py if reinstalled)
 ```
 
 Verify:
@@ -50,6 +56,8 @@ Verify:
 ~/.local/share/lae/bin/lae --help
 ~/.local/share/lae/bin/lae status
 lae doctor
+lae daemon start    # recommended — single writer for state.db
+lae daemon status
 ```
 
 On first run, lae creates `~/.config/lae/config.toml` and `~/.local/share/lae/state.db`.
@@ -63,9 +71,10 @@ lae install status
 
 | Artifact | Location |
 |----------|----------|
-| Rust CLI + Waybar module | `~/.local/share/lae/bin/lae`, `~/.local/share/lae/lib/liblae_waybar.so` |
+| Rust CLI + Waybar module | `~/.local/share/lae/bin/lae`, `~/.local/bin/lae` (symlink), `~/.local/share/lae/lib/liblae_waybar.so` |
 | Hyprland keybinds + Omarchy unbinds | `~/.local/share/lae/hypr/bindings.conf`, `unbind-omarchy.conf` |
 | Walker menu helper | `~/.local/share/lae/bin/lae-task-menu-json` |
+| Workspace keybind helper (hyprctl + state sync) | `~/.local/share/lae/bin/lae-workspace-switch` |
 | Elephant menu | `~/.config/elephant/menus/lae_tasks.lua` |
 | Config backup | `~/.local/share/lae/install/hypr/backups/<timestamp>/` |
 
@@ -102,7 +111,7 @@ Legacy aliases still work: `lae context default`, `lae desktop go 1`, etc.
 | Action | Binding |
 |--------|---------|
 | Task menu (Walker) | Click task name in Waybar, **SUPER+Tab**, or `lae task menu` |
-| Workspace 1–9 / 10 within current taskspace | **SUPER+1..9**, **SUPER+0** (= workspace 10) |
+| Workspace 1–9 / 10 within current taskspace | **SUPER+1..9**, **SUPER+0** (= workspace 10) — `hyprctl dispatch` via `lae-workspace-switch`, then async state sync |
 | Default / host taskspace | **SUPER+H** or Walker → **default** |
 | Global escape hatch (all Hyprland workspaces) | **SUPER+Escape** |
 | Host terminal | **SUPER+Return** (your existing Omarchy bind — unchanged) |
@@ -113,17 +122,18 @@ Default and task taskspaces both use **10** workspace slots (`1`–`10`, SUPER+0
 
 ### Waybar update path
 
-State lives in `~/.local/share/lae/state.db`. After every taskspace change, the CLI:
+State lives in `~/.local/share/lae/state.db`. The **Rust daemon** (`lae daemon start`) is the recommended single writer; the CLI falls back to direct DB access when the daemon is stopped. After every taskspace change:
 
 1. Writes `state.db`
 2. Bumps `$XDG_RUNTIME_DIR/lae/state.rev`
 3. Sends a JSON event on `$XDG_RUNTIME_DIR/lae/state-events.sock` (Waybar listens here)
 4. Signals Waybar (`RTMIN+11`) as a backup
 
-The Waybar CFFI module subscribes to Hyprland workspace events **and** the state-events socket; `update()` also polls `state.rev` if both are missed. No background Python daemon is required for the bar to stay in sync.
+The Waybar CFFI module subscribes to Hyprland workspace events **and** the state-events socket; `update()` also polls `state.rev` if both are missed.
 
 ```bash
-lae doctor   # checks state-events.sock when Waybar is running
+lae daemon start   # listens on $XDG_RUNTIME_DIR/lae/daemon.sock
+lae doctor         # warns if daemon is not running
 ```
 
 ### CLI reference (Rust)
@@ -131,6 +141,7 @@ lae doctor   # checks state-events.sock when Waybar is running
 ```text
 lae status | doctor | windows [--task ID]
 
+lae daemon start|stop|status|run
 lae install all|hypr|waybar|status
 lae uninstall hypr|waybar
 
@@ -182,7 +193,7 @@ rm -rf ~/.config/lae/
 
 The Python package in `src/lae/` is **not** required for daily use with the Rust CLI. It still contains:
 
-- Background **daemon** (UNIX socket IPC)
+- Legacy background **daemon** (superseded by `lae daemon start` in the Rust CLI)
 - **`lae task terminal`** (Distrobox)
 - **`lae task new --repo`** (git clone)
 - Window routing on open/close events
@@ -191,10 +202,12 @@ To run the legacy Python CLI (development only):
 
 ```bash
 pip install -e .
-python -m lae.cli.main --help
+python -m lae.cli.main --help   # or: lae-py --help (after pip install)
 ```
 
-Do not mix pip-installed `lae` on PATH with `~/.local/share/lae/bin/lae` unless you know which one Hyprland is calling.
+The pip package no longer installs a `lae` command on PATH — use the Rust CLI from `lae install hypr` instead.
+
+Do not mix pip-installed `lae-py` / old `lae` shims on PATH with `~/.local/share/lae/bin/lae` unless you know which one Hyprland is calling.
 
 ---
 
@@ -208,8 +221,12 @@ The bar shows `󰌾 all` when `context_mode` is global. If toggle/default/task-s
    ```bash
    pkill -f 'lae.cli.daemon'
    ```
-2. Rebuild Waybar module and restart Waybar after pulling fixes (`install waybar`).
-3. Reset taskspace explicitly:
+2. Start the Rust daemon so keybinds and CLI share one control plane:
+   ```bash
+   lae daemon start
+   ```
+3. Rebuild Waybar module and restart Waybar after pulling fixes (`install waybar`).
+4. Reset taskspace explicitly:
    ```bash
    LAE_WORKSPACE=$PWD cargo run -p lae-cli --release -- taskspace default
    sqlite3 ~/.local/share/lae/state.db "SELECT context_mode, current_task_id FROM session;"

@@ -5,6 +5,7 @@ pub mod doctor;
 pub mod hypr;
 pub mod jsonc;
 pub mod manifest;
+pub mod path_link;
 pub mod reload;
 pub mod wrapper;
 pub mod waybar;
