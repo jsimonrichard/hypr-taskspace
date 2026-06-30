@@ -29,8 +29,8 @@ class TaskService:
         self._state: SessionState | None = None
 
     def get_state(self) -> SessionState:
-        if self._state is None:
-            self._state = self.registry.load_state()
+        # Always reload — Rust CLI and Waybar CFFI write state.db directly.
+        self._state = self.registry.load_state()
         return self._state
 
     def save_state(self, state: SessionState | None = None) -> None:
@@ -57,6 +57,11 @@ class TaskService:
             workspace_nav.setup_default_taskspace_workspaces(
                 self.config.default_workspace_count
             )
+            for task in state.tasks.values():
+                if task.status != TaskStatus.archived:
+                    workspace_nav.setup_task_workspaces(
+                        task, slot_count=state.default_workspace_count
+                    )
         self.save_state(state)
 
     def create_task(
@@ -100,14 +105,16 @@ class TaskService:
             repo_path=repo_path,
             branch=branch,
             container_name=container_name,
-            workspace_count=self.config.workspaces_per_task,
+            workspace_count=self.config.default_workspace_count,
             agent_notes_path=notes_path,
         )
         state.tasks[task_id] = task
         self.registry.touch_task(task)
 
         if hyprland.available() and self.config.hyprland_enabled:
-            workspace_nav.setup_task_workspaces(task)
+            workspace_nav.setup_task_workspaces(
+                task, slot_count=state.default_workspace_count
+            )
 
         if switch:
             self.switch_task(task_id)
@@ -129,6 +136,9 @@ class TaskService:
             f"task:{task_id}", 1
         )
         if hyprland.available():
+            workspace_nav.setup_task_workspaces(
+                task, slot_count=state.default_workspace_count
+            )
             hyprland.switch_workspace(task.main_workspace())
         self.save_state(state)
         return task

@@ -10,7 +10,7 @@ function GetEntries()
   local entries = {}
   local home = os.getenv("HOME") or ""
   local helper = home .. "/.local/share/lae/bin/lae-task-menu-json"
-  local handle = io.popen('"' .. helper .. '" 2>/dev/null')
+  local handle = io.popen('"' .. helper .. '" 2>&1')
 
   if not handle then
     return entries

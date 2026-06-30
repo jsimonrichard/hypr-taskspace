@@ -139,6 +139,11 @@ pub fn rename_workspace(ws_id: i32, name: &str) {
 }
 
 pub fn ensure_workspaces(names: &[String]) {
+    let previous = get_active_workspace()
+        .ok()
+        .flatten()
+        .map(|ws| ws.name)
+        .filter(|n| !n.is_empty());
     for name in names {
         if name.chars().all(|c| c.is_ascii_digit()) {
             if let Ok(ws_id) = name.parse::<i32>() {
@@ -146,6 +151,9 @@ pub fn ensure_workspaces(names: &[String]) {
             }
         }
         switch_workspace(name);
+    }
+    if let Some(prev) = previous {
+        switch_workspace(&prev);
     }
 }
 

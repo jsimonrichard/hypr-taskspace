@@ -1,9 +1,20 @@
 /* LAE Waybar styles — appended to waybar/style.css by lae install waybar */
 
 /* CFFI module (cffi/lae) — root must be named cffi-lae in lib.rs */
-#cffi-lae #lae-task {
+#cffi-lae #lae-task-btn {
+  background: transparent;
+  border: none;
+  box-shadow: none;
   padding: 0 4px 0 6px;
   margin-right: 2px;
+}
+#cffi-lae #lae-task-btn label {
+  padding: 0;
+  margin: 0;
+}
+#cffi-lae #lae-task {
+  padding: 0;
+  margin: 0;
 }
 #cffi-lae #lae-task.global {
   color: #fab387;

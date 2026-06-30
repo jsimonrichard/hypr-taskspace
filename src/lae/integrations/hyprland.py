@@ -127,11 +127,15 @@ def rename_workspace(ws_id: int, name: str) -> None:
 
 def ensure_workspaces(names: list[str]) -> None:
     """Ensure workspaces exist and default ids 1..N carry matching names."""
+    active = get_active_workspace()
+    previous = active.name if active and active.name else None
     for name in names:
         if name.isdigit():
             ws_id = int(name)
             rename_workspace(ws_id, name)
         switch_workspace(name)
+    if previous:
+        switch_workspace(previous)
 
 
 def reload_config() -> None:

@@ -1,8 +1,10 @@
 //! Taskspace-scoped Hyprland workspace navigation.
 
 use crate::hyprland;
-use crate::models::{ContextMode, SessionState, Task};
-use crate::workspaces::{allowed_workspace_names, default_taskspace_workspace_names};
+use crate::models::{ContextMode, SessionState};
+use crate::workspaces::{
+    allowed_workspace_names, default_taskspace_workspace_names, task_workspace_names,
+};
 
 pub fn workspace_go(state: &mut SessionState, relative: i32) -> Option<String> {
     let name = relative_to_name(state, relative)?;
@@ -77,10 +79,14 @@ pub fn set_taskspace(state: &mut SessionState, mode: ContextMode, task_id: Optio
             }
             state.context_mode = ContextMode::Task;
             state.current_task_id = Some(task_id.to_string());
+            state.previous_context = None;
+            state.previous_task_id = None;
         }
         ContextMode::Default => {
             state.context_mode = ContextMode::Default;
             state.current_task_id = None;
+            state.previous_context = None;
+            state.previous_task_id = None;
         }
         ContextMode::Global => {
             state.previous_context = Some(state.context_mode);
@@ -120,8 +126,12 @@ pub fn restore_taskspace(state: &mut SessionState) {
     focus_last_workspace(state);
 }
 
-pub fn setup_task_workspaces(task: &Task) {
-    hyprland::ensure_workspaces(&task.workspace_names());
+pub fn setup_task_workspaces(task_id: &str, slot_count: u32) {
+    hyprland::ensure_workspaces(&task_workspace_names(task_id, slot_count));
+}
+
+pub fn setup_task_workspaces_for_state(task_id: &str, state: &SessionState) {
+    setup_task_workspaces(task_id, state.default_workspace_count);
 }
 
 pub fn setup_default_taskspace_workspaces(count: u32) {
@@ -157,11 +167,18 @@ mod tests {
     use crate::models::SessionState;
 
     #[test]
-    fn relative_to_name_default_taskspace() {
-        let state = SessionState {
+    fn set_taskspace_default_clears_global_overlay() {
+        let mut state = SessionState {
+            context_mode: ContextMode::Global,
+            previous_context: Some(ContextMode::Task),
+            previous_task_id: Some("test-task".into()),
+            current_task_id: Some("test-task".into()),
             default_workspace_count: 10,
             ..Default::default()
         };
-        assert_eq!(relative_to_name(&state, 3), Some("3".into()));
+        set_taskspace(&mut state, ContextMode::Default, None).unwrap();
+        assert_eq!(state.context_mode, ContextMode::Default);
+        assert!(state.previous_context.is_none());
+        assert!(state.previous_task_id.is_none());
     }
 }

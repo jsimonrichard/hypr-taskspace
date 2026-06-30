@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 use lae_core::{
     allowed_workspace_names, analyze_recent_latency, build_all_modules, clear_log, diagnose_socket2,
     enable_for_process, format_report, hyprland, install_hypr, install_hypr_status, install_waybar,
-    install_waybar_status, load_config, refresh_modules_cache, run_doctor_checks, tail_raw,
+    install_waybar_status, launch_task_menu, load_config, menu_action_prefix, refresh_modules_cache, run_doctor_checks, tail_raw,
     trace_path, uninstall_hypr, uninstall_waybar, workspace_module_key, InstallHyprOptions,
     InstallWaybarOptions, LaeError, Registry, Result, TaskService, TaskStatus,
 };
@@ -591,7 +591,8 @@ fn cmd_task_current() -> Result<()> {
 }
 
 fn cmd_task_menu_json() -> Result<()> {
-    let lae = std::env::var("LAE").unwrap_or_else(|_| "lae".into());
+    let cfg = load_config()?;
+    let lae = menu_action_prefix(&cfg);
     for item in service()?.tasks_for_menu()? {
         let action = if item.kind == "default" {
             format!("{lae} taskspace default")
@@ -609,41 +610,7 @@ fn cmd_task_menu_json() -> Result<()> {
 }
 
 fn cmd_task_menu() -> Result<()> {
-    use std::process::Command;
-    let cfg = load_config()?;
-    let launcher = if Command::new("sh")
-        .arg("-c")
-        .arg(format!("command -v {}", cfg.walker_launch_command))
-        .output()
-        .is_ok_and(|o| o.status.success())
-    {
-        cfg.walker_launch_command.clone()
-    } else if Command::new("sh")
-        .arg("-c")
-        .arg("command -v walker")
-        .output()
-        .is_ok_and(|o| o.status.success())
-    {
-        "walker".into()
-    } else {
-        return Err(LaeError::Other(
-            "walker or omarchy-launch-walker not found on PATH".into(),
-        ));
-    };
-    let _ = Command::new(launcher)
-        .args([
-            "-m",
-            "menus:laetasks",
-            "--width",
-            "644",
-            "--minheight",
-            "300",
-            "--maxheight",
-            "630",
-        ])
-        .spawn()
-        .map_err(|e| LaeError::Other(format!("failed to launch walker: {e}")))?;
-    Ok(())
+    launch_task_menu()
 }
 
 fn cmd_waybar_refresh_cache() -> Result<()> {

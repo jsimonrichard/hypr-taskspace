@@ -109,7 +109,22 @@ Legacy aliases still work: `lae context default`, `lae desktop go 1`, etc.
 
 SUPER+Space remains the normal Walker app launcher, not the task menu.
 
-Default taskspace supports **10** Hyprland workspaces (`1`–`10`). Waybar updates on taskspace/workspace changes via Hyprland socket events. Task taskspaces use 3 scoped workspaces by default. Set `workspace_count = 10` under `[default]` in `~/.config/lae/config.toml`.
+Default and task taskspaces both use **10** workspace slots (`1`–`10`, SUPER+0 → slot 10) so keybinds behave the same in either mode. Set `workspace_count = 10` under `[default]` in `~/.config/lae/config.toml` to change the slot count for both.
+
+### Waybar update path
+
+State lives in `~/.local/share/lae/state.db`. After every taskspace change, the CLI:
+
+1. Writes `state.db`
+2. Bumps `$XDG_RUNTIME_DIR/lae/state.rev`
+3. Sends a JSON event on `$XDG_RUNTIME_DIR/lae/state-events.sock` (Waybar listens here)
+4. Signals Waybar (`RTMIN+11`) as a backup
+
+The Waybar CFFI module subscribes to Hyprland workspace events **and** the state-events socket; `update()` also polls `state.rev` if both are missed. No background Python daemon is required for the bar to stay in sync.
+
+```bash
+lae doctor   # checks state-events.sock when Waybar is running
+```
 
 ### CLI reference (Rust)
 
@@ -185,15 +200,35 @@ Do not mix pip-installed `lae` on PATH with `~/.local/share/lae/bin/lae` unless 
 
 ## Troubleshooting
 
+**Stuck in global ("all") taskspace**
+
+The bar shows `󰌾 all` when `context_mode` is global. If toggle/default/task-switch seem to do nothing:
+
+1. Stop legacy Python daemons — they cached session state and could overwrite Rust CLI writes:
+   ```bash
+   pkill -f 'lae.cli.daemon'
+   ```
+2. Rebuild Waybar module and restart Waybar after pulling fixes (`install waybar`).
+3. Reset taskspace explicitly:
+   ```bash
+   LAE_WORKSPACE=$PWD cargo run -p lae-cli --release -- taskspace default
+   sqlite3 ~/.local/share/lae/state.db "SELECT context_mode, current_task_id FROM session;"
+   ```
+
 **Walker task menu is empty**
 
-Re-run install (reloads Walker automatically):
+Elephant loads menu scripts at startup — after `install hypr` or changing `lae_tasks.lua`, restart Walker so Elephant picks up the menu:
 
 ```bash
-LAE_WORKSPACE=$PWD cargo run -p lae-cli --release -- install hypr
 ~/.local/share/lae/bin/lae-task-menu-json   # should list default + tasks
 omarchy-restart-walker
-systemctl --user restart elephant.service   # if still empty
+```
+
+If entries still do not appear, verify Elephant sees the provider:
+
+```bash
+elephant listproviders | grep laetasks
+elephant query 'menus:laetasks;;256'
 ```
 
 **Waybar taskspace indicator stuck or laggy**

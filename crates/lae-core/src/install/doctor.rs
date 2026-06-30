@@ -2,6 +2,7 @@
 
 use std::fs;
 use std::path::Path;
+use std::process::Command;
 
 use serde_json::Value;
 
@@ -118,6 +119,28 @@ pub fn run_doctor_checks(cfg: &LaeConfig) -> Result<Vec<DoctorCheck>> {
             .unwrap_or(socket2.reason),
     });
 
+    let legacy_daemon = legacy_python_daemon_running();
+    checks.push(DoctorCheck {
+        label: "No legacy Python lae daemon".into(),
+        passed: !legacy_daemon,
+        detail: if legacy_daemon {
+            "run: pkill -f 'lae.cli.daemon' — stale daemon overwrites Rust CLI state".into()
+        } else {
+            "ok".into()
+        },
+    });
+
+    let state_events = crate::state_notify::state_events_socket_path()
+        .map(|p| p.exists())
+        .unwrap_or(false);
+    checks.push(DoctorCheck {
+        label: "State-events socket (Waybar bar updates)".into(),
+        passed: state_events,
+        detail: crate::state_notify::state_events_socket_path()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| "XDG_RUNTIME_DIR/lae/state-events.sock".into()),
+    });
+
     Ok(checks)
 }
 
@@ -165,4 +188,11 @@ fn bind_is_omarchy_workspace_digit(bind: &Value) -> bool {
             .get("dispatcher")
             .and_then(|v| v.as_str())
             .is_some_and(|d| d == "workspace")
+}
+
+fn legacy_python_daemon_running() -> bool {
+    Command::new("pgrep")
+        .args(["-f", "lae.cli.daemon"])
+        .output()
+        .is_ok_and(|o| o.status.success())
 }

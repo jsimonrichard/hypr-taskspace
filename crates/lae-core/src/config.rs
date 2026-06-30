@@ -10,7 +10,7 @@ workspace_count = 10
 
 [tasks]
 base_dir = "~/lae-tasks"
-workspaces_per_task = 3
+workspaces_per_task = 10
 max_tasks = 9
 
 [distrobox]
@@ -61,7 +61,7 @@ impl Default for LaeConfig {
         Self {
             default_workspace_count: 10,
             tasks_base_dir: expand("~/lae-tasks"),
-            workspaces_per_task: 3,
+            workspaces_per_task: 10,
             max_tasks: 9,
             hyprland_enabled: true,
             daemon_socket: "lae/daemon.sock".into(),

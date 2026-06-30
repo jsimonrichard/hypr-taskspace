@@ -112,9 +112,13 @@ def set_taskspace(
             raise ValueError(f"Unknown task: {task_id}")
         state.context_mode = ContextMode.task
         state.current_task_id = task_id
+        state.previous_context = None
+        state.previous_task_id = None
     elif mode == ContextMode.default:
         state.context_mode = ContextMode.default
         state.current_task_id = None
+        state.previous_context = None
+        state.previous_task_id = None
     elif mode == ContextMode.global_:
         state.previous_context = state.context_mode
         state.previous_task_id = state.current_task_id
@@ -143,8 +147,9 @@ def restore_taskspace(state: SessionState) -> None:
     focus_last_workspace(state)
 
 
-def setup_task_workspaces(task: Task) -> None:
-    hyprland.ensure_workspaces(task.workspace_names())
+def setup_task_workspaces(task: Task, *, slot_count: int | None = None) -> None:
+    count = slot_count if slot_count is not None else task.workspace_count
+    hyprland.ensure_workspaces(task_workspace_names(task.id, count))
 
 
 def setup_default_taskspace_workspaces(count: int) -> None:

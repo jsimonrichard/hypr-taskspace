@@ -9,8 +9,10 @@ pub mod install;
 pub mod models;
 pub mod registry;
 pub mod service;
+pub mod state_notify;
 pub mod taskspaces;
 pub mod trace;
+pub mod walker;
 pub mod waybar;
 pub mod workspace_nav;
 pub mod workspaces;
@@ -25,18 +27,25 @@ pub use install::{
 pub use models::{ContextMode, SessionState, Task, TaskStatus};
 pub use registry::Registry;
 pub use service::{MenuTask, TaskService};
+pub use state_notify::{
+    publish as publish_state_change, publish_with_workspace, read_state_rev, state_events_socket_path,
+    StateChangeKind, StateEventListener,
+};
 pub use workspace_nav::{
     focus_last_workspace, restore_taskspace, set_taskspace, toggle_global, workspace_go,
     workspace_goto_name, workspace_next, workspace_prev,
 };
+pub use walker::{launch_task_menu, menu_action_prefix, resolve_lae_binary, spawn_walker_menu};
 pub use context_sync::sync_from_workspace_name;
 pub use taskspaces::visible_default_workspace_count;
 pub use trace::{
     analyze_recent_latency, clear_log, enable_for_process, enabled as trace_enabled, event as trace_event,
     format_report, tail_raw, trace_path,
 };
-pub use workspaces::allowed_workspace_names;
-pub use workspaces::workspace_display_label;
+pub use workspaces::{
+    allowed_workspace_names, bar_active_workspace_name, bar_occupied_names, bar_workspace_names,
+    workspace_display_label,
+};
 pub use waybar::{
     build_all_modules, build_all_modules_for_active_name, fetch_occupied_indices,
     fetch_occupied_names, read_waybar_modules_cache, refresh_modules_cache, write_modules_cache,

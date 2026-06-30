@@ -1,4 +1,4 @@
-//! Task and taskspace orchestration (direct mode — no daemon socket).
+//! Task and taskspace orchestration — writes `state.db` and publishes bar updates.
 
 use chrono::Utc;
 
@@ -7,9 +7,10 @@ use crate::error::{LaeError, Result};
 use crate::hyprland;
 use crate::models::{ContextMode, SessionState, Task, TaskStatus};
 use crate::registry::Registry;
+use crate::state_notify::{self, StateChangeKind};
 use crate::waybar::refresh_modules_cache;
 use crate::workspace_nav;
-use crate::workspaces::default_taskspace_workspace_names;
+use crate::workspaces::{default_taskspace_workspace_names, task_taskspace_workspace_names};
 use crate::xdg::{ensure_parent, lae_runtime_dir};
 
 pub struct TaskService {
@@ -29,8 +30,22 @@ impl TaskService {
     }
 
     pub fn save_state(&self, state: &SessionState) -> Result<()> {
+        self.commit_state(state, false, None)
+    }
+
+    /// Persist state and notify Waybar subscribers.
+    fn commit_state(
+        &self,
+        state: &SessionState,
+        refresh_cache: bool,
+        change: Option<StateChangeKind>,
+    ) -> Result<()> {
         self.registry.save_state(state)?;
-        self.write_runtime_files(state, true)
+        self.write_runtime_files(state, refresh_cache)?;
+        if let Some(kind) = change {
+            state_notify::publish(kind);
+        }
+        Ok(())
     }
 
     /// Persist state after a workspace switch — skips legacy Waybar JSON cache rebuild.
@@ -56,34 +71,39 @@ impl TaskService {
         state.default_workspace_count = self.config.default_workspace_count;
         if hyprland::available() && self.config.hyprland_enabled {
             workspace_nav::setup_default_taskspace_workspaces(self.config.default_workspace_count);
+            for task in state.tasks.values() {
+                if task.status != TaskStatus::Archived {
+                    workspace_nav::setup_task_workspaces_for_state(&task.id, &state);
+                }
+            }
         }
-        self.save_state(&state)
+        self.commit_state(&state, false, Some(StateChangeKind::Full))
     }
 
     pub fn context_default(&self) -> Result<()> {
         let mut state = self.load_state()?;
         workspace_nav::set_taskspace(&mut state, ContextMode::Default, None)
             .map_err(|e| crate::error::LaeError::Other(e))?;
-        self.save_state(&state)
+        self.commit_state(&state, false, Some(StateChangeKind::Taskspace))
     }
 
     pub fn context_global(&self) -> Result<()> {
         let mut state = self.load_state()?;
         workspace_nav::set_taskspace(&mut state, ContextMode::Global, None)
             .map_err(|e| crate::error::LaeError::Other(e))?;
-        self.save_state(&state)
+        self.commit_state(&state, false, Some(StateChangeKind::Taskspace))
     }
 
     pub fn context_restore(&self) -> Result<()> {
         let mut state = self.load_state()?;
         workspace_nav::restore_taskspace(&mut state);
-        self.save_state(&state)
+        self.commit_state(&state, false, Some(StateChangeKind::Taskspace))
     }
 
     pub fn toggle_global(&self) -> Result<()> {
         let mut state = self.load_state()?;
         workspace_nav::toggle_global(&mut state);
-        self.save_state(&state)
+        self.commit_state(&state, false, Some(StateChangeKind::Taskspace))
     }
 
     pub fn workspace_go(&self, relative: i32) -> Result<Option<String>> {
@@ -169,7 +189,7 @@ impl TaskService {
             repo_path,
             branch: None,
             container_name: format!("lae-{task_id}"),
-            workspace_count: self.config.workspaces_per_task,
+            workspace_count: self.config.default_workspace_count,
             browser_profile: None,
             created_at: now,
             last_active_at: now,
@@ -180,14 +200,14 @@ impl TaskService {
         state.tasks.insert(task_id.clone(), task.clone());
 
         if hyprland::available() && self.config.hyprland_enabled {
-            workspace_nav::setup_task_workspaces(&task);
+            workspace_nav::setup_task_workspaces(&task_id, self.config.default_workspace_count);
         }
 
         if switch {
-            self.save_state(&state)?;
+            self.commit_state(&state, false, Some(StateChangeKind::Full))?;
             self.switch_task(&task_id)
         } else {
-            self.save_state(&state)?;
+            self.commit_state(&state, false, Some(StateChangeKind::Full))?;
             Ok(task)
         }
     }
@@ -200,11 +220,14 @@ impl TaskService {
         if let Some(task) = state.tasks.get_mut(task_id) {
             task.status = TaskStatus::Archived;
         }
-        if state.current_task_id.as_deref() == Some(task_id) {
+        let kind = if state.current_task_id.as_deref() == Some(task_id) {
             workspace_nav::set_taskspace(&mut state, ContextMode::Default, None)
                 .map_err(LaeError::Other)?;
-        }
-        self.save_state(&state)
+            StateChangeKind::Taskspace
+        } else {
+            StateChangeKind::Full
+        };
+        self.commit_state(&state, false, Some(kind))
     }
 
     pub fn switch_task(&self, task_id: &str) -> Result<Task> {
@@ -232,9 +255,10 @@ impl TaskService {
             .or_insert(1);
 
         if hyprland::available() {
+            workspace_nav::setup_task_workspaces_for_state(&task.id, &state);
             hyprland::switch_workspace(&task.main_workspace());
         }
-        self.save_state(&state)?;
+        self.commit_state(&state, false, Some(StateChangeKind::Taskspace))?;
         Ok(task)
     }
 
@@ -277,7 +301,7 @@ impl TaskService {
                 id: task.id.clone(),
                 name: task.name.clone(),
                 kind: "task".into(),
-                workspaces: task.workspace_names(),
+                workspaces: task_taskspace_workspace_names(&state, &task.id),
                 current: state.context_mode == ContextMode::Task
                     && state.current_task_id.as_deref() == Some(task.id.as_str()),
                 status: task.status.as_str().into(),
@@ -321,8 +345,10 @@ mod tests {
         let svc = test_service(dir.path());
         let task = svc.create_task("Auth Fix", false).unwrap();
         assert_eq!(task.id, "auth-fix");
-        assert_eq!(task.workspace_count, 3);
-        assert_eq!(task.workspace_names(), vec!["auth-fix-1", "auth-fix-2", "auth-fix-3"]);
+        assert_eq!(task.workspace_count, 10);
+        assert_eq!(task.workspace_names().len(), 10);
+        assert_eq!(task.workspace_names()[0], "auth-fix-1");
+        assert_eq!(task.workspace_names()[9], "auth-fix-10");
         assert!(task.agent_notes_path.as_ref().unwrap().is_file());
         assert!(task.repo_path.is_dir());
 
