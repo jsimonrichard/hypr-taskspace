@@ -57,6 +57,18 @@ def task_for_workspace_name(state: SessionState, name: str) -> Task | None:
     return None
 
 
+def resolve_bar_workspace_name(hypr_name: str, bar_names: list[str]) -> str | None:
+    if hypr_name in bar_names:
+        return hypr_name
+    rel = relative_from_name(hypr_name)
+    if rel is None:
+        return None
+    idx = rel - 1
+    if idx < 0 or idx >= len(bar_names):
+        return None
+    return bar_names[idx]
+
+
 def allowed_workspace_names(
     state: SessionState, *, workspace_count: int = 3
 ) -> list[str]:

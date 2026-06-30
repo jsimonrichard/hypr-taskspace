@@ -82,20 +82,25 @@ pub fn bar_workspace_names(state: &SessionState) -> Vec<String> {
 }
 
 /// Map a Hyprland workspace name to the bar button key for the current taskspace.
+pub fn resolve_bar_workspace_name(hypr_name: &str, bar_names: &[String]) -> Option<String> {
+    if bar_names.iter().any(|n| n == hypr_name) {
+        return Some(hypr_name.to_string());
+    }
+    relative_slot_from_name(hypr_name).and_then(|rel| {
+        bar_names
+            .get(rel.saturating_sub(1) as usize)
+            .cloned()
+    })
+}
+
+/// Map a Hyprland workspace name to the bar button key for the current taskspace.
 pub fn bar_active_workspace_name(active_hypr_name: &str, bar_names: &[String]) -> String {
-    if bar_names.iter().any(|n| n == active_hypr_name) {
-        return active_hypr_name.to_string();
-    }
-    if let Some(rel) = relative_slot_from_name(active_hypr_name) {
-        let idx = rel.saturating_sub(1) as usize;
-        if let Some(slot) = bar_names.get(idx) {
-            return slot.clone();
-        }
-    }
-    bar_names
-        .first()
-        .cloned()
-        .unwrap_or_else(|| "1".into())
+    resolve_bar_workspace_name(active_hypr_name, bar_names).unwrap_or_else(|| {
+        bar_names
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "1".into())
+    })
 }
 
 /// Occupied bar slots for the current taskspace strip.

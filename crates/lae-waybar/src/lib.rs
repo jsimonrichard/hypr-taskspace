@@ -139,17 +139,22 @@ fn normalize_hypr_workspace_name(name: &str) -> String {
 impl Runtime {
     fn merge_pending(slot: &mut Option<PendingRefresh>, refresh: PendingRefresh) {
         use PendingRefresh::{Fast, Full, Occupied};
-        let upgrade = matches!(refresh, Full)
-            || matches!((slot.as_ref(), &refresh), (Some(Fast(_)), Full))
-            || matches!((slot.as_ref(), &refresh), (Some(Occupied), Full));
-        if upgrade {
-            *slot = Some(Full);
-            return;
+        match (slot.as_ref(), &refresh) {
+            (_, Full) => {
+                *slot = Some(Full);
+            }
+            (Some(Full), _) => {}
+            (Some(Fast(_)), Fast(name)) | (None, Fast(name)) => {
+                *slot = Some(Fast(name.clone()));
+            }
+            (Some(Occupied), Fast(name)) => {
+                *slot = Some(Fast(name.clone()));
+            }
+            (Some(Fast(_)), Occupied) | (Some(Occupied), Occupied) => {}
+            (None, Occupied) => {
+                *slot = Some(Occupied);
+            }
         }
-        if slot.is_some() {
-            return;
-        }
-        *slot = Some(refresh);
     }
 
     fn queue_and_dispatch(
@@ -451,11 +456,22 @@ impl Runtime {
             new_active_rel,
             &self.occupied_relative(&occupied),
         );
-        if new_visible != *self.visible_count.borrow() {
-            return false;
+        let old_visible = *self.visible_count.borrow();
+        let old_active = self.active_name.borrow().clone();
+        if new_visible != old_visible {
+            drop(occupied);
+            self.rebuild_workspace_strip(session, &bar, &bar_active, &self.occupied.borrow());
+            *self.active_name.borrow_mut() = bar_active.clone();
+            trace_event(
+                "waybar",
+                "rebuild",
+                &format!(
+                    "visible {old_visible}->{new_visible} active={bar_active} hypr={workspace_name}"
+                ),
+            );
+            return true;
         }
 
-        let old_active = self.active_name.borrow().clone();
         drop(occupied);
         drop(state_guard);
         self.flip_active(&old_active, &bar_active, &self.occupied.borrow());

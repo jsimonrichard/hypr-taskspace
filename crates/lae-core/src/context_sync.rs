@@ -1,6 +1,7 @@
 use crate::models::SessionState;
 use crate::workspaces::{
-    allowed_workspace_names, is_default_taskspace_workspace_name, task_for_workspace_name,
+    allowed_workspace_names, is_default_taskspace_workspace_name,
+    resolve_bar_workspace_name, task_for_workspace_name,
 };
 
 /// Align taskspace with a known workspace name (no Hyprland IPC).
@@ -9,9 +10,14 @@ pub fn sync_from_workspace_name(state: &mut SessionState, name: &str) -> bool {
         return false;
     }
 
+    let allowed = allowed_workspace_names(state);
+    let Some(resolved) = resolve_bar_workspace_name(name, &allowed) else {
+        return false;
+    };
+
     let mut changed = false;
 
-    if is_default_taskspace_workspace_name(name, state.default_workspace_count) {
+    if is_default_taskspace_workspace_name(&resolved, state.default_workspace_count) {
         if state.context_mode != crate::models::ContextMode::Default
             || state.current_task_id.is_some()
         {
@@ -19,7 +25,7 @@ pub fn sync_from_workspace_name(state: &mut SessionState, name: &str) -> bool {
             state.current_task_id = None;
             changed = true;
         }
-    } else if let Some(task) = task_for_workspace_name(state, name) {
+    } else if let Some(task) = task_for_workspace_name(state, &resolved) {
         let task_id = task.id.clone();
         if state.context_mode != crate::models::ContextMode::Task
             || state.current_task_id.as_deref() != Some(task_id.as_str())
@@ -30,8 +36,7 @@ pub fn sync_from_workspace_name(state: &mut SessionState, name: &str) -> bool {
         }
     }
 
-    let names = allowed_workspace_names(state);
-    if let Some(idx) = names.iter().position(|n| n == name) {
+    if let Some(idx) = allowed.iter().position(|n| n == &resolved) {
         let rel = (idx + 1) as i32;
         let key = state.taskspace_key();
         if state.last_workspace.get(&key).copied() != Some(rel) {
@@ -56,4 +61,46 @@ pub fn sync_from_active_workspace(state: &mut SessionState) -> bool {
     }
 
     sync_from_workspace_name(state, &active.name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{ContextMode, SessionState, Task, TaskStatus};
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+
+    fn task_state() -> SessionState {
+        let task = Task {
+            id: "auth-fix".into(),
+            name: "Auth Fix".into(),
+            status: TaskStatus::Active,
+            repo_url: None,
+            repo_path: PathBuf::from("/tmp/auth-fix/repo"),
+            branch: None,
+            container_name: "lae-auth-fix".into(),
+            workspace_count: 10,
+            browser_profile: None,
+            created_at: chrono::Utc::now(),
+            last_active_at: chrono::Utc::now(),
+            agent_notes_path: None,
+            ports: vec![],
+        };
+        SessionState {
+            context_mode: ContextMode::Task,
+            current_task_id: Some("auth-fix".into()),
+            default_workspace_count: 10,
+            tasks: HashMap::from([("auth-fix".into(), task)]),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn numeric_hypr_name_stays_in_task_taskspace() {
+        let mut state = task_state();
+        sync_from_workspace_name(&mut state, "8");
+        assert_eq!(state.context_mode, ContextMode::Task);
+        assert_eq!(state.current_task_id.as_deref(), Some("auth-fix"));
+        assert_eq!(state.last_workspace.get("task:auth-fix"), Some(&8));
+    }
 }
