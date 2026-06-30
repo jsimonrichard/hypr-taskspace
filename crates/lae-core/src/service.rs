@@ -88,25 +88,6 @@ impl TaskService {
         self.commit_state(&state, false, Some(StateChangeKind::Taskspace))
     }
 
-    pub fn context_global(&self) -> Result<()> {
-        let mut state = self.load_state()?;
-        workspace_nav::set_taskspace(&mut state, ContextMode::Global, None)
-            .map_err(|e| crate::error::LaeError::Other(e))?;
-        self.commit_state(&state, false, Some(StateChangeKind::Taskspace))
-    }
-
-    pub fn context_restore(&self) -> Result<()> {
-        let mut state = self.load_state()?;
-        workspace_nav::restore_taskspace(&mut state);
-        self.commit_state(&state, false, Some(StateChangeKind::Taskspace))
-    }
-
-    pub fn toggle_global(&self) -> Result<()> {
-        let mut state = self.load_state()?;
-        workspace_nav::toggle_global(&mut state);
-        self.commit_state(&state, false, Some(StateChangeKind::Taskspace))
-    }
-
     pub fn workspace_go(&self, relative: i32) -> Result<Option<String>> {
         let mut state = self.load_state()?;
         let name = workspace_nav::workspace_name_for_relative(&state, relative);
@@ -131,9 +112,7 @@ impl TaskService {
     pub fn remember_workspace_goto(&self, name: &str) -> Result<Option<String>> {
         let mut state = self.load_state()?;
         let allowed = crate::workspaces::allowed_workspace_names(&state);
-        if state.context_mode != crate::models::ContextMode::Global
-            && !allowed.iter().any(|n| n == name)
-        {
+        if !allowed.iter().any(|n| n == name) {
             return Ok(None);
         }
         if let Some(idx) = allowed.iter().position(|n| n == name) {
@@ -165,11 +144,9 @@ impl TaskService {
 
     pub fn workspace_goto(&self, name: &str) -> Result<Option<String>> {
         let mut state = self.load_state()?;
-        if state.context_mode != ContextMode::Global {
-            let allowed = crate::workspaces::allowed_workspace_names(&state);
-            if !allowed.iter().any(|n| n == name) {
-                return Ok(None);
-            }
+        let allowed = crate::workspaces::allowed_workspace_names(&state);
+        if !allowed.iter().any(|n| n == name) {
+            return Ok(None);
         }
         hyprland::switch_workspace(name);
         let allowed = crate::workspaces::allowed_workspace_names(&state);

@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::context_sync;
 use crate::error::{LaeError, Result};
 use crate::hyprland;
-use crate::models::{ContextMode, SessionState};
+use crate::models::SessionState;
 use crate::registry::Registry;
 use crate::taskspaces::visible_default_workspace_count;
 use crate::workspaces::allowed_workspace_names;
@@ -41,7 +41,6 @@ struct WaybarData {
     occupied_workspace_indices: Vec<i32>,
     active_workspace: i32,
     active_workspace_name: Option<String>,
-    global_mode: bool,
 }
 
 pub fn read_waybar_modules_cache() -> Result<WaybarModulesCache> {
@@ -203,7 +202,6 @@ fn build_waybar_data_with(
         occupied_workspace_indices: occupied.iter().copied().collect(),
         active_workspace: active_rel,
         active_workspace_name: active_name,
-        global_mode: state.context_mode == ContextMode::Global,
     }
 }
 
@@ -238,13 +236,6 @@ fn occupied_names(allowed: &HashSet<String>) -> HashSet<String> {
 }
 
 fn task_module(data: &WaybarData) -> WaybarModuleJson {
-    if data.global_mode {
-        return WaybarModuleJson {
-            text: "󰌾 all".into(),
-            tooltip: Some("Global taskspace — all Hyprland workspaces reachable".into()),
-            class: Some("global".into()),
-        };
-    }
     if let Some(task_id) = &data.task_id {
         let name = data.task_name.as_deref().unwrap_or(task_id);
         return WaybarModuleJson {
@@ -290,9 +281,6 @@ fn workspace_module(data: &WaybarData, index: usize) -> WaybarModuleJson {
         classes.push("active");
     } else if !occupied.contains(&(index as i32)) {
         classes.push("empty");
-    }
-    if data.global_mode {
-        classes.push("global");
     }
 
     WaybarModuleJson {

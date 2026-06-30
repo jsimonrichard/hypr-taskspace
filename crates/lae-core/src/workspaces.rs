@@ -65,15 +65,6 @@ pub fn task_for_workspace_name<'a>(state: &'a SessionState, name: &str) -> Optio
 
 pub fn allowed_workspace_names(state: &SessionState) -> Vec<String> {
     match state.context_mode {
-        ContextMode::Global => {
-            let mut names = default_taskspace_workspace_names(state.default_workspace_count);
-            for task in state.tasks.values() {
-                if task.status != TaskStatus::Archived {
-                    names.extend(task_taskspace_workspace_names(state, &task.id));
-                }
-            }
-            names
-        }
         ContextMode::Task => state
             .current_task_id
             .as_ref()
@@ -85,18 +76,9 @@ pub fn allowed_workspace_names(state: &SessionState) -> Vec<String> {
     }
 }
 
-/// Workspace names shown on the Waybar strip (not the full navigable set in global mode).
+/// Workspace names shown on the Waybar strip.
 pub fn bar_workspace_names(state: &SessionState) -> Vec<String> {
-    match state.context_mode {
-        ContextMode::Task => state
-            .current_task_id
-            .as_ref()
-            .map(|id| task_taskspace_workspace_names(state, id))
-            .unwrap_or_else(|| default_taskspace_workspace_names(state.default_workspace_count)),
-        ContextMode::Default | ContextMode::Global => {
-            default_taskspace_workspace_names(state.default_workspace_count)
-        }
-    }
+    allowed_workspace_names(state)
 }
 
 /// Map a Hyprland workspace name to the bar button key for the current taskspace.
@@ -116,8 +98,8 @@ pub fn bar_active_workspace_name(active_hypr_name: &str, bar_names: &[String]) -
         .unwrap_or_else(|| "1".into())
 }
 
-/// Occupied bar slots — in global mode, task workspaces count toward their slot number.
-pub fn bar_occupied_names(state: &SessionState, bar_names: &[String]) -> HashSet<String> {
+/// Occupied bar slots for the current taskspace strip.
+pub fn bar_occupied_names(_state: &SessionState, bar_names: &[String]) -> HashSet<String> {
     let bar_set: HashSet<String> = bar_names.iter().cloned().collect();
     let mut occupied = HashSet::new();
     if !crate::hyprland::available() {
@@ -128,14 +110,6 @@ pub fn bar_occupied_names(state: &SessionState, bar_names: &[String]) -> HashSet
             let name = &client.workspace_name;
             if bar_set.contains(name) {
                 occupied.insert(name.clone());
-                continue;
-            }
-            if state.context_mode == ContextMode::Global {
-                if let Some(rel) = relative_slot_from_name(name) {
-                    if let Some(slot) = bar_names.get(rel as usize - 1) {
-                        occupied.insert(slot.clone());
-                    }
-                }
             }
         }
     }
@@ -151,38 +125,6 @@ mod tests {
         assert_eq!(workspace_display_label("3"), "3");
         assert_eq!(workspace_display_label("10"), "0");
         assert_eq!(workspace_display_label("auth-fix-2"), "2");
-    }
-
-    #[test]
-    fn global_bar_shows_default_slots_only() {
-        use crate::models::{ContextMode, Task, TaskStatus};
-
-        let mut state = SessionState {
-            context_mode: ContextMode::Global,
-            default_workspace_count: 10,
-            ..Default::default()
-        };
-        state.tasks.insert(
-            "t".into(),
-            Task {
-                id: "t".into(),
-                name: "T".into(),
-                status: TaskStatus::Active,
-                repo_url: None,
-                repo_path: "/tmp".into(),
-                branch: None,
-                container_name: "lae-t".into(),
-                workspace_count: 10,
-                browser_profile: None,
-                created_at: chrono::Utc::now(),
-                last_active_at: chrono::Utc::now(),
-                agent_notes_path: None,
-                ports: vec![],
-            },
-        );
-        assert_eq!(allowed_workspace_names(&state).len(), 20);
-        assert_eq!(bar_workspace_names(&state).len(), 10);
-        assert_eq!(bar_workspace_names(&state)[0], "1");
     }
 
     #[test]

@@ -148,21 +148,6 @@ class TaskService:
         workspace_nav.set_taskspace(state, ContextMode.default)
         self.save_state(state)
 
-    def context_global(self) -> None:
-        state = self.get_state()
-        workspace_nav.set_taskspace(state, ContextMode.global_)
-        self.save_state(state)
-
-    def context_restore(self) -> None:
-        state = self.get_state()
-        workspace_nav.restore_taskspace(state)
-        self.save_state(state)
-
-    def toggle_global(self) -> None:
-        state = self.get_state()
-        workspace_nav.toggle_global(state)
-        self.save_state(state)
-
     def archive_task(self, task_id: str) -> None:
         state = self.get_state()
         task = state.tasks.get(task_id)

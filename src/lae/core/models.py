@@ -15,7 +15,6 @@ from lae.core.workspaces import task_workspace_names
 class ContextMode(str, Enum):
     default = "default"
     task = "task"
-    global_ = "global"
 
 
 class TaskStatus(str, Enum):
@@ -73,8 +72,6 @@ class WindowRecord(BaseModel):
 class SessionState(BaseModel):
     context_mode: ContextMode = ContextMode.default
     current_task_id: str | None = None
-    previous_context: ContextMode | None = None
-    previous_task_id: str | None = None
     # Relative workspace index (1-based) per taskspace key
     last_workspace: dict[str, int] = Field(default_factory=dict)
     default_workspace_count: int = 10

@@ -16,9 +16,6 @@
   padding: 0;
   margin: 0;
 }
-#cffi-lae #lae-task.global {
-  color: #fab387;
-}
 #cffi-lae #lae-task.task {
   color: #89b4fa;
 }
@@ -51,9 +48,6 @@
 #custom-lae-task {
   padding: 0 8px;
   margin-right: 4px;
-}
-#custom-lae-task.global {
-  color: #fab387;
 }
 #custom-lae-task.task {
   color: #89b4fa;

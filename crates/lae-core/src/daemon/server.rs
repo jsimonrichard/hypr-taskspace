@@ -203,18 +203,6 @@ fn dispatch(
             svc.context_default()?;
             Ok(json!({ "label": svc.taskspace_label()? }))
         }
-        "context_global" => {
-            svc.context_global()?;
-            Ok(json!({ "label": svc.taskspace_label()? }))
-        }
-        "context_restore" | "restore_context" => {
-            svc.context_restore()?;
-            Ok(json!({ "label": svc.taskspace_label()? }))
-        }
-        "toggle_global" => {
-            svc.toggle_global()?;
-            Ok(json!({ "label": svc.taskspace_label()? }))
-        }
         "set_context" => {
             let mode = params
                 .get("mode")
@@ -222,7 +210,7 @@ fn dispatch(
                 .unwrap_or("default");
             match mode {
                 "default" => svc.context_default()?,
-                "global" => svc.context_global()?,
+                "global" => svc.context_default()?,
                 "task" => {
                     let task_id = params
                         .get("task_id")

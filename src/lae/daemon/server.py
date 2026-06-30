@@ -134,21 +134,13 @@ class DaemonServer:
             return {"archived": params["task_id"]}
 
         if method == "set_context":
-            mode = ContextMode(params["mode"])
-            if mode == ContextMode.default:
+            mode = params["mode"]
+            if mode in ("default", "global"):
                 self.service.context_default()
-            elif mode == ContextMode.global_:
-                self.service.context_global()
-            elif mode == ContextMode.task:
+            elif mode == ContextMode.task.value:
                 self.service.switch_task(params["task_id"])
-            return {"context": self.service.get_state().context_label()}
-
-        if method == "toggle_global":
-            self.service.toggle_global()
-            return {"context": self.service.get_state().context_label()}
-
-        if method == "restore_context":
-            self.service.context_restore()
+            else:
+                raise ValueError(f"Unknown context mode: {mode}")
             return {"context": self.service.get_state().context_label()}
 
         if method in ("workspace_go", "desktop_go"):

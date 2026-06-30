@@ -57,14 +57,11 @@ pub fn workspace_prev(state: &mut SessionState) -> Option<String> {
 }
 
 pub fn workspace_goto_name(state: &mut SessionState, name: &str) -> Option<String> {
-    if state.context_mode != ContextMode::Global {
-        let allowed = allowed_workspace_names(state);
-        if !allowed.iter().any(|n| n == name) {
-            return None;
-        }
+    let allowed = allowed_workspace_names(state);
+    if !allowed.iter().any(|n| n == name) {
+        return None;
     }
     hyprland::switch_workspace(name);
-    let allowed = allowed_workspace_names(state);
     if let Some(idx) = allowed.iter().position(|n| n == name) {
         remember_workspace(state, (idx + 1) as i32);
     }
@@ -86,7 +83,11 @@ pub fn focus_last_workspace(state: &mut SessionState) -> Option<String> {
     Some(name)
 }
 
-pub fn set_taskspace(state: &mut SessionState, mode: ContextMode, task_id: Option<&str>) -> Result<(), String> {
+pub fn set_taskspace(
+    state: &mut SessionState,
+    mode: ContextMode,
+    task_id: Option<&str>,
+) -> Result<(), String> {
     match mode {
         ContextMode::Task => {
             let Some(task_id) = task_id else {
@@ -97,51 +98,14 @@ pub fn set_taskspace(state: &mut SessionState, mode: ContextMode, task_id: Optio
             }
             state.context_mode = ContextMode::Task;
             state.current_task_id = Some(task_id.to_string());
-            state.previous_context = None;
-            state.previous_task_id = None;
         }
         ContextMode::Default => {
             state.context_mode = ContextMode::Default;
             state.current_task_id = None;
-            state.previous_context = None;
-            state.previous_task_id = None;
-        }
-        ContextMode::Global => {
-            state.previous_context = Some(state.context_mode);
-            state.previous_task_id = state.current_task_id.clone();
-            state.context_mode = ContextMode::Global;
         }
     }
     focus_last_workspace(state);
     Ok(())
-}
-
-pub fn toggle_global(state: &mut SessionState) {
-    if state.context_mode == ContextMode::Global {
-        restore_taskspace(state);
-    } else {
-        let _ = set_taskspace(state, ContextMode::Global, None);
-    }
-}
-
-pub fn restore_taskspace(state: &mut SessionState) {
-    let prev_mode = state.previous_context.unwrap_or(ContextMode::Default);
-    let prev_task = state.previous_task_id.clone();
-    state.previous_context = None;
-    state.previous_task_id = None;
-    if prev_mode == ContextMode::Task {
-        if let Some(task_id) = prev_task {
-            state.context_mode = ContextMode::Task;
-            state.current_task_id = Some(task_id);
-        } else {
-            state.context_mode = ContextMode::Default;
-            state.current_task_id = None;
-        }
-    } else {
-        state.context_mode = ContextMode::Default;
-        state.current_task_id = None;
-    }
-    focus_last_workspace(state);
 }
 
 pub fn setup_task_workspaces(task_id: &str, slot_count: u32) {
@@ -179,18 +143,15 @@ mod tests {
     use crate::models::SessionState;
 
     #[test]
-    fn set_taskspace_default_clears_global_overlay() {
+    fn set_taskspace_default_clears_task() {
         let mut state = SessionState {
-            context_mode: ContextMode::Global,
-            previous_context: Some(ContextMode::Task),
-            previous_task_id: Some("test-task".into()),
+            context_mode: ContextMode::Task,
             current_task_id: Some("test-task".into()),
             default_workspace_count: 10,
             ..Default::default()
         };
         set_taskspace(&mut state, ContextMode::Default, None).unwrap();
         assert_eq!(state.context_mode, ContextMode::Default);
-        assert!(state.previous_context.is_none());
-        assert!(state.previous_task_id.is_none());
+        assert!(state.current_task_id.is_none());
     }
 }

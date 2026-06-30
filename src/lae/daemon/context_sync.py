@@ -23,22 +23,21 @@ def sync_from_active_workspace(state: SessionState) -> bool:
     changed = False
     name = active.name
 
-    if state.context_mode != ContextMode.global_:
-        if is_default_taskspace_workspace_name(name, state.default_workspace_count):
-            if state.context_mode != ContextMode.default or state.current_task_id is not None:
-                state.context_mode = ContextMode.default
-                state.current_task_id = None
+    if is_default_taskspace_workspace_name(name, state.default_workspace_count):
+        if state.context_mode != ContextMode.default or state.current_task_id is not None:
+            state.context_mode = ContextMode.default
+            state.current_task_id = None
+            changed = True
+    else:
+        task = task_for_workspace_name(state, name)
+        if task:
+            if (
+                state.context_mode != ContextMode.task
+                or state.current_task_id != task.id
+            ):
+                state.context_mode = ContextMode.task
+                state.current_task_id = task.id
                 changed = True
-        else:
-            task = task_for_workspace_name(state, name)
-            if task:
-                if (
-                    state.context_mode != ContextMode.task
-                    or state.current_task_id != task.id
-                ):
-                    state.context_mode = ContextMode.task
-                    state.current_task_id = task.id
-                    changed = True
 
     names = allowed_workspace_names(
         state, workspace_count=state.default_workspace_count

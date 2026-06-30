@@ -68,7 +68,6 @@ def status() -> None:
     if allowed:
         typer.echo(f"Taskspace: {taskspace_label}")
         typer.echo(f"Workspaces: {', '.join(allowed)}")
-        typer.echo("Escape: SUPER+ESCAPE for global taskspace")
     else:
         typer.echo(f"Taskspace: {taskspace_label}")
     current = summary.get("current_task")

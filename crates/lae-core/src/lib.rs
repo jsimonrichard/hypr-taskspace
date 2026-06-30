@@ -38,8 +38,8 @@ pub use state_notify::{
     StateChangeKind, StateEventListener,
 };
 pub use workspace_nav::{
-    focus_last_workspace, restore_taskspace, set_taskspace, toggle_global, workspace_go,
-    workspace_goto_name, workspace_next, workspace_prev,
+    focus_last_workspace, set_taskspace, workspace_go, workspace_goto_name, workspace_next,
+    workspace_prev,
 };
 pub use walker::{launch_task_menu, menu_action_prefix, resolve_lae_binary, spawn_walker_menu};
 pub use context_sync::sync_from_workspace_name;

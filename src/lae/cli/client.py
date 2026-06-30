@@ -44,21 +44,13 @@ def _direct(method: str, params: dict[str, Any]) -> Any:
         return {"archived": params["task_id"]}
 
     if method == "set_context":
-        mode = ContextMode(params["mode"])
-        if mode == ContextMode.default:
+        mode = params["mode"]
+        if mode in ("default", "global"):
             service.context_default()
-        elif mode == ContextMode.global_:
-            service.context_global()
-        elif mode == ContextMode.task:
+        elif mode == ContextMode.task.value:
             service.switch_task(params["task_id"])
-        return {"context": service.get_state().context_label()}
-
-    if method == "toggle_global":
-        service.toggle_global()
-        return {"context": service.get_state().context_label()}
-
-    if method == "restore_context":
-        service.context_restore()
+        else:
+            raise ValueError(f"Unknown context mode: {mode}")
         return {"context": service.get_state().context_label()}
 
     if method in ("workspace_go", "desktop_go"):

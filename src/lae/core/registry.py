@@ -197,15 +197,17 @@ class Registry:
 
         last_key = "last_desktop" if "last_desktop" in session.keys() else "last_workspace"
 
+        context_mode_raw = session["context_mode"]
+        if context_mode_raw == "global":
+            context_mode = ContextMode.default
+            current_task_id = None
+        else:
+            context_mode = ContextMode(context_mode_raw)
+            current_task_id = session["current_task_id"]
+
         return SessionState(
-            context_mode=ContextMode(session["context_mode"]),
-            current_task_id=session["current_task_id"],
-            previous_context=(
-                ContextMode(session["previous_context"])
-                if session["previous_context"]
-                else None
-            ),
-            previous_task_id=session["previous_task_id"],
+            context_mode=context_mode,
+            current_task_id=current_task_id,
             last_workspace=json.loads(session[last_key]),
             default_workspace_count=self.config.default_workspace_count,
             tasks=tasks,
@@ -219,8 +221,8 @@ class Registry:
                 UPDATE session SET
                     context_mode = ?,
                     current_task_id = ?,
-                    previous_context = ?,
-                    previous_task_id = ?,
+                    previous_context = NULL,
+                    previous_task_id = NULL,
                     last_desktop = ?,
                     default_desktop_count = ?
                 WHERE id = 1
@@ -228,8 +230,6 @@ class Registry:
                 (
                     state.context_mode.value,
                     state.current_task_id,
-                    state.previous_context.value if state.previous_context else None,
-                    state.previous_task_id,
                     json.dumps(state.last_workspace),
                     state.default_workspace_count,
                 ),

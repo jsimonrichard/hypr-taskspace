@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from lae.core.models import ContextMode
+
 if TYPE_CHECKING:
     from lae.core.models import SessionState, Task
 
@@ -58,15 +60,6 @@ def task_for_workspace_name(state: SessionState, name: str) -> Task | None:
 def allowed_workspace_names(
     state: SessionState, *, workspace_count: int = 3
 ) -> list[str]:
-    from lae.core.models import ContextMode
-
-    if state.context_mode == ContextMode.global_:
-        names = default_taskspace_workspace_names(state.default_workspace_count)
-        for task in state.tasks.values():
-            if task.status.value != "archived":
-                names.extend(task_workspace_names(task.id, state.default_workspace_count))
-        return names
-
     if state.context_mode == ContextMode.task and state.current_task_id:
         task = state.tasks.get(state.current_task_id)
         if task:

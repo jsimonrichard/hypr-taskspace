@@ -123,10 +123,10 @@ fn install_bar_button_styles(root: &GtkBox) {
         .add_provider(&provider, STYLE_PROVIDER_PRIORITY_APPLICATION);
 }
 
-const BUTTON_CLASSES: &[&str] = &["active", "empty", "idle", "global"];
+const BUTTON_CLASSES: &[&str] = &["active", "empty", "idle"];
 
 const LABEL_CLASSES: &[&str] = &[
-    "active", "empty", "global", "idle", "hidden", "task", "default",
+    "active", "empty", "idle", "hidden", "task", "default",
 ];
 
 fn normalize_hypr_workspace_name(name: &str) -> String {
@@ -286,7 +286,6 @@ impl Runtime {
         entry: &WorkspaceButton,
         workspace_name: &str,
         active: bool,
-        global: bool,
         occupied: &HashSet<String>,
     ) {
         entry.button.set_relief(ReliefStyle::None);
@@ -309,36 +308,31 @@ impl Runtime {
         } else {
             ctx.add_class("idle");
         }
-        if global {
-            ctx.add_class("global");
-        }
     }
 
     fn set_button_active(
         &self,
         name: &str,
         active: bool,
-        global: bool,
         occupied: &HashSet<String>,
     ) {
         let Some(entry) = self.buttons.borrow().get(name).cloned() else {
             return;
         };
-        Self::style_button(&entry, name, active, global, occupied);
+        Self::style_button(&entry, name, active, occupied);
     }
 
     fn flip_active(
         &self,
         old: &str,
         new: &str,
-        global: bool,
         occupied: &HashSet<String>,
     ) {
         if old != new && self.buttons.borrow().contains_key(old) {
-            self.set_button_active(old, false, global, occupied);
+            self.set_button_active(old, false, occupied);
         }
         if self.buttons.borrow().contains_key(new) {
-            self.set_button_active(new, true, global, occupied);
+            self.set_button_active(new, true, occupied);
         }
     }
 
@@ -350,7 +344,6 @@ impl Runtime {
         active: &str,
         occupied: &HashSet<String>,
     ) {
-        let global = state.context_mode == lae_core::ContextMode::Global;
         let active_rel = allowed
             .iter()
             .position(|n| n == active)
@@ -379,7 +372,7 @@ impl Runtime {
             let label = Label::new(None);
             button.add(&label);
             let entry = WorkspaceButton { button, label };
-            Self::style_button(&entry, name, is_active, global, occupied);
+            Self::style_button(&entry, name, is_active, occupied);
             let ws_name = name.clone();
             entry.button.connect_clicked(move |_| {
                 Self::on_workspace_clicked(&ws_name);
@@ -463,10 +456,9 @@ impl Runtime {
         }
 
         let old_active = self.active_name.borrow().clone();
-        let global = session.context_mode == lae_core::ContextMode::Global;
         drop(occupied);
         drop(state_guard);
-        self.flip_active(&old_active, &bar_active, global, &self.occupied.borrow());
+        self.flip_active(&old_active, &bar_active, &self.occupied.borrow());
         trace_event(
             "waybar",
             "flip",
@@ -535,8 +527,7 @@ impl Runtime {
         if strip_changed || visibility_changed {
             self.rebuild_workspace_strip(&state, &bar, &bar_active, &occupied);
         } else if old_active != bar_active {
-            let global = state.context_mode == lae_core::ContextMode::Global;
-            self.flip_active(&old_active, &bar_active, global, &occupied);
+            self.flip_active(&old_active, &bar_active, &occupied);
         }
 
         self.store_snapshot(&state, &bar, &occupied, &bar_active);
@@ -623,11 +614,9 @@ impl Runtime {
         let bar = bar_workspace_names(&state);
         let occupied = bar_occupied_names(&state, &bar);
         let active = self.active_name.borrow().clone();
-        let global = state.context_mode == lae_core::ContextMode::Global;
-
         for (name, entry) in self.buttons.borrow().iter() {
             let is_active = name == &active;
-            Self::style_button(entry, name, is_active, global, &occupied);
+            Self::style_button(entry, name, is_active, &occupied);
         }
 
         self.store_snapshot(&state, &bar, &occupied, &active);

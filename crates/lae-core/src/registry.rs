@@ -119,8 +119,6 @@ impl Registry {
             Ok(SessionRow {
                 context_mode: row.get(1)?,
                 current_task_id: row.get(2)?,
-                previous_context: row.get(3)?,
-                previous_task_id: row.get(4)?,
                 last_desktop: row.get(5)?,
             })
         })?;
@@ -169,12 +167,11 @@ impl Registry {
 
         Ok(SessionState {
             context_mode: parse_context_mode(&session.context_mode),
-            current_task_id: session.current_task_id,
-            previous_context: session
-                .previous_context
-                .as_deref()
-                .map(parse_context_mode),
-            previous_task_id: session.previous_task_id,
+            current_task_id: if session.context_mode == "global" {
+                None
+            } else {
+                session.current_task_id
+            },
             last_workspace,
             default_workspace_count: self.config.default_workspace_count,
             tasks,
@@ -187,12 +184,10 @@ impl Registry {
         let last_desktop = serde_json::to_string(&state.last_workspace)
             .map_err(|e| LaeError::Other(e.to_string()))?;
         conn.execute(
-            "UPDATE session SET context_mode = ?, current_task_id = ?, previous_context = ?, previous_task_id = ?, last_desktop = ?, default_desktop_count = ? WHERE id = 1",
+            "UPDATE session SET context_mode = ?, current_task_id = ?, previous_context = NULL, previous_task_id = NULL, last_desktop = ?, default_desktop_count = ? WHERE id = 1",
             params![
                 state.context_mode.as_str(),
                 state.current_task_id,
-                state.previous_context.map(|m| m.as_str().to_string()),
-                state.previous_task_id,
                 last_desktop,
                 state.default_workspace_count as i32,
             ],
@@ -251,8 +246,6 @@ impl Registry {
 struct SessionRow {
     context_mode: String,
     current_task_id: Option<String>,
-    previous_context: Option<String>,
-    previous_task_id: Option<String>,
     last_desktop: String,
 }
 
@@ -268,7 +261,7 @@ fn table_columns(conn: &Connection, table: &str) -> Result<Vec<String>> {
 fn parse_context_mode(raw: &str) -> ContextMode {
     match raw {
         "task" => ContextMode::Task,
-        "global" => ContextMode::Global,
+        "global" => ContextMode::Default,
         _ => ContextMode::Default,
     }
 }

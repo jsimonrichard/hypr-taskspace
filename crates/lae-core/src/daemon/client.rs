@@ -146,18 +146,6 @@ impl DaemonClient {
         self.rpc_or_direct("context_default", json!({}), |s| s.context_default())
     }
 
-    pub fn context_global(&self) -> Result<()> {
-        self.rpc_or_direct("context_global", json!({}), |s| s.context_global())
-    }
-
-    pub fn context_restore(&self) -> Result<()> {
-        self.rpc_or_direct("context_restore", json!({}), |s| s.context_restore())
-    }
-
-    pub fn toggle_global(&self) -> Result<()> {
-        self.rpc_or_direct("toggle_global", json!({}), |s| s.toggle_global())
-    }
-
     pub fn workspace_go(&self, relative: i32) -> Result<Option<String>> {
         self.hyprctl_then_remember(relative)
     }

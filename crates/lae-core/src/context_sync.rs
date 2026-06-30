@@ -1,4 +1,4 @@
-use crate::models::{ContextMode, SessionState};
+use crate::models::SessionState;
 use crate::workspaces::{
     allowed_workspace_names, is_default_taskspace_workspace_name, task_for_workspace_name,
 };
@@ -11,22 +11,22 @@ pub fn sync_from_workspace_name(state: &mut SessionState, name: &str) -> bool {
 
     let mut changed = false;
 
-    if state.context_mode != ContextMode::Global {
-        if is_default_taskspace_workspace_name(name, state.default_workspace_count) {
-            if state.context_mode != ContextMode::Default || state.current_task_id.is_some() {
-                state.context_mode = ContextMode::Default;
-                state.current_task_id = None;
-                changed = true;
-            }
-        } else if let Some(task) = task_for_workspace_name(state, name) {
-            let task_id = task.id.clone();
-            if state.context_mode != ContextMode::Task
-                || state.current_task_id.as_deref() != Some(task_id.as_str())
-            {
-                state.context_mode = ContextMode::Task;
-                state.current_task_id = Some(task_id);
-                changed = true;
-            }
+    if is_default_taskspace_workspace_name(name, state.default_workspace_count) {
+        if state.context_mode != crate::models::ContextMode::Default
+            || state.current_task_id.is_some()
+        {
+            state.context_mode = crate::models::ContextMode::Default;
+            state.current_task_id = None;
+            changed = true;
+        }
+    } else if let Some(task) = task_for_workspace_name(state, name) {
+        let task_id = task.id.clone();
+        if state.context_mode != crate::models::ContextMode::Task
+            || state.current_task_id.as_deref() != Some(task_id.as_str())
+        {
+            state.context_mode = crate::models::ContextMode::Task;
+            state.current_task_id = Some(task_id);
+            changed = true;
         }
     }
 

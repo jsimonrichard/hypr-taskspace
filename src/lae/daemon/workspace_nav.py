@@ -6,6 +6,7 @@ from lae.core.models import ContextMode, SessionState, Task
 from lae.core.workspaces import (
     allowed_workspace_names,
     default_taskspace_workspace_names,
+    task_workspace_names,
 )
 from lae.integrations import hyprland
 
@@ -74,14 +75,12 @@ def workspace_prev(state: SessionState) -> str | None:
 
 
 def workspace_goto_name(state: SessionState, name: str) -> str | None:
-    if state.context_mode != ContextMode.global_:
-        allowed = allowed_workspaces(state)
-        if name not in allowed:
-            return None
+    allowed = allowed_workspaces(state)
+    if name not in allowed:
+        return None
     hyprland.switch_workspace(name)
-    names = allowed_workspaces(state)
-    if name in names:
-        _remember_workspace(state, names.index(name) + 1)
+    if name in allowed:
+        _remember_workspace(state, allowed.index(name) + 1)
     return name
 
 
@@ -112,36 +111,7 @@ def set_taskspace(
             raise ValueError(f"Unknown task: {task_id}")
         state.context_mode = ContextMode.task
         state.current_task_id = task_id
-        state.previous_context = None
-        state.previous_task_id = None
     elif mode == ContextMode.default:
-        state.context_mode = ContextMode.default
-        state.current_task_id = None
-        state.previous_context = None
-        state.previous_task_id = None
-    elif mode == ContextMode.global_:
-        state.previous_context = state.context_mode
-        state.previous_task_id = state.current_task_id
-        state.context_mode = ContextMode.global_
-    focus_last_workspace(state)
-
-
-def toggle_global(state: SessionState) -> None:
-    if state.context_mode == ContextMode.global_:
-        restore_taskspace(state)
-    else:
-        set_taskspace(state, ContextMode.global_)
-
-
-def restore_taskspace(state: SessionState) -> None:
-    prev_mode = state.previous_context or ContextMode.default
-    prev_task = state.previous_task_id
-    state.previous_context = None
-    state.previous_task_id = None
-    if prev_mode == ContextMode.task and prev_task:
-        state.context_mode = ContextMode.task
-        state.current_task_id = prev_task
-    else:
         state.context_mode = ContextMode.default
         state.current_task_id = None
     focus_last_workspace(state)
@@ -158,7 +128,6 @@ def setup_default_taskspace_workspaces(count: int) -> None:
 
 # Deprecated aliases
 set_context = set_taskspace
-restore_context = restore_taskspace
 focus_last_desktop = focus_last_workspace
 desktop_go = workspace_go
 desktop_next = workspace_next

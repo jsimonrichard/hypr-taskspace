@@ -15,7 +15,7 @@ pub fn visible_default_workspace_count(
         return total;
     }
 
-    // Default and global: show at least DEFAULT_MIN_VISIBLE_WORKSPACES slots.
+    // Default taskspace: show at least DEFAULT_MIN_VISIBLE_WORKSPACES slots.
     let highest_occupied = occupied.iter().copied().max().unwrap_or(0) as u32;
     let active = active_rel.max(0) as u32;
     let visible = active

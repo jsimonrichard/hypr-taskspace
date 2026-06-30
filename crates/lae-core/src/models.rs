@@ -12,8 +12,6 @@ pub enum ContextMode {
     #[default]
     Default,
     Task,
-    #[serde(rename = "global")]
-    Global,
 }
 
 impl ContextMode {
@@ -21,7 +19,6 @@ impl ContextMode {
         match self {
             Self::Default => "default",
             Self::Task => "task",
-            Self::Global => "global",
         }
     }
 }
@@ -91,8 +88,6 @@ pub struct WindowRecord {
 pub struct SessionState {
     pub context_mode: ContextMode,
     pub current_task_id: Option<String>,
-    pub previous_context: Option<ContextMode>,
-    pub previous_task_id: Option<String>,
     #[serde(default)]
     pub last_workspace: HashMap<String, i32>,
     pub default_workspace_count: u32,

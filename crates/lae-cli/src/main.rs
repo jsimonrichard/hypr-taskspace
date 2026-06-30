@@ -92,10 +92,6 @@ enum UninstallCommands {
 #[derive(Subcommand)]
 enum TaskspaceCommands {
     Default,
-    Global,
-    Restore,
-    #[command(name = "toggle-global")]
-    ToggleGlobal,
     Current,
 }
 
@@ -231,9 +227,6 @@ fn run() -> Result<()> {
         },
         Commands::Taskspace(command) | Commands::Context(command) => match command {
             TaskspaceCommands::Default => cmd_taskspace_default(),
-            TaskspaceCommands::Global => cmd_taskspace_global(),
-            TaskspaceCommands::Restore => cmd_taskspace_restore(),
-            TaskspaceCommands::ToggleGlobal => cmd_taskspace_toggle(),
             TaskspaceCommands::Current => cmd_taskspace_current(),
         },
         Commands::Workspace(command) | Commands::Desktop(command) => match command {
@@ -293,7 +286,6 @@ fn cmd_status() -> Result<()> {
     if !allowed.is_empty() {
         println!("Taskspace: {taskspace_label}");
         println!("Workspaces: {}", allowed.join(", "));
-        println!("Escape: SUPER+ESCAPE for global taskspace");
     } else {
         println!("Taskspace: {taskspace_label}");
     }
@@ -506,21 +498,6 @@ fn echo_taskspace() -> Result<()> {
 
 fn cmd_taskspace_default() -> Result<()> {
     client()?.context_default()?;
-    echo_taskspace()
-}
-
-fn cmd_taskspace_global() -> Result<()> {
-    client()?.context_global()?;
-    echo_taskspace()
-}
-
-fn cmd_taskspace_restore() -> Result<()> {
-    client()?.context_restore()?;
-    echo_taskspace()
-}
-
-fn cmd_taskspace_toggle() -> Result<()> {
-    client()?.toggle_global()?;
     echo_taskspace()
 }
 

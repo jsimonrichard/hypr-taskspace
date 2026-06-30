@@ -1,10 +1,10 @@
-"""Taskspace switching — default, task-scoped, or global."""
+"""Taskspace switching — default or task-scoped."""
 
 from __future__ import annotations
 
 import typer
 
-app = typer.Typer(help="Taskspace: default host, task-scoped, or global escape hatch.")
+app = typer.Typer(help="Taskspace: default host or task-scoped.")
 
 
 def _echo_taskspace() -> None:
@@ -21,39 +21,6 @@ def taskspace_default() -> None:
     from lae.cli.client import call
 
     call("set_context", {"mode": "default"})
-    _echo_taskspace()
-
-
-@app.command("global")
-def taskspace_global() -> None:
-    """Enter global taskspace (all Hyprland workspaces reachable)."""
-    from lae.cli.client import call
-
-    call("set_context", {"mode": "global"})
-    _echo_taskspace()
-
-
-@app.command("restore")
-def taskspace_restore() -> None:
-    """Exit global taskspace and restore the previous scoped taskspace."""
-    from lae.cli.client import call
-
-    call("restore_context")
-    _echo_taskspace()
-
-
-@app.command("escape")
-def taskspace_escape() -> None:
-    """Alias for global escape hatch."""
-    taskspace_global()
-
-
-@app.command("toggle-global")
-def taskspace_toggle_global() -> None:
-    """Toggle global taskspace (bound to SUPER+ESCAPE)."""
-    from lae.cli.client import call
-
-    call("toggle_global")
     _echo_taskspace()
 
 

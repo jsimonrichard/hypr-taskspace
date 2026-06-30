@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from lae.core.models import ContextMode, SessionState
+from lae.core.models import SessionState
 from lae.core.taskspaces import visible_default_workspace_count
 from lae.daemon import context_sync, workspace_nav
 from lae.integrations import hyprland
@@ -49,7 +49,6 @@ def build_waybar_data(state: SessionState, *, sync: bool = True) -> dict[str, An
         "occupied_workspace_indices": sorted(occupied),
         "active_workspace": active_rel,
         "active_workspace_name": active_name,
-        "global_mode": state.context_mode == ContextMode.global_,
     }
 
 
@@ -104,12 +103,6 @@ build_waybar_state = build_waybar_data
 
 
 def _task_module(data: dict[str, Any]) -> dict[str, Any]:
-    if data["global_mode"]:
-        return {
-            "text": "󰌾 all",
-            "tooltip": "Global taskspace — all Hyprland workspaces reachable",
-            "class": "global",
-        }
     if data["task_id"]:
         name = data["task_name"] or data["task_id"]
         tip = f"Task: {name}\nWorkspaces: {', '.join(data['workspaces'])}"
@@ -146,8 +139,6 @@ def _workspace_module(data: dict[str, Any], index: int) -> dict[str, Any]:
         classes.append("active")
     elif index not in occupied:
         classes.append("empty")
-    if data["global_mode"]:
-        classes.append("global")
 
     return {
         "text": ACTIVE_WORKSPACE_ICON if is_active else _workspace_label(index),

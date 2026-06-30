@@ -113,7 +113,6 @@ Legacy aliases still work: `lae context default`, `lae desktop go 1`, etc.
 | Task menu (Walker) | Click task name in Waybar, **SUPER+Tab**, or `lae task menu` |
 | Workspace 1–9 / 10 within current taskspace | **SUPER+1..9**, **SUPER+0** (= workspace 10) — `hyprctl dispatch` via `lae-workspace-switch`, then async state sync |
 | Default / host taskspace | **SUPER+H** or Walker → **default** |
-| Global escape hatch (all Hyprland workspaces) | **SUPER+Escape** |
 | Host terminal | **SUPER+Return** (your existing Omarchy bind — unchanged) |
 
 SUPER+Space remains the normal Walker app launcher, not the task menu.
@@ -145,7 +144,7 @@ lae daemon start|stop|status|run
 lae install all|hypr|waybar|status
 lae uninstall hypr|waybar
 
-lae taskspace default|global|restore|toggle-global|current   # alias: context
+lae taskspace default|current   # alias: context
 lae workspace go|next|prev|goto                              # alias: desktop
 
 lae task new|list|switch|current|archive|menu|menu-json
@@ -213,24 +212,13 @@ Do not mix pip-installed `lae-py` / old `lae` shims on PATH with `~/.local/share
 
 ## Troubleshooting
 
-**Stuck in global ("all") taskspace**
+**Wrong taskspace or stale state**
 
-The bar shows `󰌾 all` when `context_mode` is global. If toggle/default/task-switch seem to do nothing:
-
-1. Stop legacy Python daemons — they cached session state and could overwrite Rust CLI writes:
-   ```bash
-   pkill -f 'lae.cli.daemon'
-   ```
-2. Start the Rust daemon so keybinds and CLI share one control plane:
-   ```bash
-   lae daemon start
-   ```
-3. Rebuild Waybar module and restart Waybar after pulling fixes (`install waybar`).
-4. Reset taskspace explicitly:
-   ```bash
-   LAE_WORKSPACE=$PWD cargo run -p lae-cli --release -- taskspace default
-   sqlite3 ~/.local/share/lae/state.db "SELECT context_mode, current_task_id FROM session;"
-   ```
+```bash
+lae taskspace default
+lae daemon start
+sqlite3 ~/.local/share/lae/state.db "SELECT context_mode, current_task_id FROM session;"
+```
 
 **Walker task menu is empty**
 
