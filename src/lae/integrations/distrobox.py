@@ -54,3 +54,15 @@ def is_running(name: str) -> bool:
         if name in line and "running" in line.lower():
             return True
     return False
+
+
+def stop_container(name: str) -> None:
+    if not available() or not container_exists(name):
+        return
+    sp.run(["distrobox", "stop", "--name", name], check=False)
+
+
+def remove_container(name: str) -> None:
+    if not available() or not container_exists(name):
+        return
+    sp.run(["distrobox", "rm", "--name", name, "-Y"], check=False)

@@ -121,6 +121,11 @@ def move_window_to_workspace(address: str, workspace_name: str) -> None:
         dispatch("movetoworkspace", f"name:{workspace_name},address:{address}")
 
 
+def close_window(address: str) -> None:
+    addr = address.removeprefix("0x")
+    dispatch("closewindow", f"address:0x{addr}")
+
+
 def rename_workspace(ws_id: int, name: str) -> None:
     keyword("workspace", f"{ws_id},name:{name}")
 

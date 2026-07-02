@@ -104,10 +104,23 @@ def task_terminal(
 def task_archive(
     name_or_id: str = typer.Argument(..., help="Task to archive"),
 ) -> None:
-    """Archive a task (keeps files; removes from active navigation)."""
+    """Archive a task (closes windows, stops container; keeps files)."""
     from lae.cli.client import call
     from lae.daemon.service import TaskService
 
     task = TaskService().resolve_task(name_or_id)
     call("archive_task", {"task_id": task.id})
     typer.echo(f"Archived {task.id}")
+
+
+@app.command("delete")
+def task_delete(
+    name_or_id: str = typer.Argument(..., help="Task to delete permanently"),
+) -> None:
+    """Delete a task and remove its data directory."""
+    from lae.cli.client import call
+    from lae.daemon.service import TaskService
+
+    task = TaskService().resolve_task(name_or_id)
+    call("delete_task", {"task_id": task.id})
+    typer.echo(f"Deleted {task.id}")

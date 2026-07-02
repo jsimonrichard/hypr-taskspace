@@ -123,12 +123,17 @@ enum TaskCommands {
     List {
         #[arg(long)]
         json: bool,
+        #[arg(long, help = "Include archived tasks")]
+        archived: bool,
     },
     Switch {
         name_or_id: String,
     },
     Current,
     Archive {
+        name_or_id: String,
+    },
+    Delete {
         name_or_id: String,
     },
     /// Open the task manager TUI in a terminal window (alias for tui-launch)
@@ -242,10 +247,11 @@ fn run() -> Result<()> {
         },
         Commands::Task { command } => match command {
             TaskCommands::New { name, no_switch } => cmd_task_new(&name, !no_switch),
-            TaskCommands::List { json } => cmd_task_list(json),
+            TaskCommands::List { json, archived } => cmd_task_list(json, archived),
             TaskCommands::Switch { name_or_id } => cmd_task_switch(&name_or_id),
             TaskCommands::Current => cmd_task_current(),
             TaskCommands::Archive { name_or_id } => cmd_task_archive(&name_or_id),
+            TaskCommands::Delete { name_or_id } => cmd_task_delete(&name_or_id),
             TaskCommands::Menu | TaskCommands::TuiLaunch => cmd_task_tui_launch(),
             TaskCommands::Tui => cmd_task_tui(),
         },
@@ -561,38 +567,98 @@ fn cmd_task_new(name: &str, switch: bool) -> Result<()> {
 fn cmd_task_archive(name_or_id: &str) -> Result<()> {
     let svc = client()?;
     let task = svc.resolve_task(name_or_id)?;
+    let preview = svc.preview_task_teardown(&task.id)?;
     svc.archive_task(&task.id)?;
     println!("Archived {}", task.id);
+    if preview.window_count > 0 {
+        println!("Closed {} window(s).", preview.window_count);
+    }
+    if preview.container_exists {
+        println!("Stopped container {}.", preview.container_name);
+    }
+    println!("Task files kept at {}.", preview.data_dir.display());
     Ok(())
 }
 
-fn cmd_task_list(json: bool) -> Result<()> {
+fn cmd_task_delete(name_or_id: &str) -> Result<()> {
+    let svc = client()?;
+    let task = svc.resolve_task(name_or_id)?;
+    let preview = svc.preview_task_teardown(&task.id)?;
+    svc.delete_task(&task.id)?;
+    println!("Deleted {}", task.id);
+    if preview.window_count > 0 {
+        println!("Closed {} window(s).", preview.window_count);
+    }
+    if preview.container_exists {
+        println!("Removed container {}.", preview.container_name);
+    }
+    if preview.data_dir.exists() {
+        println!("Removed task data at {}.", preview.data_dir.display());
+    }
+    Ok(())
+}
+
+fn cmd_task_list(json: bool, include_archived: bool) -> Result<()> {
     let svc = client()?;
     if json {
         let items = svc.tasks_for_menu()?;
-        println!(
-            "{}",
-            serde_json::to_string(&items).map_err(|e| LaeError::Other(e.to_string()))?
-        );
+        if include_archived {
+            let archived: Vec<_> = svc.list_archived_tasks()?.into_iter().map(|t| {
+                serde_json::json!({
+                    "id": t.id,
+                    "name": t.name,
+                    "status": t.status.as_str(),
+                    "kind": "task",
+                    "current": false,
+                })
+            }).collect();
+            println!(
+                "{}",
+                serde_json::to_string(&serde_json::json!({
+                    "active": items,
+                    "archived": archived,
+                }))
+                .map_err(|e| LaeError::Other(e.to_string()))?
+            );
+        } else {
+            println!(
+                "{}",
+                serde_json::to_string(&items).map_err(|e| LaeError::Other(e.to_string()))?
+            );
+        }
         return Ok(());
     }
     let tasks = svc.list_active_tasks()?;
-    if tasks.is_empty() {
+    if tasks.is_empty() && !include_archived {
         println!("No tasks.");
         return Ok(());
     }
     for t in tasks {
-        println!(
-            "{:<20} {:<8}  {}-1..{}-{}  {}",
-            t.id,
-            t.status.as_str(),
-            t.id,
-            t.id,
-            t.workspace_count,
-            t.repo_path.display()
-        );
+        print_task_line(&t);
+    }
+    if include_archived {
+        let archived = svc.list_archived_tasks()?;
+        if !archived.is_empty() {
+            println!();
+            println!("Archived:");
+            for t in archived {
+                print_task_line(&t);
+            }
+        }
     }
     Ok(())
+}
+
+fn print_task_line(t: &lae_core::Task) {
+    println!(
+        "{:<20} {:<8}  {}-1..{}-{}  {}",
+        t.id,
+        t.status.as_str(),
+        t.id,
+        t.id,
+        t.workspace_count,
+        t.repo_path.display()
+    );
 }
 
 fn cmd_task_switch(name_or_id: &str) -> Result<()> {

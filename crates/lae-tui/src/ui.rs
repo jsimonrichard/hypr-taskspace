@@ -7,6 +7,7 @@ use ratatui::Frame;
 use crate::app::{
     App, ListEntry, Panel, RepoFormField, Screen, TaskRow,
 };
+use crate::modal::{draw_button_bar, ModalButtonBar};
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
@@ -34,6 +35,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Screen::RepoForm { .. } => draw_repo_form(frame, area, app),
         Screen::ConfirmDeleteRepo { .. } => draw_confirm_delete_repo(frame, area, app),
         Screen::ConfirmArchive { .. } => draw_confirm_archive(frame, area, app),
+        Screen::ConfirmDelete { .. } => draw_confirm_delete(frame, area, app),
         Screen::Main => {}
     }
 }
@@ -159,17 +161,28 @@ fn header_line(label: &str) -> Line<'static> {
 }
 
 fn task_line(task: &TaskRow) -> Line<'static> {
-    let icon = if task.is_default { "󰣇" } else { "󱓝" };
+    let icon = if task.is_default {
+        "󰣇"
+    } else if task.is_archived {
+        "󰁰"
+    } else {
+        "󱓝"
+    };
     let marker = if task.current { " ●" } else { "" };
     let detail = if task.is_default {
         String::new()
     } else {
         format!("  {}", task.id)
     };
+    let name_style = if task.is_archived {
+        Style::default().fg(Color::DarkGray)
+    } else {
+        Style::default().add_modifier(Modifier::BOLD)
+    };
     Line::from(vec![
         Span::raw("    "),
         Span::raw(format!("{icon} ")),
-        Span::styled(task.name.clone(), Style::default().add_modifier(Modifier::BOLD)),
+        Span::styled(task.name.clone(), name_style),
         Span::raw(format!("{detail}{marker}")),
     ])
 }
@@ -177,16 +190,12 @@ fn task_line(task: &TaskRow) -> Line<'static> {
 fn draw_help(frame: &mut Frame, area: Rect, app: &App) {
     let text = match &app.screen {
         Screen::Main if app.panel == Panel::Tasks => {
-            "↑/↓ move  Enter switch  n new  d archive  r refresh  h/l Tab panels  q quit"
+            "↑/↓ move  Enter switch  n new  d archive  D delete  r refresh  h/l Tab panels  q quit"
         }
         Screen::Main if app.panel == Panel::Repos => {
             "↑/↓ move  n new  e edit  d delete  r refresh  h/l Tab panels  q quit"
         }
-        Screen::NewTaskPickRepo { .. } => "↑/↓ select repo  Enter continue  Esc cancel",
-        Screen::NewTaskName { .. } => "Type task name  Enter create  Esc cancel",
-        Screen::RepoForm { .. } => "Tab field  Enter save  Esc cancel",
-        Screen::ConfirmDeleteRepo { .. } => "y confirm delete  n/Esc cancel",
-        Screen::ConfirmArchive { .. } => "y confirm archive  n/Esc cancel",
+        Screen::Main => "",
         _ => "",
     };
     let help = Paragraph::new(text).style(Style::default().fg(Color::DarkGray));
@@ -207,8 +216,47 @@ fn draw_status(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(Paragraph::new(line), area);
 }
 
+fn draw_modal_dialog(
+    frame: &mut Frame,
+    _area: Rect,
+    popup: Rect,
+    title: &str,
+    border_color: Color,
+    body: &str,
+    buttons: &ModalButtonBar,
+    buttons_active: bool,
+) {
+    frame.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .title(format!(" {title} "))
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(border_color));
+
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    let chunks = Layout::vertical([
+        Constraint::Min(1),
+        Constraint::Length(1),
+    ])
+    .split(inner);
+
+    frame.render_widget(
+        Paragraph::new(body).wrap(Wrap { trim: true }),
+        chunks[0],
+    );
+    draw_button_bar(frame, chunks[1], buttons, buttons_active);
+}
+
 fn draw_new_task_pick_repo(frame: &mut Frame, area: Rect, app: &mut App) {
-    let Screen::NewTaskPickRepo { choices, list_state } = &mut app.screen else {
+    let Screen::NewTaskPickRepo {
+        choices,
+        list_state,
+        buttons,
+        actions_focused,
+    } = &mut app.screen
+    else {
         return;
     };
 
@@ -220,44 +268,64 @@ fn draw_new_task_pick_repo(frame: &mut Frame, area: Rect, app: &mut App) {
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Green));
 
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    let chunks = Layout::vertical([
+        Constraint::Min(3),
+        Constraint::Length(1),
+    ])
+    .split(inner);
+
     let items: Vec<ListItem> = choices
         .iter()
         .map(|choice| ListItem::new(choice.label.clone()))
         .collect();
 
     let list = List::new(items)
-        .block(block)
         .highlight_style(
             Style::default()
-                .bg(Color::DarkGray)
-                .add_modifier(Modifier::BOLD),
+                .bg(if *actions_focused {
+                    Color::Reset
+                } else {
+                    Color::DarkGray
+                })
+                .add_modifier(if *actions_focused {
+                    Modifier::empty()
+                } else {
+                    Modifier::BOLD
+                }),
         )
-        .highlight_symbol("▸ ");
+        .highlight_symbol(if *actions_focused { "  " } else { "▸ " });
 
-    frame.render_stateful_widget(list, popup, list_state);
+    frame.render_stateful_widget(list, chunks[0], list_state);
+    draw_button_bar(frame, chunks[1], buttons, *actions_focused);
 }
 
 fn draw_new_task_name(frame: &mut Frame, area: Rect, app: &App) {
     let Screen::NewTaskName {
         name,
         repo_label,
+        buttons,
+        actions_focused,
         ..
     } = &app.screen
     else {
         return;
     };
 
-    let popup = centered_rect(70, 24, area);
-    frame.render_widget(Clear, popup);
-
-    let block = Block::default()
-        .title(" New task ")
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Green));
-
+    let popup = centered_rect(70, 26, area);
     let body = format!("Repo: {repo_label}\n\nName: {name}_");
-    let prompt = Paragraph::new(body).block(block).wrap(Wrap { trim: true });
-    frame.render_widget(prompt, popup);
+    draw_modal_dialog(
+        frame,
+        area,
+        popup,
+        "New task",
+        Color::Green,
+        &body,
+        buttons,
+        *actions_focused,
+    );
 }
 
 fn draw_repo_form(frame: &mut Frame, area: Rect, app: &App) {
@@ -267,23 +335,18 @@ fn draw_repo_form(frame: &mut Frame, area: Rect, app: &App) {
         url,
         focus,
         editing_id,
+        buttons,
     } = &app.screen
     else {
         return;
     };
 
-    let popup = centered_rect(70, 32, area);
-    frame.render_widget(Clear, popup);
-
+    let popup = centered_rect(70, 34, area);
     let title = if editing_id.is_some() {
-        " Edit repo "
+        "Edit repo"
     } else {
-        " Add repo "
+        "Add repo"
     };
-    let block = Block::default()
-        .title(title)
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Green));
 
     let field = |label: &str, value: &str, active: bool| {
         let marker = if active { "▸ " } else { "  " };
@@ -296,46 +359,131 @@ fn draw_repo_form(frame: &mut Frame, area: Rect, app: &App) {
         field("Path", path, *focus == RepoFormField::Path),
         field("Url ", url, *focus == RepoFormField::Url),
     );
-    let prompt = Paragraph::new(body).block(block).wrap(Wrap { trim: true });
-    frame.render_widget(prompt, popup);
+    draw_modal_dialog(
+        frame,
+        area,
+        popup,
+        title,
+        Color::Green,
+        &body,
+        buttons,
+        *focus == RepoFormField::Actions,
+    );
 }
 
 fn draw_confirm_delete_repo(frame: &mut Frame, area: Rect, app: &App) {
-    let Screen::ConfirmDeleteRepo { repo_name, .. } = &app.screen else {
+    let Screen::ConfirmDeleteRepo { repo_name, buttons, .. } = &app.screen else {
         return;
     };
 
-    let popup = centered_rect(60, 20, area);
-    frame.render_widget(Clear, popup);
-
-    let block = Block::default()
-        .title(" Remove repo ")
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Yellow));
-
+    let popup = centered_rect(70, 28, area);
     let body = format!(
         "Remove \"{repo_name}\" from configuration?\n\nExisting tasks are not deleted."
     );
-    let prompt = Paragraph::new(body).block(block).wrap(Wrap { trim: true });
-    frame.render_widget(prompt, popup);
+    draw_modal_dialog(
+        frame,
+        area,
+        popup,
+        "Remove repo",
+        Color::Yellow,
+        &body,
+        buttons,
+        true,
+    );
 }
 
 fn draw_confirm_archive(frame: &mut Frame, area: Rect, app: &App) {
-    let Screen::ConfirmArchive { task_name, .. } = &app.screen else {
+    let Screen::ConfirmArchive {
+        task_name,
+        window_count,
+        container_exists,
+        data_dir,
+        buttons,
+        ..
+    } = &app.screen
+    else {
         return;
     };
 
-    let popup = centered_rect(60, 20, area);
-    frame.render_widget(Clear, popup);
+    let windows_line = if *window_count == 1 {
+        "Close 1 open window.".into()
+    } else {
+        format!("Close {window_count} open windows.")
+    };
+    let container_line = if *container_exists {
+        "Stop the Distrobox container (files kept).".to_string()
+    } else {
+        String::new()
+    };
+    let mut body = format!(
+        "Archive \"{task_name}\"?\n\n{windows_line}\nTask files stay at {data_dir}."
+    );
+    if !container_line.is_empty() {
+        body.push('\n');
+        body.push_str(&container_line);
+    }
 
-    let block = Block::default()
-        .title(" Archive task ")
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::Yellow));
+    let popup = centered_rect(70, 32, area);
+    draw_modal_dialog(
+        frame,
+        area,
+        popup,
+        "Archive task",
+        Color::Yellow,
+        &body,
+        buttons,
+        true,
+    );
+}
 
-    let body = format!("Archive \"{task_name}\"?\n\nThis removes the task from the active list.");
-    let prompt = Paragraph::new(body).block(block).wrap(Wrap { trim: true });
-    frame.render_widget(prompt, popup);
+fn draw_confirm_delete(frame: &mut Frame, area: Rect, app: &App) {
+    let Screen::ConfirmDelete {
+        task_name,
+        window_count,
+        container_exists,
+        data_dir,
+        is_archived,
+        buttons,
+        ..
+    } = &app.screen
+    else {
+        return;
+    };
+
+    let windows_line = if *window_count == 1 {
+        "Close 1 open window.".into()
+    } else {
+        format!("Close {window_count} open windows.")
+    };
+    let container_line = if *container_exists {
+        "Remove the Distrobox container.".to_string()
+    } else {
+        String::new()
+    };
+    let archive_note = if *is_archived {
+        String::new()
+    } else {
+        "This skips archive and deletes immediately.\n".to_string()
+    };
+    let mut body = format!(
+        "{archive_note}Permanently delete \"{task_name}\"?\n\n{windows_line}\nDelete task data at {data_dir}."
+    );
+    if !container_line.is_empty() {
+        body.push('\n');
+        body.push_str(&container_line);
+    }
+
+    let popup = centered_rect(70, 36, area);
+    draw_modal_dialog(
+        frame,
+        area,
+        popup,
+        "Delete task",
+        Color::Red,
+        &body,
+        buttons,
+        true,
+    );
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {

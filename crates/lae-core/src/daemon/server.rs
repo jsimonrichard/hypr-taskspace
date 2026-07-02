@@ -299,6 +299,22 @@ fn dispatch(
             svc.archive_task(task_id)?;
             Ok(json!({ "archived": task_id }))
         }
+        "delete_task" => {
+            let task_id = params
+                .get("task_id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| LaeError::Other("task_id required".into()))?;
+            svc.delete_task(task_id)?;
+            Ok(json!({ "deleted": task_id }))
+        }
+        "preview_task_teardown" => {
+            let task_id = params
+                .get("task_id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| LaeError::Other("task_id required".into()))?;
+            let preview = svc.preview_task_teardown(task_id)?;
+            Ok(serde_json::to_value(preview).map_err(|e| LaeError::Other(e.to_string()))?)
+        }
         "resolve_task" => {
             let name_or_id = params
                 .get("name_or_id")

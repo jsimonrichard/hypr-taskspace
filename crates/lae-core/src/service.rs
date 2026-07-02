@@ -171,10 +171,9 @@ impl TaskService {
             )));
         }
 
-        let config = crate::config::load_config()?;
         let repos = crate::repos::load_repos()?;
         let task_id = self.registry.unique_task_id(&state, name);
-        let task_home = config.tasks_base_dir.join(&task_id);
+        let task_home = self.config.tasks_base_dir.join(&task_id);
 
         let (repo_path, repo_url) = match repo_id {
             None => (task_home.join("repo"), None),
@@ -217,7 +216,7 @@ impl TaskService {
             repo_url,
             repo_path,
             branch: None,
-            container_name: format!("lae-{task_id}"),
+            container_name: format!("{}-{task_id}", self.config.container_prefix),
             workspace_count: self.config.default_workspace_count,
             browser_profile: None,
             created_at: now,
@@ -243,20 +242,78 @@ impl TaskService {
 
     pub fn archive_task(&self, task_id: &str) -> Result<()> {
         let mut state = self.load_state()?;
-        if !state.tasks.contains_key(task_id) {
-            return Err(LaeError::Other(format!("Unknown task: {task_id}")));
+        let task = state
+            .tasks
+            .get(task_id)
+            .cloned()
+            .ok_or_else(|| LaeError::Other(format!("Unknown task: {task_id}")))?;
+        if task.status == TaskStatus::Archived {
+            return Err(LaeError::Other(format!("Task is already archived: {task_id}")));
         }
-        if let Some(task) = state.tasks.get_mut(task_id) {
-            task.status = TaskStatus::Archived;
-        }
-        let kind = if state.current_task_id.as_deref() == Some(task_id) {
+
+        let was_current = state.current_task_id.as_deref() == Some(task_id);
+        if was_current {
             workspace_nav::set_taskspace(&mut state, ContextMode::Default, None)
                 .map_err(LaeError::Other)?;
+        }
+
+        let _closed = crate::task_cleanup::close_task_windows(&task)?;
+        crate::task_cleanup::stop_task_container(&task)?;
+        crate::task_cleanup::purge_task_windows(&mut state, task_id);
+
+        if let Some(entry) = state.tasks.get_mut(task_id) {
+            entry.status = TaskStatus::Archived;
+        }
+
+        let kind = if was_current {
             StateChangeKind::Taskspace
         } else {
             StateChangeKind::Full
         };
         self.commit_state(&state, false, Some(kind))
+    }
+
+    pub fn delete_task(&self, task_id: &str) -> Result<()> {
+        let mut state = self.load_state()?;
+        let task = state
+            .tasks
+            .get(task_id)
+            .cloned()
+            .ok_or_else(|| LaeError::Other(format!("Unknown task: {task_id}")))?;
+
+        if state.current_task_id.as_deref() == Some(task_id) {
+            workspace_nav::set_taskspace(&mut state, ContextMode::Default, None)
+                .map_err(LaeError::Other)?;
+        }
+
+        let _closed = crate::task_cleanup::close_task_windows(&task)?;
+        crate::task_cleanup::remove_task_container(&task)?;
+        crate::task_cleanup::remove_task_data_dir(&self.config, &task)?;
+        crate::task_cleanup::purge_task_windows(&mut state, task_id);
+        crate::task_cleanup::purge_task_session_keys(&mut state, task_id);
+        state.tasks.remove(task_id);
+
+        self.commit_state(&state, false, Some(StateChangeKind::Full))
+    }
+
+    pub fn preview_task_teardown(&self, task_id: &str) -> Result<crate::task_cleanup::TaskTeardownPreview> {
+        let state = self.load_state()?;
+        let task = state
+            .tasks
+            .get(task_id)
+            .cloned()
+            .ok_or_else(|| LaeError::Other(format!("Unknown task: {task_id}")))?;
+        crate::task_cleanup::preview_teardown(&self.config, &task)
+    }
+
+    pub fn list_archived_tasks(&self) -> Result<Vec<Task>> {
+        let state = self.load_state()?;
+        Ok(state
+            .tasks
+            .values()
+            .filter(|t| t.status == TaskStatus::Archived)
+            .cloned()
+            .collect())
     }
 
     pub fn switch_task(&self, task_id: &str) -> Result<Task> {
@@ -407,5 +464,20 @@ mod tests {
         assert_eq!(state.context_mode, ContextMode::Default);
         assert!(state.current_task_id.is_none());
         assert!(svc.tasks_for_menu().unwrap().iter().all(|t| t.id != task.id));
+        assert!(dir.path().join("tasks").join("temp").is_dir());
+    }
+
+    #[test]
+    fn delete_task_removes_record_and_data() {
+        let dir = tempdir().unwrap();
+        let svc = test_service(dir.path());
+        let task = svc.create_task("gone", false, None).unwrap();
+        let task_home = dir.path().join("tasks").join("gone");
+        assert!(task_home.is_dir());
+
+        svc.delete_task(&task.id).unwrap();
+        let state = svc.load_state().unwrap();
+        assert!(!state.tasks.contains_key("gone"));
+        assert!(!task_home.exists());
     }
 }

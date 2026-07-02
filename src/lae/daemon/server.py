@@ -133,6 +133,10 @@ class DaemonServer:
             self.service.archive_task(params["task_id"])
             return {"archived": params["task_id"]}
 
+        if method == "delete_task":
+            self.service.delete_task(params["task_id"])
+            return {"deleted": params["task_id"]}
+
         if method == "set_context":
             mode = params["mode"]
             if mode in ("default", "global"):

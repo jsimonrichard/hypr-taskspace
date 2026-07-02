@@ -252,6 +252,26 @@ impl DaemonClient {
         )
     }
 
+    pub fn delete_task(&self, task_id: &str) -> Result<()> {
+        self.rpc_or_direct(
+            "delete_task",
+            json!({ "task_id": task_id }),
+            |s| s.delete_task(task_id),
+        )
+    }
+
+    pub fn preview_task_teardown(
+        &self,
+        task_id: &str,
+    ) -> Result<crate::task_cleanup::TaskTeardownPreview> {
+        if is_daemon_running() {
+            let v = daemon_request("preview_task_teardown", json!({ "task_id": task_id }))?;
+            serde_json::from_value(v).map_err(|e| LaeError::Other(e.to_string()))
+        } else {
+            self.direct.preview_task_teardown(task_id)
+        }
+    }
+
     pub fn resolve_task(&self, name_or_id: &str) -> Result<Task> {
         if is_daemon_running() {
             let v = daemon_request("resolve_task", json!({ "name_or_id": name_or_id }))?;
@@ -293,6 +313,20 @@ impl DaemonClient {
                 .collect())
         } else {
             self.direct.list_active_tasks()
+        }
+    }
+
+    pub fn list_archived_tasks(&self) -> Result<Vec<Task>> {
+        if is_daemon_running() {
+            let state = self.load_state()?;
+            Ok(state
+                .tasks
+                .values()
+                .filter(|t| t.status == TaskStatus::Archived)
+                .cloned()
+                .collect())
+        } else {
+            self.direct.list_archived_tasks()
         }
     }
 }

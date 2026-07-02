@@ -1,4 +1,5 @@
 mod app;
+mod modal;
 mod ui;
 
 use std::io::{self, stdout, Stdout};

@@ -168,6 +168,14 @@ pub fn switch_workspace(name: &str) {
     }
 }
 
+pub fn close_window(address: &str) {
+    if !available() {
+        return;
+    }
+    let addr = address.strip_prefix("0x").unwrap_or(address);
+    dispatch_sync(&["closewindow", &format!("address:0x{addr}")]);
+}
+
 pub fn keyword(args: &[&str]) {
     if !available() {
         return;

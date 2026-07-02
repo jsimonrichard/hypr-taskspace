@@ -3,6 +3,7 @@
 pub mod config;
 pub mod context_sync;
 pub mod daemon;
+pub mod distrobox;
 pub mod error;
 pub mod host;
 pub mod hyprland;
@@ -13,6 +14,7 @@ pub mod registry;
 pub mod repos;
 pub mod service;
 pub mod state_notify;
+pub mod task_cleanup;
 pub mod taskspaces;
 pub mod terminal;
 pub mod trace;

@@ -149,14 +149,43 @@ class TaskService:
         self.save_state(state)
 
     def archive_task(self, task_id: str) -> None:
+        from lae.core import task_cleanup
+
         state = self.get_state()
         task = state.tasks.get(task_id)
         if task is None:
             raise ValueError(f"Unknown task: {task_id}")
-        task.status = TaskStatus.archived
+        if task.status == TaskStatus.archived:
+            raise ValueError(f"Task is already archived: {task_id}")
+
         if state.current_task_id == task_id:
             workspace_nav.set_taskspace(state, ContextMode.default)
             state.current_task_id = None
+
+        task_cleanup.close_task_windows(task)
+        task_cleanup.stop_task_container(task)
+        task_cleanup.purge_task_windows(state, task_id)
+        task.status = TaskStatus.archived
+        self.save_state(state)
+
+    def delete_task(self, task_id: str) -> None:
+        from lae.core import task_cleanup
+
+        state = self.get_state()
+        task = state.tasks.get(task_id)
+        if task is None:
+            raise ValueError(f"Unknown task: {task_id}")
+
+        if state.current_task_id == task_id:
+            workspace_nav.set_taskspace(state, ContextMode.default)
+            state.current_task_id = None
+
+        task_cleanup.close_task_windows(task)
+        task_cleanup.remove_task_container(task)
+        task_cleanup.remove_task_data_dir(self.config.tasks_base_dir, task)
+        task_cleanup.purge_task_windows(state, task_id)
+        task_cleanup.purge_task_session_keys(state, task_id)
+        del state.tasks[task_id]
         self.save_state(state)
 
     def open_terminal(
