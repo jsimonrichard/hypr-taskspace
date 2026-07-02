@@ -4,6 +4,7 @@ pub mod config;
 pub mod context_sync;
 pub mod daemon;
 pub mod error;
+pub mod host;
 pub mod hyprland;
 pub mod hyprland_events;
 pub mod install;

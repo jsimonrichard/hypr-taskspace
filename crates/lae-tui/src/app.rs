@@ -244,7 +244,7 @@ impl App {
             KeyCode::Char('q') | KeyCode::Esc => self.should_quit = true,
             KeyCode::Char('j') | KeyCode::Down => self.select_repo_next(),
             KeyCode::Char('k') | KeyCode::Up => self.select_repo_prev(),
-            KeyCode::Char('a') => self.begin_add_repo(),
+            KeyCode::Char('n') => self.begin_new_repo(),
             KeyCode::Char('e') => self.begin_edit_repo(),
             KeyCode::Char('d') => self.begin_delete_repo(),
             KeyCode::Char('r') => {
@@ -364,7 +364,7 @@ impl App {
         Ok(())
     }
 
-    fn begin_add_repo(&mut self) {
+    fn begin_new_repo(&mut self) {
         self.status = None;
         self.screen = Screen::RepoForm {
             name: String::new(),

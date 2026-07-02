@@ -134,7 +134,7 @@ State lives in `~/.local/share/lae/state.db`. The **Rust daemon** (`lae daemon s
 The Waybar CFFI module subscribes to Hyprland workspace events **and** the state-events socket; `update()` also polls `state.rev` if both are missed.
 
 ```bash
-lae daemon start   # listens on $XDG_RUNTIME_DIR/lae/daemon.sock
+lae daemon start   # listens on ~/.local/share/lae/daemon.sock (see [daemon].socket in config)
 lae doctor         # warns if daemon is not running
 ```
 

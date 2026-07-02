@@ -45,8 +45,20 @@ def lae_runtime_dir() -> Path:
     return runtime_dir() / "lae"
 
 
+def resolve_daemon_socket(configured: str) -> Path:
+    """Resolve `[daemon].socket` from config to an absolute path."""
+    value = configured.strip()
+    if value.startswith("~") or value.startswith("/"):
+        return expand(value)
+    if value in {"daemon.sock", "lae/daemon.sock"}:
+        return lae_data_dir() / "daemon.sock"
+    return lae_data_dir() / value
+
+
 def lae_daemon_socket() -> Path:
-    return lae_runtime_dir() / "daemon.sock"
+    from lae.core.config import load_config
+
+    return resolve_daemon_socket(load_config().daemon_socket)
 
 
 def lae_context_file() -> Path:

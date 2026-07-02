@@ -13,7 +13,8 @@ use crate::hyprland;
 use crate::models::{SessionState, Task, TaskStatus};
 use crate::service::{MenuTask, TaskService};
 use crate::workspace_nav;
-use crate::xdg::lae_runtime_dir;
+use crate::config::load_config;
+use crate::xdg::resolve_daemon_socket_path;
 
 const RPC_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -27,11 +28,13 @@ pub struct DaemonResponse {
 }
 
 pub fn daemon_socket_path() -> Result<PathBuf> {
-    Ok(lae_runtime_dir()?.join("daemon.sock"))
+    let cfg = load_config()?;
+    Ok(resolve_daemon_socket_path(&cfg.daemon_socket))
 }
 
 pub fn daemon_pid_path() -> Result<PathBuf> {
-    Ok(lae_runtime_dir()?.join("daemon.pid"))
+    let socket = daemon_socket_path()?;
+    Ok(socket.with_file_name("daemon.pid"))
 }
 
 pub fn is_daemon_running() -> bool {

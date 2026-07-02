@@ -11,7 +11,52 @@ import tomli_w
 from lae.util import xdg
 
 
-DEFAULT_CONFIG = """\
+def _read_os_release() -> tuple[str, str]:
+    try:
+        content = Path("/etc/os-release").read_text(encoding="utf-8")
+    except OSError:
+        return "", ""
+    fields: dict[str, str] = {}
+    for line in content.splitlines():
+        if "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        fields[key.strip().lower()] = value.strip().strip('"').lower()
+    return fields.get("id", ""), fields.get("id_like", "")
+
+
+def default_distrobox_image() -> str:
+    distro_id, id_like = _read_os_release()
+    if distro_id in {
+        "arch",
+        "cachyos",
+        "omarchy",
+        "manjaro",
+        "garuda",
+        "endeavouros",
+    } or "arch" in id_like:
+        return "quay.io/toolbx-images/arch-toolbox:latest"
+    if distro_id == "fedora" or "fedora" in id_like:
+        return "quay.io/toolbx-images/fedora-toolbox:40"
+    if distro_id in {"ubuntu", "pop", "linuxmint"}:
+        return "quay.io/toolbx-images/ubuntu-toolbox:24.04"
+    if distro_id in {"debian", "raspbian", "pureos"}:
+        return "quay.io/toolbx-images/debian-toolbox:12"
+    if distro_id in {"opensuse-tumbleweed", "opensuse-leap", "opensuse"}:
+        return "quay.io/toolbx-images/opensuse-toolbox:tumbleweed"
+    if distro_id == "alpine":
+        return "quay.io/toolbx-images/alpine-toolbox:edge"
+    if "debian" in id_like or "ubuntu" in id_like:
+        return "quay.io/toolbx-images/ubuntu-toolbox:24.04"
+    return "quay.io/toolbx-images/fedora-toolbox:40"
+
+
+def default_daemon_socket_config_value() -> str:
+    return "~/.local/share/lae/daemon.sock"
+
+
+def default_config_contents() -> str:
+    return f"""\
 [default]
 workspace_count = 10
 
@@ -21,7 +66,7 @@ workspaces_per_task = 3
 max_tasks = 9
 
 [distrobox]
-image = "quay.io/toolbx-images/fedora-toolbox:40"
+image = "{default_distrobox_image()}"
 container_prefix = "lae"
 
 [terminal]
@@ -34,7 +79,7 @@ auto_move_tagged_windows = true
 switch_task_on_window_focus = false
 
 [daemon]
-socket = "lae/daemon.sock"
+socket = "{default_daemon_socket_config_value()}"
 
 [install.hypr]
 config_path = "~/.config/hypr/hyprland.conf"
@@ -51,14 +96,14 @@ class LaeConfig:
     tasks_base_dir: Path = field(default_factory=lambda: xdg.expand("~/lae-tasks"))
     workspaces_per_task: int = 3
     max_tasks: int = 9
-    distrobox_image: str = "quay.io/toolbx-images/fedora-toolbox:40"
+    distrobox_image: str = field(default_factory=default_distrobox_image)
     container_prefix: str = "lae"
     terminal_command: str = "kitty"
     terminal_title_flag: str = "--title"
     hyprland_enabled: bool = True
     auto_move_tagged_windows: bool = True
     switch_task_on_window_focus: bool = False
-    daemon_socket: str = "lae/daemon.sock"
+    daemon_socket: str = field(default_factory=default_daemon_socket_config_value)
     install_hypr_config_path: Path = field(
         default_factory=lambda: xdg.expand("~/.config/hypr/hyprland.conf")
     )
@@ -101,7 +146,7 @@ def _parse_config(data: dict) -> LaeConfig:
         workspaces_per_task=per_task,
         max_tasks=int(tasks.get("max_tasks", 9)),
         distrobox_image=str(
-            distrobox.get("image", "quay.io/toolbx-images/fedora-toolbox:40")
+            distrobox.get("image", default_distrobox_image())
         ),
         container_prefix=str(distrobox.get("container_prefix", "lae")),
         terminal_command=str(terminal.get("command", "kitty")),
@@ -111,7 +156,7 @@ def _parse_config(data: dict) -> LaeConfig:
         switch_task_on_window_focus=bool(
             hyprland.get("switch_task_on_window_focus", False)
         ),
-        daemon_socket=str(daemon.get("socket", "lae/daemon.sock")),
+        daemon_socket=str(daemon.get("socket", default_daemon_socket_config_value())),
         install_hypr_config_path=xdg.expand(
             install_hypr.get("config_path", "~/.config/hypr/hyprland.conf")
         ),
@@ -136,7 +181,7 @@ def ensure_config() -> Path:
     path = xdg.lae_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
-        path.write_text(DEFAULT_CONFIG)
+        path.write_text(default_config_contents())
     return path
 
 

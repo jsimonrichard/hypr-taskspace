@@ -39,6 +39,21 @@ pub fn lae_data_dir() -> PathBuf {
     data_home().join("lae")
 }
 
+/// Resolve `[daemon].socket` from config to an absolute path.
+///
+/// Absolute paths and `~`-prefixed paths are expanded as-is. Bare filenames and
+/// legacy values like `lae/daemon.sock` resolve under `~/.local/share/lae/`.
+pub fn resolve_daemon_socket_path(configured: &str) -> PathBuf {
+    let trimmed = configured.trim();
+    if trimmed.starts_with('~') || trimmed.starts_with('/') {
+        return expand(trimmed);
+    }
+    match trimmed {
+        "daemon.sock" | "lae/daemon.sock" => lae_data_dir().join("daemon.sock"),
+        other => lae_data_dir().join(other),
+    }
+}
+
 pub fn lae_state_db() -> PathBuf {
     lae_data_dir().join("state.db")
 }

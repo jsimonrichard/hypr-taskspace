@@ -106,7 +106,7 @@ fn draw_repo_list(frame: &mut Frame, area: Rect, app: &mut App) {
 
     if app.repos.is_empty() {
         frame.render_widget(
-            Paragraph::new("No repos configured — press a to add one")
+            Paragraph::new("No repos configured — press n to add one")
                 .block(block)
                 .wrap(Wrap { trim: true }),
             area,
@@ -180,7 +180,7 @@ fn draw_help(frame: &mut Frame, area: Rect, app: &App) {
             "↑/↓ move  Enter switch  n new  d archive  r refresh  h/l Tab panels  q quit"
         }
         Screen::Main if app.panel == Panel::Repos => {
-            "↑/↓ move  a add  e edit  d delete  r refresh  h/l Tab panels  q quit"
+            "↑/↓ move  n new  e edit  d delete  r refresh  h/l Tab panels  q quit"
         }
         Screen::NewTaskPickRepo { .. } => "↑/↓ select repo  Enter continue  Esc cancel",
         Screen::NewTaskName { .. } => "Type task name  Enter create  Esc cancel",
