@@ -170,10 +170,6 @@ class DaemonServer:
             )
             return {"launched": True}
 
-        if method == "task_menu":
-            self.service.launch_task_menu()
-            return {"launched": True}
-
         if method == "tasks_for_menu":
             return self.service.tasks_for_menu()
 

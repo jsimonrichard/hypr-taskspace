@@ -14,7 +14,7 @@ use crate::install::manifest::{self, Manifest};
 use crate::install::path_link;
 use crate::install::reload;
 use crate::install::wrapper;
-use crate::xdg::{config_home, ensure_parent, expand, user_bin_dir};
+use crate::xdg::{ensure_parent, expand, user_bin_dir};
 
 #[derive(Debug, Clone)]
 pub struct InstallHyprOptions {
@@ -100,7 +100,6 @@ pub fn install_hypr(cfg: &LaeConfig, options: &InstallHyprOptions) -> Result<Vec
         }
     }
 
-    cleanup_legacy_menu(cfg)?;
     let rust_bin = build_and_install_cli(cfg, options.workspace_root.as_deref())?;
     path_link::install_path_symlink(cfg, &rust_bin)?;
     wrapper::write_install_helpers(cfg)?;
@@ -173,8 +172,6 @@ pub fn uninstall_hypr(cfg: &LaeConfig, keep_files: bool) -> Result<Vec<String>> 
         }
     }
 
-    cleanup_legacy_menu(cfg)?;
-
     let rust_bin = cfg.install_hypr_share_dir.join("bin/lae");
     let _ = path_link::remove_path_symlink(&rust_bin);
 
@@ -187,22 +184,6 @@ pub fn uninstall_hypr(cfg: &LaeConfig, keep_files: bool) -> Result<Vec<String>> 
 
     manifest::remove_manifest(&cfg.install_hypr_share_dir, "hypr")?;
     reload::apply_after_hypr()
-}
-
-fn cleanup_legacy_menu(cfg: &LaeConfig) -> Result<()> {
-    let elephant_link = config_home().join("elephant/menus/lae_tasks.lua");
-    if elephant_link.is_symlink() {
-        let _ = fs::remove_file(elephant_link);
-    }
-    let elephant_dir = cfg.install_hypr_share_dir.join("elephant");
-    if elephant_dir.is_dir() {
-        let _ = fs::remove_dir_all(elephant_dir);
-    }
-    let menu_json = cfg.install_hypr_share_dir.join("bin/lae-task-menu-json");
-    if menu_json.is_file() {
-        let _ = fs::remove_file(menu_json);
-    }
-    Ok(())
 }
 
 fn build_and_install_cli(cfg: &LaeConfig, workspace_root: Option<&Path>) -> Result<PathBuf> {

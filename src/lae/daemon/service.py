@@ -184,32 +184,6 @@ class TaskService:
         title = f"[{task.id}] terminal"
         self._launch_terminal(task, enter_argv, title)
 
-    def launch_task_menu(self) -> None:
-        """Open Walker/Elephant menu of task spaces."""
-        menu_link = Path.home() / ".config/elephant/menus/lae_tasks.lua"
-        width = str(self.config.walker_menu_width)
-        height = str(self.config.walker_menu_height)
-
-        if menu_link.exists() or (xdg.lae_data_dir() / "elephant/lae_tasks.lua").exists():
-            argv = self._walker_argv(
-                "-m", "menus:laetasks", "--width", width, "--minheight", height, "--maxheight", "630"
-            )
-        else:
-            raise RuntimeError(
-                "Walker task menu not installed. Run `lae install hypr` to set it up."
-            )
-        subprocess.Popen(argv, env=os.environ.copy())
-
-    def _walker_argv(self, *args: str) -> list[str]:
-        launcher = self.config.walker_launch_command
-        if sp.which(launcher):
-            return [launcher, *args]
-        if sp.which("walker"):
-            if not sp.which("elephant"):
-                raise RuntimeError("elephant is required for Walker menus")
-            return ["walker", *args]
-        raise RuntimeError("walker or omarchy-launch-walker not found on PATH")
-
     def _launch_terminal(
         self, task: Task | None, command: list[str], title: str
     ) -> None:

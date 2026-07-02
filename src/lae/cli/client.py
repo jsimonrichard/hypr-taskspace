@@ -81,10 +81,6 @@ def _direct(method: str, params: dict[str, Any]) -> Any:
         service.open_terminal(params.get("task_id"), host=params.get("host", False))
         return {"launched": True}
 
-    if method == "task_menu":
-        service.launch_task_menu()
-        return {"launched": True}
-
     if method == "tasks_for_menu":
         return service.tasks_for_menu()
 

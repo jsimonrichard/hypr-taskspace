@@ -21,11 +21,6 @@ pub fn write_install_helpers(cfg: &LaeConfig) -> Result<()> {
     let lae_bin = dest_dir.join("lae");
     write_workspace_switch_helper(cfg, &lae_bin)?;
     write_tui_launch_helper(cfg, &lae_bin)?;
-
-    let legacy_menu_json = dest_dir.join("lae-task-menu-json");
-    if legacy_menu_json.is_file() {
-        let _ = fs::remove_file(legacy_menu_json);
-    }
     Ok(())
 }
 

@@ -36,7 +36,7 @@ def task_new(
 
 @app.command("list")
 def task_list(
-    as_json: bool = typer.Option(False, "--json", help="JSON output (for Walker menu)"),
+    as_json: bool = typer.Option(False, "--json", help="JSON output"),
 ) -> None:
     """List all tasks."""
     from lae.cli.client import call
@@ -98,14 +98,6 @@ def task_terminal(
         task_id = service.resolve_task(name_or_id).id
     call("open_terminal", {"task_id": task_id, "host": host})
     typer.echo("Terminal launched.")
-
-
-@app.command("menu")
-def task_menu() -> None:
-    """Open Walker menu of task spaces (default + all tasks)."""
-    from lae.cli.client import call
-
-    call("task_menu")
 
 
 @app.command("archive")

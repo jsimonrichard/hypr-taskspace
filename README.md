@@ -2,13 +2,12 @@
 
 Task-centric Hyprland control plane. Each task gets its own **taskspace** with named **workspaces** (`auth-fix-1`, `auth-fix-2`, …). The **default** taskspace uses plain Hyprland workspace names **`1`–`10`** for everyday host work.
 
-The **Rust CLI** (`crates/lae-cli`) is the supported control plane. Hyprland keybinds and Walker menus call `~/.local/share/lae/bin/lae`, built and installed by `lae install hypr`. Run **`lae daemon start`** so one background process owns session state (recommended).
+The **Rust CLI** (`crates/lae-cli`) is the supported control plane. Hyprland keybinds call `~/.local/share/lae/bin/lae`, built and installed by `lae install hypr`. Run **`lae daemon start`** so one background process owns session state (recommended).
 
 ## Prerequisites
 
 - Hyprland (Omarchy or similar)
 - **Rust toolchain** (stable) — [rustup](https://rustup.rs/)
-- Walker + Elephant (Omarchy ships these)
 - `hyprctl` on PATH
 
 Optional (not required for the Rust CLI):
@@ -30,7 +29,7 @@ LAE_WORKSPACE=$PWD cargo run -p lae-cli --release -- install all --dry-run   # o
 LAE_WORKSPACE=$PWD cargo run -p lae-cli --release -- install all
 ```
 
-This builds the Rust `lae` binary and Waybar CFFI module, copies Hyprland templates to `~/.local/share/lae/`, patches Waybar config, and reloads Hyprland, Walker, and Waybar.
+This builds the Rust `lae` binary and Waybar CFFI module, copies Hyprland templates to `~/.local/share/lae/`, patches Waybar config, and reloads Hyprland and Waybar.
 
 After install, the CLI used by keybinds lives at:
 
@@ -119,7 +118,7 @@ Legacy aliases still work: `lae context default`, `lae desktop go 1`, etc.
 | Default / host taskspace | **SUPER+H** or TUI → **host** |
 | Host terminal | **SUPER+Return** (your existing Omarchy bind — unchanged) |
 
-SUPER+Space remains the normal Walker app launcher.
+SUPER+Space remains your normal system app launcher.
 
 Default and task taskspaces both use **10** workspace slots (`1`–`10`, SUPER+0 → slot 10) so keybinds behave the same in either mode. Set `workspace_count = 10` under `[default]` in `~/.config/lae/config.toml` to change the slot count for both.
 

@@ -28,11 +28,6 @@ container_prefix = "lae"
 command = "kitty"
 title_flag = "--title"
 
-[walker]
-launch_command = "omarchy-launch-walker"
-menu_width = 644
-menu_height = 300
-
 [hyprland]
 enabled = true
 auto_move_tagged_windows = true
@@ -60,9 +55,6 @@ class LaeConfig:
     container_prefix: str = "lae"
     terminal_command: str = "kitty"
     terminal_title_flag: str = "--title"
-    walker_launch_command: str = "omarchy-launch-walker"
-    walker_menu_width: int = 644
-    walker_menu_height: int = 300
     hyprland_enabled: bool = True
     auto_move_tagged_windows: bool = True
     switch_task_on_window_focus: bool = False
@@ -90,7 +82,6 @@ def _parse_config(data: dict) -> LaeConfig:
     tasks = data.get("tasks", {})
     distrobox = data.get("distrobox", {})
     terminal = data.get("terminal", {})
-    walker = data.get("walker", {})
     hyprland = data.get("hyprland", {})
     daemon = data.get("daemon", {})
     install_hypr = data.get("install", {}).get("hypr", {})
@@ -115,9 +106,6 @@ def _parse_config(data: dict) -> LaeConfig:
         container_prefix=str(distrobox.get("container_prefix", "lae")),
         terminal_command=str(terminal.get("command", "kitty")),
         terminal_title_flag=str(terminal.get("title_flag", "--title")),
-        walker_launch_command=str(walker.get("launch_command", "omarchy-launch-walker")),
-        walker_menu_width=int(walker.get("menu_width", 644)),
-        walker_menu_height=int(walker.get("menu_height", 300)),
         hyprland_enabled=bool(hyprland.get("enabled", True)),
         auto_move_tagged_windows=bool(hyprland.get("auto_move_tagged_windows", True)),
         switch_task_on_window_focus=bool(
@@ -174,11 +162,6 @@ def config_to_dict(cfg: LaeConfig) -> dict:
         "terminal": {
             "command": cfg.terminal_command,
             "title_flag": cfg.terminal_title_flag,
-        },
-        "walker": {
-            "launch_command": cfg.walker_launch_command,
-            "menu_width": cfg.walker_menu_width,
-            "menu_height": cfg.walker_menu_height,
         },
         "hyprland": {
             "enabled": cfg.hyprland_enabled,

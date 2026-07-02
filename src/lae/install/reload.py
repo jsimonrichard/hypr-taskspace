@@ -13,13 +13,6 @@ def reload_hypr() -> bool:
     return True
 
 
-def restart_walker() -> bool:
-    if not sp.which("omarchy-restart-walker"):
-        return False
-    sp.run(["omarchy-restart-walker"], check=False)
-    return True
-
-
 def restart_waybar() -> bool:
     if sp.which("omarchy-restart-waybar"):
         sp.run(["omarchy-restart-waybar"], check=False)
@@ -37,10 +30,6 @@ def apply_after_hypr() -> list[str]:
         actions.append("reloaded Hyprland config")
     elif sp.which("hyprctl"):
         actions.append("Hyprland not active — run `hyprctl reload` after login")
-    if restart_walker():
-        actions.append("restarted Walker")
-    elif sp.which("elephant"):
-        actions.append("run `omarchy-restart-walker` to refresh the task menu")
     return actions
 
 

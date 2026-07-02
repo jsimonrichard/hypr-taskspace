@@ -1,4 +1,4 @@
-"""Install helper scripts with absolute Python path for Walker/Elephant."""
+"""Install helper scripts for Hyprland keybinds and Waybar."""
 
 from __future__ import annotations
 
@@ -15,13 +15,12 @@ def bin_dir(cfg: LaeConfig | None = None) -> Path:
     return cfg.install_hypr_share_dir / "bin"
 
 
-def write_menu_helper(cfg: LaeConfig | None = None) -> Path:
-    """Script Walker/Elephant can call without relying on lae being on PATH."""
+def write_tui_launch_helper(cfg: LaeConfig | None = None) -> Path:
+    """Launch the task manager TUI in the user's terminal."""
     cfg = cfg or load_config()
     dest_dir = bin_dir(cfg)
     dest_dir.mkdir(parents=True, exist_ok=True)
-    helper = dest_dir / "lae-task-menu-json"
-    python = sys.executable
+    helper = dest_dir / "lae-task-tui"
     lae_bin = dest_dir / "lae"
     helper.write_text(
         f"""#!/usr/bin/env bash
@@ -29,26 +28,7 @@ def write_menu_helper(cfg: LaeConfig | None = None) -> Path:
 export XDG_RUNTIME_DIR="${{XDG_RUNTIME_DIR:-/run/user/$(id -u)}}"
 export HOME="${{HOME:-$(getent passwd "$(id -u)" | cut -d: -f6)}}"
 export LAE="{lae_bin}"
-exec {python} - <<'PY'
-import os
-from lae.daemon.service import TaskService
-
-lae = os.environ["LAE"]
-items = TaskService().tasks_for_menu()
-for t in items:
-    kind = t.get("kind", "task")
-    if kind == "default":
-        action = f"{{lae}} taskspace default"
-        label = "default"
-    else:
-        action = f"{{lae}} task switch {{t['id']}}"
-        label = t.get("name") or t["id"]
-    if t.get("current"):
-        label += " (active)"
-    workspaces = ", ".join(t.get("workspaces", t.get("desktops", [])))
-    status = t.get("status", "")
-    print("\\t".join([label, workspaces, status, action]))
-PY
+exec "$LAE" task tui-launch
 """
     )
     helper.chmod(0o755)

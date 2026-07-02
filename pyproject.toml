@@ -24,4 +24,3 @@ packages = ["src/lae"]
 [tool.hatch.build.targets.wheel.force-include]
 "share/hypr" = "share/hypr"
 "share/waybar" = "share/waybar"
-"share/elephant" = "share/elephant"

@@ -16,10 +16,8 @@ def _echo_reload(actions: list[str] | None) -> None:
 def _echo_hypr_install(plan) -> None:
     typer.echo("Installed Hyprland integration.")
     typer.echo(f"  bindings → {plan.templates[0][1].parent}")
-    if plan.elephant_menu:
-        typer.echo(f"  walker menu → {plan.elephant_symlink}")
     typer.echo(f"  backup → {plan.backup_dir}")
-    typer.echo("Keybinds: SUPER+1..9, SUPER+0 (workspace 10), SUPER+Tab (task menu)")
+    typer.echo("Keybinds: SUPER+1..9, SUPER+0 (workspace 10), SUPER+Tab (task TUI)")
     _echo_reload(plan.reload_actions)
 
 
@@ -47,10 +45,6 @@ def install_all(
         typer.echo("Hyprland:")
         for src, dest in hypr.templates:
             typer.echo(f"  copy {src} → {dest}")
-        if hypr.elephant_menu:
-            src, dest = hypr.elephant_menu
-            typer.echo(f"  copy {src} → {dest}")
-            typer.echo(f"  symlink {hypr.elephant_symlink} → {dest}")
         typer.echo(f"  backup dir: {hypr.backup_dir}")
         typer.echo(f"  append to {hypr.config_path}:")
         typer.echo(f"    {hypr.source_line}")
@@ -83,10 +77,6 @@ def install_hypr(
         typer.echo("Dry run — planned actions:")
         for src, dest in plan.templates:
             typer.echo(f"  copy {src} → {dest}")
-        if plan.elephant_menu:
-            src, dest = plan.elephant_menu
-            typer.echo(f"  copy {src} → {dest}")
-            typer.echo(f"  symlink {plan.elephant_symlink} → {dest}")
         typer.echo(f"  backup dir: {plan.backup_dir}")
         typer.echo(f"  append to {plan.config_path}:")
         typer.echo(f"    {plan.source_line}")

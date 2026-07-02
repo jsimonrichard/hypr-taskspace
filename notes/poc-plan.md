@@ -1,6 +1,6 @@
 # Python POC Plan: Local Agentic Coding Environment Management
 
-> **Implementation status (2026):** The **Rust CLI** in `crates/` is the supported control plane. See [README.md](../README.md). Hyprland keybinds and Walker use `~/.local/share/lae/bin/lae`. Waybar uses the Rust **CFFI module** (`cffi/lae`) with Hyprland socket2 for instant updates. The Python package in `src/lae/` remains for deferred features (daemon IPC, Distrobox terminals, git clone on `task new`, window routing). Command names: prefer **`taskspace`** / **`workspace`**; **`context`** / **`desktop`** are legacy aliases in the Rust CLI.
+> **Implementation status (2026):** The **Rust CLI** in `crates/` is the supported control plane. See [README.md](../README.md). Hyprland keybinds use `~/.local/share/lae/bin/lae`; task management uses the **ratatui TUI** (`lae task tui-launch`). Waybar uses the Rust **CFFI module** (`cffi/lae`) with Hyprland socket2 for instant updates. The Python package in `src/lae/` remains for deferred features (daemon IPC, Distrobox terminals, git clone on `task new`, window routing). Command names: prefer **`taskspace`** / **`workspace`**; **`context`** / **`desktop`** are legacy aliases in the Rust CLI.
 
 This plan expands on [ai-convo-notes.md](./ai-convo-notes.md) into an implementable proof-of-concept. The POC validates the core abstraction:
 
@@ -357,7 +357,7 @@ Keep dependencies minimal for POC.
 # Install (builds lae + Waybar CFFI, patches configs)
 LAE_WORKSPACE=$PWD cargo run -p lae-cli --release -- install all|hypr|waybar|status
 lae uninstall hypr|waybar
-lae doctor                         # verify bindings, Walker menu, Waybar CFFI, SUPER+1
+lae doctor                         # verify bindings, task TUI launcher, Waybar CFFI, SUPER+1
 
 # Taskspace (alias: context)
 lae taskspace default|global|restore|toggle-global|current
@@ -368,7 +368,7 @@ lae workspace go <1-10>|next|prev|goto <name>
 # Tasks (Rust: no --repo / no terminal yet)
 lae task new <name> [--no-switch]
 lae task list [--json]
-lae task switch|current|archive|menu|menu-json
+lae task switch|current|archive|menu|tui|tui-launch
 
 lae status
 lae windows [--task <id>]
