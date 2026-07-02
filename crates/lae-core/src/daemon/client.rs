@@ -17,6 +17,9 @@ use crate::config::load_config;
 use crate::xdg::resolve_daemon_socket_path;
 
 const RPC_TIMEOUT: Duration = Duration::from_secs(5);
+const PING_TIMEOUT: Duration = Duration::from_millis(300);
+
+const DAEMON_REQUIRED_MSG: &str = "lae daemon is not running — run `lae daemon start`";
 
 #[derive(Debug, Deserialize)]
 pub struct DaemonResponse {
@@ -41,17 +44,33 @@ pub fn is_daemon_running() -> bool {
     ping_daemon().unwrap_or(false)
 }
 
+/// Error returned when a state mutation is attempted without the daemon.
+pub fn ensure_daemon() -> Result<()> {
+    if !daemon_socket_path().is_ok_and(|p| p.exists()) {
+        return Err(LaeError::Other(DAEMON_REQUIRED_MSG.into()));
+    }
+    if is_daemon_running() {
+        Ok(())
+    } else {
+        Err(LaeError::Other(DAEMON_REQUIRED_MSG.into()))
+    }
+}
+
 pub fn ping_daemon() -> Result<bool> {
     if !daemon_socket_path().is_ok_and(|p| p.exists()) {
         return Ok(false);
     }
-    match daemon_request("ping", json!({})) {
+    match daemon_request_with_timeout("ping", json!({}), PING_TIMEOUT) {
         Ok(v) => Ok(v.get("pong").and_then(|p| p.as_bool()).unwrap_or(false)),
         Err(_) => Ok(false),
     }
 }
 
 pub fn daemon_request(method: &str, params: Value) -> Result<Value> {
+    daemon_request_with_timeout(method, params, RPC_TIMEOUT)
+}
+
+fn daemon_request_with_timeout(method: &str, params: Value, timeout: Duration) -> Result<Value> {
     let path = daemon_socket_path()?;
     if !path.exists() {
         return Err(LaeError::Other("lae daemon is not running".into()));
@@ -64,16 +83,16 @@ pub fn daemon_request(method: &str, params: Value) -> Result<Value> {
         ))
     })?;
     stream
-        .set_read_timeout(Some(RPC_TIMEOUT))
+        .set_read_timeout(Some(timeout))
         .map_err(|e| LaeError::Other(e.to_string()))?;
     stream
-        .set_write_timeout(Some(RPC_TIMEOUT))
+        .set_write_timeout(Some(timeout))
         .map_err(|e| LaeError::Other(e.to_string()))?;
 
     let payload = serde_json::to_string(&json!({ "method": method, "params": params }))
         .map_err(|e| LaeError::Other(e.to_string()))?;
     stream
-        .write_all(payload.as_bytes())
+        .write_all(format!("{payload}\n").as_bytes())
         .map_err(|e| LaeError::Other(e.to_string()))?;
 
     let response = read_response_line(&mut stream)?;
@@ -123,19 +142,6 @@ impl DaemonClient {
         &self.direct
     }
 
-    fn rpc_or_direct(
-        &self,
-        method: &str,
-        params: Value,
-        fallback: impl FnOnce(&TaskService) -> Result<()>,
-    ) -> Result<()> {
-        if is_daemon_running() {
-            daemon_request(method, params).map(|_| ())
-        } else {
-            fallback(&self.direct)
-        }
-    }
-
     pub fn load_state(&self) -> Result<SessionState> {
         if is_daemon_running() {
             let v = daemon_request("get_state", json!({}))?;
@@ -146,7 +152,8 @@ impl DaemonClient {
     }
 
     pub fn context_default(&self) -> Result<()> {
-        self.rpc_or_direct("context_default", json!({}), |s| s.context_default())
+        ensure_daemon()?;
+        daemon_request("context_default", json!({})).map(|_| ())
     }
 
     pub fn workspace_go(&self, relative: i32) -> Result<Option<String>> {
@@ -223,53 +230,38 @@ impl DaemonClient {
     }
 
     pub fn create_task(&self, name: &str, switch: bool, repo_id: Option<&str>) -> Result<Task> {
-        if is_daemon_running() {
-            let mut body = json!({ "name": name, "switch": switch });
-            if let Some(id) = repo_id {
-                body["repo_id"] = json!(id);
-            }
-            let v = daemon_request("create_task", body)?;
-            serde_json::from_value(v).map_err(|e| LaeError::Other(e.to_string()))
-        } else {
-            self.direct.create_task(name, switch, repo_id)
+        ensure_daemon()?;
+        let mut body = json!({ "name": name, "switch": switch });
+        if let Some(id) = repo_id {
+            body["repo_id"] = json!(id);
         }
+        let v = daemon_request("create_task", body)?;
+        serde_json::from_value(v).map_err(|e| LaeError::Other(e.to_string()))
     }
 
     pub fn switch_task(&self, task_id: &str) -> Result<Task> {
-        if is_daemon_running() {
-            let v = daemon_request("switch_task", json!({ "task_id": task_id }))?;
-            serde_json::from_value(v).map_err(|e| LaeError::Other(e.to_string()))
-        } else {
-            self.direct.switch_task(task_id)
-        }
+        ensure_daemon()?;
+        let v = daemon_request("switch_task", json!({ "task_id": task_id }))?;
+        serde_json::from_value(v).map_err(|e| LaeError::Other(e.to_string()))
     }
 
     pub fn archive_task(&self, task_id: &str) -> Result<()> {
-        self.rpc_or_direct(
-            "archive_task",
-            json!({ "task_id": task_id }),
-            |s| s.archive_task(task_id),
-        )
+        ensure_daemon()?;
+        daemon_request("archive_task", json!({ "task_id": task_id })).map(|_| ())
     }
 
     pub fn delete_task(&self, task_id: &str) -> Result<()> {
-        self.rpc_or_direct(
-            "delete_task",
-            json!({ "task_id": task_id }),
-            |s| s.delete_task(task_id),
-        )
+        ensure_daemon()?;
+        daemon_request("delete_task", json!({ "task_id": task_id })).map(|_| ())
     }
 
     pub fn preview_task_teardown(
         &self,
         task_id: &str,
     ) -> Result<crate::task_cleanup::TaskTeardownPreview> {
-        if is_daemon_running() {
-            let v = daemon_request("preview_task_teardown", json!({ "task_id": task_id }))?;
-            serde_json::from_value(v).map_err(|e| LaeError::Other(e.to_string()))
-        } else {
-            self.direct.preview_task_teardown(task_id)
-        }
+        ensure_daemon()?;
+        let v = daemon_request("preview_task_teardown", json!({ "task_id": task_id }))?;
+        serde_json::from_value(v).map_err(|e| LaeError::Other(e.to_string()))
     }
 
     pub fn resolve_task(&self, name_or_id: &str) -> Result<Task> {

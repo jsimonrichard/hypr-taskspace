@@ -7,7 +7,9 @@ use std::process::Command;
 use serde_json::Value;
 
 use crate::config::LaeConfig;
+use crate::daemon_socket_path;
 use crate::error::Result;
+use crate::is_daemon_running;
 use crate::hyprland;
 use crate::hyprland_events::diagnose_socket2;
 use crate::install::{install_hypr_status, install_waybar_status, manifest};
@@ -131,6 +133,19 @@ pub fn run_doctor_checks(cfg: &LaeConfig) -> Result<Vec<DoctorCheck>> {
             "run: pkill -f 'lae.cli.daemon' — stale daemon overwrites Rust CLI state".into()
         } else {
             "ok".into()
+        },
+    });
+
+    let daemon_running = is_daemon_running();
+    checks.push(DoctorCheck {
+        label: "LAE daemon running".into(),
+        passed: daemon_running,
+        detail: if daemon_running {
+            daemon_socket_path()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|_| "ok".into())
+        } else {
+            "run: lae daemon start".into()
         },
     });
 

@@ -27,7 +27,8 @@ pub mod xdg;
 
 pub use config::{ensure_config, load_config, LaeConfig};
 pub use daemon::{
-    daemon_pid_path, daemon_request, daemon_socket_path, is_daemon_running, ping_daemon,
+    daemon_pid_path, daemon_request, daemon_socket_path, ensure_daemon, is_daemon_running,
+    ping_daemon,
     stop_daemon, DaemonClient, DaemonServer,
 };
 pub use error::{LaeError, Result};

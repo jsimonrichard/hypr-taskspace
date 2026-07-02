@@ -13,6 +13,17 @@ def task_data_dir(base_dir: Path, task_id: str) -> Path:
     return base_dir / task_id
 
 
+def is_active_task_context(state: SessionState, task: Task) -> bool:
+    if state.current_task_id == task.id:
+        return True
+    if not hyprland.available():
+        return False
+    active = hyprland.get_active_workspace()
+    if active is None:
+        return False
+    return active.name in set(task.workspace_names())
+
+
 def clients_for_task(task: Task) -> list:
     if not hyprland.available():
         return []
@@ -38,6 +49,7 @@ def stop_task_container(task: Task) -> None:
 
 
 def remove_task_container(task: Task) -> None:
+    distrobox.stop_container(task.container_name)
     distrobox.remove_container(task.container_name)
 
 
@@ -59,4 +71,12 @@ def purge_task_session_keys(state: SessionState, task_id: str) -> None:
 def remove_task_data_dir(base_dir: Path, task: Task) -> None:
     task_home = task_data_dir(base_dir, task.id)
     if task_home.is_dir():
-        shutil.rmtree(task_home)
+        try:
+            shutil.rmtree(task_home)
+        except OSError as err:
+            import sys
+
+            print(
+                f"lae: delete task {task.id}: remove data dir: {err}",
+                file=sys.stderr,
+            )

@@ -368,11 +368,6 @@ fn cmd_doctor() -> Result<()> {
             ok = false;
         }
     }
-    if !is_daemon_running() {
-        println!(
-            "[WARN] Daemon not running — CLI uses direct mode; run `lae daemon start` for a single control plane"
-        );
-    }
     if !ok {
         std::process::exit(1);
     }
@@ -798,7 +793,7 @@ fn cmd_daemon_start() -> Result<()> {
     }
 
     let exe = std::env::current_exe().map_err(|e| LaeError::Other(e.to_string()))?;
-    std::process::Command::new(exe)
+    let mut child = std::process::Command::new(exe)
         .args(["daemon", "run"])
         .envs(std::env::vars())
         .stdout(std::process::Stdio::null())
@@ -806,17 +801,49 @@ fn cmd_daemon_start() -> Result<()> {
         .spawn()
         .map_err(|e| LaeError::Other(format!("failed to spawn daemon: {e}")))?;
 
-    for _ in 0..100 {
+    for _ in 0..50 {
         if ping_daemon()? {
             println!("Daemon started.");
             return Ok(());
         }
+        if let Ok(Some(status)) = child.try_wait() {
+            let stderr = child
+                .stderr
+                .take()
+                .map(|mut pipe| {
+                    use std::io::Read;
+                    let mut buf = String::new();
+                    let _ = pipe.read_to_string(&mut buf);
+                    buf.trim().to_string()
+                })
+                .unwrap_or_default();
+            let detail = if stderr.is_empty() {
+                format!("exit status {status}")
+            } else {
+                format!("exit status {status}: {stderr}")
+            };
+            return Err(LaeError::Other(format!("daemon failed to start ({detail})")));
+        }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
-    Err(LaeError::Other(
-        "daemon process started but did not become reachable".into(),
-    ))
+    let _ = child.kill();
+    let stderr = child
+        .stderr
+        .take()
+        .map(|mut pipe| {
+            use std::io::Read;
+            let mut buf = String::new();
+            let _ = pipe.read_to_string(&mut buf);
+            buf.trim().to_string()
+        })
+        .unwrap_or_default();
+    let mut message = "daemon process started but did not become reachable".to_string();
+    if !stderr.is_empty() {
+        message.push_str(": ");
+        message.push_str(&stderr);
+    }
+    Err(LaeError::Other(message))
 }
 
 fn cmd_daemon_run() -> Result<()> {

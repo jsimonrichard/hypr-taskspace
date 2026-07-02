@@ -203,7 +203,7 @@ def daemon_request(method: str, params: dict[str, Any] | None = None, timeout: f
         sock.settimeout(timeout)
         sock.connect(str(path))
         payload = json.dumps({"method": method, "params": params or {}})
-        sock.sendall(payload.encode("utf-8"))
+        sock.sendall((payload + "\n").encode("utf-8"))
         response_data = b""
         while True:
             chunk = sock.recv(65536)

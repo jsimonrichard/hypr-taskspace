@@ -13,15 +13,22 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
     frame.render_widget(Clear, area);
 
+    let header_rows = if app.show_daemon_warning() { 2 } else { 1 };
     let chunks = Layout::vertical([
-        Constraint::Length(1),
+        Constraint::Length(header_rows),
         Constraint::Min(3),
         Constraint::Length(2),
         Constraint::Length(1),
     ])
     .split(area);
 
-    draw_tabs(frame, chunks[0], app);
+    if app.show_daemon_warning() {
+        let header = Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).split(chunks[0]);
+        draw_tabs(frame, header[0], app);
+        draw_daemon_warning(frame, header[1]);
+    } else {
+        draw_tabs(frame, chunks[0], app);
+    }
     match app.panel {
         Panel::Tasks => draw_task_list(frame, chunks[1], app),
         Panel::Repos => draw_repo_list(frame, chunks[1], app),
@@ -56,6 +63,14 @@ fn draw_tabs(frame: &mut Frame, area: Rect, app: &App) {
         Span::raw("  "),
         Span::styled(" Repos ", repos_style),
     ]);
+    frame.render_widget(Paragraph::new(line), area);
+}
+
+fn draw_daemon_warning(frame: &mut Frame, area: Rect) {
+    let line = Line::from(Span::styled(
+        " ⚠  Daemon not running — run `lae daemon start`, then press r to refresh",
+        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+    ));
     frame.render_widget(Paragraph::new(line), area);
 }
 

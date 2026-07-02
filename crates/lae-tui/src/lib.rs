@@ -1,4 +1,5 @@
 mod app;
+mod daemon_check;
 mod modal;
 mod ui;
 
@@ -14,6 +15,7 @@ use lae_core::{DaemonClient, Result};
 use ratatui::prelude::*;
 
 use app::App;
+use daemon_check::AsyncDaemonChecker;
 
 struct TerminalGuard;
 
@@ -41,11 +43,19 @@ pub fn run() -> Result<()> {
 
     let client = DaemonClient::with_defaults()?;
     let mut app = App::new(client)?;
+    let mut daemon_checker = AsyncDaemonChecker::new();
+    daemon_checker.spawn_check();
 
     let tick = Duration::from_millis(250);
     let mut last_tick = Instant::now();
+    let daemon_recheck_interval = Duration::from_secs(5);
+    let mut last_daemon_check = Instant::now();
 
     loop {
+        if let Some(running) = daemon_checker.poll() {
+            app.set_daemon_status(running);
+        }
+
         terminal
             .draw(|frame| app.draw(frame))
             .map_err(|e| lae_core::LaeError::Other(e.to_string()))?;
@@ -57,6 +67,10 @@ pub fn run() -> Result<()> {
                     if let Err(err) = app.handle_key(key) {
                         app.status = Some((false, err.to_string()));
                     }
+                    if app.daemon_recheck_requested {
+                        app.daemon_recheck_requested = false;
+                        daemon_checker.spawn_check();
+                    }
                 }
                 Event::Resize(_, _) => {
                     let _ = execute!(stdout(), crossterm::terminal::Clear(ClearType::All));
@@ -67,6 +81,11 @@ pub fn run() -> Result<()> {
 
         if last_tick.elapsed() >= tick {
             last_tick = Instant::now();
+        }
+
+        if last_daemon_check.elapsed() >= daemon_recheck_interval {
+            last_daemon_check = Instant::now();
+            daemon_checker.spawn_check();
         }
 
         if app.should_quit {

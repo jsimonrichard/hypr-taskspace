@@ -251,26 +251,27 @@ impl TaskService {
             return Err(LaeError::Other(format!("Task is already archived: {task_id}")));
         }
 
-        let was_current = state.current_task_id.as_deref() == Some(task_id);
+        let was_current = crate::task_cleanup::is_active_task_context(&state, &task);
         if was_current {
             workspace_nav::set_taskspace(&mut state, ContextMode::Default, None)
                 .map_err(LaeError::Other)?;
+            self.commit_state(&state, false, Some(StateChangeKind::Taskspace))?;
         }
 
         let _closed = crate::task_cleanup::close_task_windows(&task)?;
-        crate::task_cleanup::stop_task_container(&task)?;
+        if let Err(err) = crate::task_cleanup::stop_task_container(&task) {
+            eprintln!(
+                "lae: archive task {}: stop container {}: {err}",
+                task.id, task.container_name
+            );
+        }
         crate::task_cleanup::purge_task_windows(&mut state, task_id);
 
         if let Some(entry) = state.tasks.get_mut(task_id) {
             entry.status = TaskStatus::Archived;
         }
 
-        let kind = if was_current {
-            StateChangeKind::Taskspace
-        } else {
-            StateChangeKind::Full
-        };
-        self.commit_state(&state, false, Some(kind))
+        self.commit_state(&state, false, Some(StateChangeKind::Full))
     }
 
     pub fn delete_task(&self, task_id: &str) -> Result<()> {
@@ -281,14 +282,28 @@ impl TaskService {
             .cloned()
             .ok_or_else(|| LaeError::Other(format!("Unknown task: {task_id}")))?;
 
-        if state.current_task_id.as_deref() == Some(task_id) {
+        if crate::task_cleanup::is_active_task_context(&state, &task) {
             workspace_nav::set_taskspace(&mut state, ContextMode::Default, None)
                 .map_err(LaeError::Other)?;
+            self.commit_state(&state, false, Some(StateChangeKind::Taskspace))?;
         }
 
         let _closed = crate::task_cleanup::close_task_windows(&task)?;
-        crate::task_cleanup::remove_task_container(&task)?;
-        crate::task_cleanup::remove_task_data_dir(&self.config, &task)?;
+        if let Err(err) = crate::task_cleanup::stop_task_container(&task) {
+            eprintln!(
+                "lae: delete task {}: stop container {}: {err}",
+                task.id, task.container_name
+            );
+        }
+        if let Err(err) = crate::task_cleanup::remove_task_container(&task) {
+            eprintln!(
+                "lae: delete task {}: remove container {}: {err}",
+                task.id, task.container_name
+            );
+        }
+        if let Err(err) = crate::task_cleanup::remove_task_data_dir(&self.config, &task) {
+            eprintln!("lae: delete task {}: remove data dir: {err}", task.id);
+        }
         crate::task_cleanup::purge_task_windows(&mut state, task_id);
         crate::task_cleanup::purge_task_session_keys(&mut state, task_id);
         state.tasks.remove(task_id);
@@ -479,5 +494,17 @@ mod tests {
         let state = svc.load_state().unwrap();
         assert!(!state.tasks.contains_key("gone"));
         assert!(!task_home.exists());
+    }
+
+    #[test]
+    fn delete_task_while_current_leaves_default_taskspace() {
+        let dir = tempdir().unwrap();
+        let svc = test_service(dir.path());
+        let task = svc.create_task("current", true, None).unwrap();
+        svc.delete_task(&task.id).unwrap();
+        let state = svc.load_state().unwrap();
+        assert!(!state.tasks.contains_key("current"));
+        assert_eq!(state.context_mode, ContextMode::Default);
+        assert!(state.current_task_id.is_none());
     }
 }

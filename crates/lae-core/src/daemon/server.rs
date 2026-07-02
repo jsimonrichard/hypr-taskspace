@@ -367,11 +367,25 @@ pub fn stop_daemon() -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::net::UnixStream;
+    use std::io::Write;
 
     #[test]
     fn dispatch_ping() {
         let server = DaemonServer::new().unwrap();
         let result = dispatch(server.service.clone(), "ping", json!({})).unwrap();
         assert_eq!(result["pong"], true);
+    }
+
+    #[test]
+    fn read_request_parses_newline_terminated_json() {
+        let (mut client, mut server) = UnixStream::pair().unwrap();
+        std::thread::spawn(move || {
+            client
+                .write_all(b"{\"method\":\"ping\",\"params\":{}}\n")
+                .unwrap();
+        });
+        let req = read_request(&mut server).expect("request");
+        assert_eq!(req["method"], "ping");
     }
 }

@@ -3,8 +3,8 @@ use std::path::Path;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use lae_core::{
-    load_repos, paths_match, repo_display_path, save_repos, unique_repo_id, ContextMode, DaemonClient,
-    RegisteredRepo, Result,
+    ensure_daemon, load_repos, paths_match, repo_display_path, save_repos, unique_repo_id,
+    ContextMode, DaemonClient, RegisteredRepo, Result,
 };
 use lae_core::Task;
 
@@ -93,6 +93,13 @@ pub enum Screen {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DaemonStatus {
+    Unknown,
+    Running,
+    Stopped,
+}
+
 pub struct App {
     pub client: DaemonClient,
     pub panel: Panel,
@@ -103,6 +110,8 @@ pub struct App {
     pub screen: Screen,
     pub status: Option<(bool, String)>,
     pub should_quit: bool,
+    pub daemon_status: DaemonStatus,
+    pub(crate) daemon_recheck_requested: bool,
     default_taskspace_active: bool,
 }
 
@@ -118,15 +127,41 @@ impl App {
             screen: Screen::Main,
             status: None,
             should_quit: false,
+            daemon_status: DaemonStatus::Unknown,
+            daemon_recheck_requested: false,
             default_taskspace_active: true,
         };
         app.reload()?;
         Ok(app)
     }
 
+    pub fn show_daemon_warning(&self) -> bool {
+        self.daemon_status == DaemonStatus::Stopped
+    }
+
+    pub fn set_daemon_status(&mut self, running: bool) {
+        self.daemon_status = if running {
+            DaemonStatus::Running
+        } else {
+            DaemonStatus::Stopped
+        };
+    }
+
+    fn require_daemon(&self) -> Result<()> {
+        match self.daemon_status {
+            DaemonStatus::Stopped => Err(lae_core::LaeError::Other(
+                "lae daemon is not running — run `lae daemon start`".into(),
+            )),
+            DaemonStatus::Running => Ok(()),
+            DaemonStatus::Unknown => ensure_daemon(),
+        }
+    }
+
     pub fn reload(&mut self) -> Result<()> {
+        self.daemon_recheck_requested = true;
+        let svc = self.client.direct();
         self.repos = load_repos()?;
-        let state = self.client.load_state()?;
+        let state = svc.load_state()?;
         self.default_taskspace_active = state.context_mode == ContextMode::Default;
         let current_task = state.current_task_id.as_deref();
 
@@ -136,7 +171,7 @@ impl App {
             .filter(|id| !id.is_empty());
         let prev_repo_sel = self.repo_list_state.selected();
 
-        let active_tasks = self.client.list_active_tasks()?;
+        let active_tasks = svc.list_active_tasks()?;
         let mut matched = HashSet::new();
 
         self.entries.clear();
@@ -193,7 +228,7 @@ impl App {
             }
         }
 
-        let archived_tasks = self.client.list_archived_tasks()?;
+        let archived_tasks = svc.list_archived_tasks()?;
         if !archived_tasks.is_empty() {
             let mut archived = archived_tasks;
             archived.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
@@ -302,6 +337,7 @@ impl App {
     }
 
     fn begin_new_task(&mut self) -> Result<()> {
+        self.require_daemon()?;
         self.status = None;
         let mut choices = vec![RepoChoice {
             repo_id: None,
@@ -940,6 +976,7 @@ impl App {
     }
 
     fn switch_selected_task(&mut self) -> Result<()> {
+        self.require_daemon()?;
         let Some(task) = self.selected_task().cloned() else {
             return Ok(());
         };
@@ -957,6 +994,7 @@ impl App {
     }
 
     fn begin_archive(&mut self) -> Result<()> {
+        self.require_daemon()?;
         let Some(task) = self.selected_task().cloned() else {
             return Ok(());
         };
@@ -976,12 +1014,13 @@ impl App {
             window_count: preview.window_count,
             container_exists: preview.container_exists,
             data_dir: preview.data_dir.display().to_string(),
-            buttons: ModalButtonBar::cancel_confirm("Archive"),
+            buttons: ModalButtonBar::confirm_first("Archive"),
         };
         Ok(())
     }
 
     fn begin_delete(&mut self) -> Result<()> {
+        self.require_daemon()?;
         let Some(task) = self.selected_task().cloned() else {
             return Ok(());
         };

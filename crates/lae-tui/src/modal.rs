@@ -18,6 +18,8 @@ pub enum ModalButtonBar {
     CancelConfirm {
         confirm_label: &'static str,
         focused: usize,
+        /// When true, the confirm action is the first (default-focused) button.
+        confirm_first: bool,
     },
     CancelContinue {
         focused: usize,
@@ -41,6 +43,16 @@ impl ModalButtonBar {
         Self::CancelConfirm {
             confirm_label,
             focused: 0,
+            confirm_first: false,
+        }
+    }
+
+    /// Confirm-first layout — for low-friction happy paths (e.g. archive).
+    pub fn confirm_first(confirm_label: &'static str) -> Self {
+        Self::CancelConfirm {
+            confirm_label,
+            focused: 0,
+            confirm_first: true,
         }
     }
 
@@ -58,16 +70,25 @@ impl ModalButtonBar {
 
     pub fn buttons(&self) -> Vec<ModalButton> {
         match self {
-            Self::CancelConfirm { confirm_label, .. } => vec![
-                ModalButton {
+            Self::CancelConfirm {
+                confirm_label,
+                confirm_first,
+                ..
+            } => {
+                let cancel = ModalButton {
                     label: "Cancel",
                     shortcut: 'n',
-                },
-                ModalButton {
+                };
+                let confirm = ModalButton {
                     label: confirm_label,
                     shortcut: 'y',
-                },
-            ],
+                };
+                if *confirm_first {
+                    vec![confirm, cancel]
+                } else {
+                    vec![cancel, confirm]
+                }
+            }
             Self::CancelContinue { .. } => vec![
                 ModalButton {
                     label: "Cancel",
@@ -141,10 +162,28 @@ impl ModalButtonBar {
     }
 
     pub fn activate_focused(&self) -> ModalButtonAction {
-        if self.focused() == 0 {
+        self.action_at(self.focused())
+    }
+
+    fn action_at(&self, index: usize) -> ModalButtonAction {
+        let (cancel_idx, _confirm_idx) = self.action_indices();
+        if index == cancel_idx {
             ModalButtonAction::Cancel
         } else {
             ModalButtonAction::Confirm
+        }
+    }
+
+    fn action_indices(&self) -> (usize, usize) {
+        match self {
+            Self::CancelConfirm {
+                confirm_first: true,
+                ..
+            } => (1, 0),
+            Self::CancelConfirm { .. }
+            | Self::CancelContinue { .. }
+            | Self::CancelCreate { .. }
+            | Self::CancelSave { .. } => (0, 1),
         }
     }
 
@@ -162,11 +201,12 @@ impl ModalButtonBar {
             KeyCode::Enter => Some(self.activate_focused()),
             KeyCode::Char(ch) => {
                 let lower = ch.to_ascii_lowercase();
+                let (cancel_idx, confirm_idx) = self.action_indices();
                 if lower == 'n' {
-                    self.set_focus(0);
+                    self.set_focus(cancel_idx);
                     Some(ModalButtonAction::Cancel)
                 } else if lower == 'y' {
-                    self.set_focus(1);
+                    self.set_focus(confirm_idx);
                     Some(ModalButtonAction::Confirm)
                 } else {
                     None

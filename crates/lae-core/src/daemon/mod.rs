@@ -4,7 +4,7 @@ mod client;
 mod server;
 
 pub use client::{
-    daemon_pid_path, daemon_request, daemon_socket_path, is_daemon_running, ping_daemon,
-    DaemonClient, DaemonResponse,
+    daemon_pid_path, daemon_request, daemon_socket_path, ensure_daemon, is_daemon_running,
+    ping_daemon, DaemonClient, DaemonResponse,
 };
 pub use server::{stop_daemon, DaemonServer};

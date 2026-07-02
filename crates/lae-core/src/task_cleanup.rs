@@ -30,6 +30,20 @@ pub fn preview_teardown(config: &LaeConfig, task: &Task) -> Result<TaskTeardownP
     })
 }
 
+pub fn is_active_task_context(state: &SessionState, task: &Task) -> bool {
+    if state.current_task_id.as_deref() == Some(task.id.as_str()) {
+        return true;
+    }
+    if !hyprland::available() {
+        return false;
+    }
+    let Ok(Some(active)) = hyprland::get_active_workspace() else {
+        return false;
+    };
+    let workspace_names: HashSet<String> = task.workspace_names().into_iter().collect();
+    workspace_names.contains(&active.name)
+}
+
 pub fn count_task_windows(task: &Task) -> Result<usize> {
     Ok(clients_for_task(task)?.len())
 }

@@ -158,9 +158,9 @@ class TaskService:
         if task.status == TaskStatus.archived:
             raise ValueError(f"Task is already archived: {task_id}")
 
-        if state.current_task_id == task_id:
+        if task_cleanup.is_active_task_context(state, task):
             workspace_nav.set_taskspace(state, ContextMode.default)
-            state.current_task_id = None
+            self.save_state(state)
 
         task_cleanup.close_task_windows(task)
         task_cleanup.stop_task_container(task)
@@ -176,9 +176,9 @@ class TaskService:
         if task is None:
             raise ValueError(f"Unknown task: {task_id}")
 
-        if state.current_task_id == task_id:
+        if task_cleanup.is_active_task_context(state, task):
             workspace_nav.set_taskspace(state, ContextMode.default)
-            state.current_task_id = None
+            self.save_state(state)
 
         task_cleanup.close_task_windows(task)
         task_cleanup.remove_task_container(task)

@@ -49,6 +49,8 @@ pub fn remove_container(name: &str) -> Result<()> {
     if !container_exists(name) {
         return Ok(());
     }
+    // Stop first — `distrobox rm` fails on a running container.
+    let _ = stop_container(name);
     let output = Command::new("distrobox")
         .args(["rm", "--name", name, "-Y"])
         .output()
