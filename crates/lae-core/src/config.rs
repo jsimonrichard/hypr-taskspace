@@ -18,13 +18,8 @@ image = "quay.io/toolbx-images/fedora-toolbox:40"
 container_prefix = "lae"
 
 [terminal]
-command = "kitty"
+command = "xdg-terminal-exec"
 title_flag = "--title"
-
-[walker]
-launch_command = "omarchy-launch-walker"
-menu_width = 644
-menu_height = 300
 
 [hyprland]
 enabled = true
@@ -53,7 +48,7 @@ pub struct LaeConfig {
     pub install_hypr_share_dir: PathBuf,
     pub install_hypr_config_path: PathBuf,
     pub install_hypr_source_line: String,
-    pub walker_launch_command: String,
+    pub terminal_command: String,
 }
 
 impl Default for LaeConfig {
@@ -70,7 +65,7 @@ impl Default for LaeConfig {
             install_hypr_source_line: expand("~/.local/share/lae/hypr/bindings.conf")
                 .to_string_lossy()
                 .into_owned(),
-            walker_launch_command: "omarchy-launch-walker".into(),
+            terminal_command: "xdg-terminal-exec".into(),
         }
     }
 }
@@ -86,7 +81,7 @@ struct RawConfig {
     #[serde(default)]
     daemon: RawDaemon,
     #[serde(default)]
-    walker: RawWalker,
+    terminal: RawTerminal,
     #[serde(default)]
     install: RawInstall,
 }
@@ -115,8 +110,8 @@ struct RawDaemon {
 }
 
 #[derive(Debug, Default, Deserialize)]
-struct RawWalker {
-    launch_command: Option<String>,
+struct RawTerminal {
+    command: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -185,8 +180,8 @@ fn parse_config(raw: RawConfig) -> LaeConfig {
     if let Some(line) = raw.install.hypr.source_line {
         cfg.install_hypr_source_line = expand(line).to_string_lossy().into_owned();
     }
-    if let Some(cmd) = raw.walker.launch_command {
-        cfg.walker_launch_command = cmd;
+    if let Some(cmd) = raw.terminal.command {
+        cfg.terminal_command = cmd;
     }
     cfg
 }

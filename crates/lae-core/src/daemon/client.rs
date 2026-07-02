@@ -219,15 +219,16 @@ impl DaemonClient {
         Ok(())
     }
 
-    pub fn create_task(&self, name: &str, switch: bool) -> Result<Task> {
+    pub fn create_task(&self, name: &str, switch: bool, repo_id: Option<&str>) -> Result<Task> {
         if is_daemon_running() {
-            let v = daemon_request(
-                "create_task",
-                json!({ "name": name, "switch": switch }),
-            )?;
+            let mut body = json!({ "name": name, "switch": switch });
+            if let Some(id) = repo_id {
+                body["repo_id"] = json!(id);
+            }
+            let v = daemon_request("create_task", body)?;
             serde_json::from_value(v).map_err(|e| LaeError::Other(e.to_string()))
         } else {
-            self.direct.create_task(name, switch)
+            self.direct.create_task(name, switch, repo_id)
         }
     }
 

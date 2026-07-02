@@ -34,10 +34,7 @@ impl Default for InstallHyprOptions {
 pub fn install_hypr_status(cfg: &LaeConfig) -> Result<Value> {
     let m = manifest::load_manifest(&cfg.install_hypr_share_dir, "hypr")?;
     let bindings = cfg.install_hypr_share_dir.join("hypr/bindings.conf");
-    let elephant = cfg
-        .install_hypr_share_dir
-        .join("elephant/lae_tasks.lua");
-    let elephant_link = config_home().join("elephant/menus/lae_tasks.lua");
+    let tui_helper = cfg.install_hypr_share_dir.join("bin/lae-task-tui");
     let has_source = cfg.install_hypr_config_path.is_file()
         && fs::read_to_string(&cfg.install_hypr_config_path)
             .map(|s| s.contains("lae-managed"))
@@ -45,8 +42,7 @@ pub fn install_hypr_status(cfg: &LaeConfig) -> Result<Value> {
     Ok(json!({
         "installed": m.is_some(),
         "bindings_exist": bindings.is_file(),
-        "elephant_menu_exist": elephant.is_file(),
-        "elephant_symlink": elephant_link.is_symlink(),
+        "tui_helper_exist": tui_helper.is_file(),
         "source_line_present": has_source,
         "config_path": cfg.install_hypr_config_path,
         "bindings_path": bindings,
@@ -104,10 +100,10 @@ pub fn install_hypr(cfg: &LaeConfig, options: &InstallHyprOptions) -> Result<Vec
         }
     }
 
-    install_elephant_menu(cfg, options.workspace_root.as_deref())?;
+    cleanup_legacy_menu(cfg)?;
     let rust_bin = build_and_install_cli(cfg, options.workspace_root.as_deref())?;
     path_link::install_path_symlink(cfg, &rust_bin)?;
-    wrapper::write_menu_helper(cfg)?;
+    wrapper::write_install_helpers(cfg)?;
 
     let config_path = &cfg.install_hypr_config_path;
     let mut backed_up = Vec::new();
@@ -177,10 +173,7 @@ pub fn uninstall_hypr(cfg: &LaeConfig, keep_files: bool) -> Result<Vec<String>> 
         }
     }
 
-    let elephant_link = config_home().join("elephant/menus/lae_tasks.lua");
-    if elephant_link.is_symlink() {
-        let _ = fs::remove_file(elephant_link);
-    }
+    cleanup_legacy_menu(cfg)?;
 
     let rust_bin = cfg.install_hypr_share_dir.join("bin/lae");
     let _ = path_link::remove_path_symlink(&rust_bin);
@@ -190,41 +183,24 @@ pub fn uninstall_hypr(cfg: &LaeConfig, keep_files: bool) -> Result<Vec<String>> 
         if hypr_dir.is_dir() {
             let _ = fs::remove_dir_all(hypr_dir);
         }
-        let elephant_dir = cfg.install_hypr_share_dir.join("elephant");
-        if elephant_dir.is_dir() {
-            let _ = fs::remove_dir_all(elephant_dir);
-        }
     }
 
     manifest::remove_manifest(&cfg.install_hypr_share_dir, "hypr")?;
     reload::apply_after_hypr()
 }
 
-fn install_elephant_menu(cfg: &LaeConfig, workspace_root: Option<&Path>) -> Result<()> {
-    let share = find_share_root(workspace_root)?;
-    let src = share.join("elephant/lae_tasks.lua");
-    if !src.is_file() {
-        return Ok(());
+fn cleanup_legacy_menu(cfg: &LaeConfig) -> Result<()> {
+    let elephant_link = config_home().join("elephant/menus/lae_tasks.lua");
+    if elephant_link.is_symlink() {
+        let _ = fs::remove_file(elephant_link);
     }
-    let dest = cfg
-        .install_hypr_share_dir
-        .join("elephant/lae_tasks.lua");
-    ensure_parent(&dest)?;
-    fs::copy(&src, &dest).map_err(|source| LaeError::Write {
-        path: dest.clone(),
-        source,
-    })?;
-    let link = config_home().join("elephant/menus/lae_tasks.lua");
-    ensure_parent(&link)?;
-    if link.exists() {
-        let _ = fs::remove_file(&link);
+    let elephant_dir = cfg.install_hypr_share_dir.join("elephant");
+    if elephant_dir.is_dir() {
+        let _ = fs::remove_dir_all(elephant_dir);
     }
-    #[cfg(unix)]
-    {
-        std::os::unix::fs::symlink(&dest, &link).map_err(|source| LaeError::Write {
-            path: link,
-            source,
-        })?;
+    let menu_json = cfg.install_hypr_share_dir.join("bin/lae-task-menu-json");
+    if menu_json.is_file() {
+        let _ = fs::remove_file(menu_json);
     }
     Ok(())
 }
@@ -245,44 +221,50 @@ fn build_and_install_cli(cfg: &LaeConfig, workspace_root: Option<&Path>) -> Resu
 
     let target_dir = workspace.join("target");
     let release_bin = target_dir.join("release/lae");
-    if !release_bin.is_file() {
-        eprintln!("building lae CLI (release)...");
-        let status = Command::new("cargo")
-            .args([
-                "build",
-                "-p",
-                "lae-cli",
-                "--release",
-                "--target-dir",
-            ])
-            .arg(&target_dir)
-            .current_dir(&workspace)
-            .status()
-            .map_err(|e| LaeError::Other(format!("failed to run cargo: {e}")))?;
-        if !status.success() {
-            return Err(LaeError::Other("cargo build -p lae-cli failed".into()));
-        }
+    eprintln!("building lae CLI (release)...");
+    let status = Command::new("cargo")
+        .args([
+            "build",
+            "-p",
+            "lae-cli",
+            "--release",
+            "--target-dir",
+        ])
+        .arg(&target_dir)
+        .current_dir(&workspace)
+        .status()
+        .map_err(|e| LaeError::Other(format!("failed to run cargo: {e}")))?;
+    if !status.success() {
+        return Err(LaeError::Other("cargo build -p lae-cli failed".into()));
     }
 
-    fs::copy(&release_bin, &dest).map_err(|source| LaeError::Write {
-        path: dest.clone(),
+    let staging = bin_dir.join("lae.new");
+    if staging.exists() {
+        let _ = fs::remove_file(&staging);
+    }
+    fs::copy(&release_bin, &staging).map_err(|source| LaeError::Write {
+        path: staging.clone(),
         source,
     })?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mut perms = fs::metadata(&dest)
+        let mut perms = fs::metadata(&staging)
             .map_err(|source| LaeError::Read {
-                path: dest.clone(),
+                path: staging.clone(),
                 source,
             })?
             .permissions();
         perms.set_mode(0o755);
-        fs::set_permissions(&dest, perms).map_err(|source| LaeError::Write {
-            path: dest.clone(),
+        fs::set_permissions(&staging, perms).map_err(|source| LaeError::Write {
+            path: staging.clone(),
             source,
         })?;
     }
+    fs::rename(&staging, &dest).map_err(|source| LaeError::Write {
+        path: dest.clone(),
+        source,
+    })?;
     Ok(dest)
 }
 

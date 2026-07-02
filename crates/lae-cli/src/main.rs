@@ -3,8 +3,8 @@ use clap::{Parser, Subcommand};
 use lae_core::{
     allowed_workspace_names, analyze_recent_latency, build_all_modules, clear_log, daemon_socket_path,
     diagnose_socket2, enable_for_process, format_report, hyprland, install_hypr, install_hypr_status,
-    install_waybar, install_waybar_status, is_daemon_running, launch_task_menu, load_config,
-    menu_action_prefix, ping_daemon, refresh_modules_cache, run_doctor_checks, stop_daemon, tail_raw,
+    install_waybar, install_waybar_status, is_daemon_running, launch_task_tui, load_config,
+    ping_daemon, refresh_modules_cache, run_doctor_checks, stop_daemon, tail_raw,
     trace_path, uninstall_hypr, uninstall_waybar, workspace_module_key, DaemonClient, DaemonServer,
     InstallHyprOptions, InstallWaybarOptions, LaeError, Registry, Result, TaskStatus,
 };
@@ -131,9 +131,13 @@ enum TaskCommands {
     Archive {
         name_or_id: String,
     },
-    #[command(name = "menu-json")]
-    MenuJson,
+    /// Open the task manager TUI in a terminal window (alias for tui-launch)
     Menu,
+    /// Interactive task manager (ratatui)
+    Tui,
+    /// Open the task manager TUI in a terminal window (used by SUPER+Tab)
+    #[command(name = "tui-launch")]
+    TuiLaunch,
 }
 
 #[derive(Subcommand)]
@@ -242,8 +246,8 @@ fn run() -> Result<()> {
             TaskCommands::Switch { name_or_id } => cmd_task_switch(&name_or_id),
             TaskCommands::Current => cmd_task_current(),
             TaskCommands::Archive { name_or_id } => cmd_task_archive(&name_or_id),
-            TaskCommands::MenuJson => cmd_task_menu_json(),
-            TaskCommands::Menu => cmd_task_menu(),
+            TaskCommands::Menu | TaskCommands::TuiLaunch => cmd_task_tui_launch(),
+            TaskCommands::Tui => cmd_task_tui(),
         },
         Commands::Waybar { command } => match command {
             WaybarCommands::RefreshCache => cmd_waybar_refresh_cache(),
@@ -542,7 +546,7 @@ fn cmd_workspace_goto(name: &str) -> Result<()> {
 }
 
 fn cmd_task_new(name: &str, switch: bool) -> Result<()> {
-    let task = client()?.create_task(name, switch)?;
+    let task = client()?.create_task(name, switch, None)?;
     println!(
         "Created task {} → workspaces {}-1..{}-{}",
         task.id,
@@ -613,27 +617,12 @@ fn cmd_task_current() -> Result<()> {
     Ok(())
 }
 
-fn cmd_task_menu_json() -> Result<()> {
-    let cfg = load_config()?;
-    let lae = menu_action_prefix(&cfg);
-    for item in client()?.tasks_for_menu()? {
-        let action = if item.kind == "default" {
-            format!("{lae} taskspace default")
-        } else {
-            format!("{lae} task switch {}", item.id)
-        };
-        let mut label = item.name.clone();
-        if item.current {
-            label.push_str(" (active)");
-        }
-        let workspaces = item.workspaces.join(", ");
-        println!("{label}\t{workspaces}\t{}\t{action}", item.status);
-    }
-    Ok(())
+fn cmd_task_tui() -> Result<()> {
+    lae_tui::run()
 }
 
-fn cmd_task_menu() -> Result<()> {
-    launch_task_menu()
+fn cmd_task_tui_launch() -> Result<()> {
+    launch_task_tui()
 }
 
 fn cmd_waybar_refresh_cache() -> Result<()> {

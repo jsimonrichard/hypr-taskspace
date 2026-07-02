@@ -17,7 +17,7 @@ use lae_core::{
         parse_focusedmon_v2, parse_workspace_v2, HyprlandEventListener,
     },
     read_state_rev, sync_from_workspace_name, trace_enabled, trace_event,
-    visible_default_workspace_count, launch_task_menu, workspace_display_label,
+    visible_default_workspace_count, launch_task_tui, workspace_display_label,
     workspace_goto_name, Registry, SessionState, StateChangeKind, StateEventListener,
     WaybarModuleJson, ACTIVE_WORKSPACE_ICON,
 };
@@ -257,7 +257,7 @@ impl Runtime {
             let tooltip = task
                 .tooltip
                 .as_deref()
-                .unwrap_or("Switch task (SUPER+Tab)");
+                .unwrap_or("Task manager (SUPER+Tab)");
             self.widgets.task_button.set_tooltip_text(Some(tooltip));
         } else {
             self.widgets.task_label.set_text("󰣇 default");
@@ -265,14 +265,14 @@ impl Runtime {
             self.widgets.task_button.set_visible(true);
             self.widgets
                 .task_button
-                .set_tooltip_text(Some("Switch task (SUPER+Tab)"));
+                .set_tooltip_text(Some("Task manager (SUPER+Tab)"));
         }
     }
 
     fn on_task_clicked() {
         let _ = std::thread::spawn(|| {
-            if let Err(err) = launch_task_menu() {
-                eprintln!("lae-waybar: task menu: {err}");
+            if let Err(err) = launch_task_tui() {
+                eprintln!("lae-waybar: task tui: {err}");
             }
         });
     }

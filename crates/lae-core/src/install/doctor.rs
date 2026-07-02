@@ -39,17 +39,14 @@ pub fn run_doctor_checks(cfg: &LaeConfig) -> Result<Vec<DoctorCheck>> {
     });
 
     checks.push(DoctorCheck {
-        label: "Walker task menu (elephant) installed".into(),
+        label: "Task manager launcher installed".into(),
         passed: hypr
-            .get("elephant_menu_exist")
+            .get("tui_helper_exist")
             .and_then(|v| v.as_bool())
-            .unwrap_or(false)
-            && hypr
-                .get("elephant_symlink")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false),
-        detail: crate::xdg::config_home()
-            .join("elephant/menus/lae_tasks.lua")
+            .unwrap_or(false),
+        detail: cfg
+            .install_hypr_share_dir
+            .join("bin/lae-task-tui")
             .display()
             .to_string(),
     });

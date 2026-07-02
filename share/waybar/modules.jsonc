@@ -4,7 +4,7 @@
     "exec": "~/.local/share/lae/bin/lae-waybar-json task",
     "interval": "once",
     "signal": 11,
-    "on-click": "~/.local/share/lae/bin/lae task menu",
+    "on-click": "~/.local/share/lae/bin/lae-task-tui",
     "on-click-right": "lae taskspace default"
   },
   "custom/lae-workspace-1": {

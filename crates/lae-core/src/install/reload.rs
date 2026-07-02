@@ -15,14 +15,6 @@ pub fn restart_waybar() -> bool {
     false
 }
 
-pub fn restart_walker() -> bool {
-    if command_exists("omarchy-restart-walker") {
-        let _ = Command::new("omarchy-restart-walker").status();
-        return true;
-    }
-    false
-}
-
 pub fn apply_after_hypr() -> Result<Vec<String>> {
     let mut actions = Vec::new();
     if command_exists("hyprctl") {
@@ -30,11 +22,6 @@ pub fn apply_after_hypr() -> Result<Vec<String>> {
         actions.push("reloaded Hyprland config".into());
     } else {
         actions.push("Hyprland not active — run `hyprctl reload` after login".into());
-    }
-    if restart_walker() {
-        actions.push("restarted Walker".into());
-    } else if command_exists("elephant") {
-        actions.push("run `omarchy-restart-walker` to refresh the task menu".into());
     }
     Ok(actions)
 }

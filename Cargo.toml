@@ -4,6 +4,7 @@ members = [
     "crates/lae-core",
     "crates/lae-waybar",
     "crates/lae-cli",
+    "crates/lae-tui",
 ]
 
 [workspace.package]

@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use serde_json::Value;
 
@@ -78,7 +78,13 @@ pub fn dispatch_sync(args: &[&str]) {
     }
     let detail = args.join(" ");
     let _span = Span::begin("cli", "hyprland", &format!("dispatch {detail}"));
-    let _ = Command::new("hyprctl").arg("dispatch").args(args).status();
+    let _ = Command::new("hyprctl")
+        .arg("dispatch")
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
 }
 
 pub fn get_active_workspace() -> Result<Option<Workspace>> {
@@ -166,7 +172,13 @@ pub fn keyword(args: &[&str]) {
     if !available() {
         return;
     }
-    let _ = Command::new("hyprctl").arg("keyword").args(args).status();
+    let _ = Command::new("hyprctl")
+        .arg("keyword")
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
 }
 
 pub fn rename_workspace(ws_id: i32, name: &str) {

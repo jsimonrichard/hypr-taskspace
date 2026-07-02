@@ -279,7 +279,8 @@ fn dispatch(
                 .get("switch")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(true);
-            let task = svc.create_task(name, switch)?;
+            let repo_id = params.get("repo_id").and_then(|v| v.as_str());
+            let task = svc.create_task(name, switch, repo_id)?;
             Ok(serde_json::to_value(task).map_err(|e| LaeError::Other(e.to_string()))?)
         }
         "switch_task" => {

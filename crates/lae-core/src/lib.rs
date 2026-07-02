@@ -9,11 +9,13 @@ pub mod hyprland_events;
 pub mod install;
 pub mod models;
 pub mod registry;
+pub mod repos;
 pub mod service;
 pub mod state_notify;
 pub mod taskspaces;
+pub mod terminal;
 pub mod trace;
-pub mod walker;
+pub mod binary;
 pub mod waybar;
 pub mod workspace_nav;
 pub mod workspace_slots;
@@ -31,6 +33,7 @@ pub use install::{
     uninstall_hypr, uninstall_waybar, DoctorCheck, InstallHyprOptions, InstallWaybarOptions,
 };
 pub use models::{ContextMode, SessionState, Task, TaskStatus};
+pub use repos::{find_repo, load_repos, paths_match, repo_display_path, save_repos, RegisteredRepo, unique_repo_id};
 pub use registry::Registry;
 pub use service::{MenuTask, TaskService};
 pub use state_notify::{
@@ -41,7 +44,8 @@ pub use workspace_nav::{
     focus_last_workspace, set_taskspace, workspace_go, workspace_goto_name, workspace_next,
     workspace_prev,
 };
-pub use walker::{launch_task_menu, menu_action_prefix, resolve_lae_binary, spawn_walker_menu};
+pub use binary::resolve_lae_binary;
+pub use terminal::launch_task_tui;
 pub use context_sync::sync_from_workspace_name;
 pub use taskspaces::visible_default_workspace_count;
 pub use trace::{

@@ -157,7 +157,7 @@ impl TaskService {
         Ok(Some(name.to_string()))
     }
 
-    pub fn create_task(&self, name: &str, switch: bool) -> Result<Task> {
+    pub fn create_task(&self, name: &str, switch: bool, repo_id: Option<&str>) -> Result<Task> {
         let mut state = self.load_state()?;
         let active_count = state
             .tasks
@@ -171,8 +171,21 @@ impl TaskService {
             )));
         }
 
+        let config = crate::config::load_config()?;
+        let repos = crate::repos::load_repos()?;
         let task_id = self.registry.unique_task_id(&state, name);
-        let task_home = self.config.tasks_base_dir.join(&task_id);
+        let task_home = config.tasks_base_dir.join(&task_id);
+
+        let (repo_path, repo_url) = match repo_id {
+            None => (task_home.join("repo"), None),
+            Some(id) => {
+                let repo = crate::repos::find_repo(&repos, id).ok_or_else(|| {
+                    LaeError::Other(format!("Unknown repo '{id}' — add it in the Repos panel"))
+                })?;
+                (crate::repos::repo_display_path(repo), repo.url.clone())
+            }
+        };
+
         let agent_dir = task_home.join(".lae");
         std::fs::create_dir_all(&agent_dir).map_err(|source| LaeError::Write {
             path: agent_dir.clone(),
@@ -189,18 +202,19 @@ impl TaskService {
                 source,
             })?;
         }
-        let repo_path = task_home.join("repo");
-        std::fs::create_dir_all(&repo_path).map_err(|source| LaeError::Write {
-            path: repo_path.clone(),
-            source,
-        })?;
+        if repo_id.is_none() {
+            std::fs::create_dir_all(&repo_path).map_err(|source| LaeError::Write {
+                path: repo_path.clone(),
+                source,
+            })?;
+        }
 
         let now = Utc::now();
         let mut task = Task {
             id: task_id.clone(),
             name: name.to_string(),
             status: TaskStatus::Active,
-            repo_url: None,
+            repo_url,
             repo_path,
             branch: None,
             container_name: format!("lae-{task_id}"),
@@ -358,7 +372,7 @@ mod tests {
     fn create_task_registers_workspaces_without_switch() {
         let dir = tempdir().unwrap();
         let svc = test_service(dir.path());
-        let task = svc.create_task("Auth Fix", false).unwrap();
+        let task = svc.create_task("Auth Fix", false, None).unwrap();
         assert_eq!(task.id, "auth-fix");
         assert_eq!(task.workspace_count, 10);
         assert_eq!(task.workspace_names().len(), 10);
@@ -376,7 +390,7 @@ mod tests {
     fn create_task_with_switch_enters_taskspace() {
         let dir = tempdir().unwrap();
         let svc = test_service(dir.path());
-        let task = svc.create_task("billing", true).unwrap();
+        let task = svc.create_task("billing", true, None).unwrap();
         let state = svc.load_state().unwrap();
         assert_eq!(state.context_mode, ContextMode::Task);
         assert_eq!(state.current_task_id.as_deref(), Some(task.id.as_str()));
@@ -386,7 +400,7 @@ mod tests {
     fn archive_task_leaves_default_taskspace() {
         let dir = tempdir().unwrap();
         let svc = test_service(dir.path());
-        let task = svc.create_task("temp", true).unwrap();
+        let task = svc.create_task("temp", true, None).unwrap();
         svc.archive_task(&task.id).unwrap();
         let state = svc.load_state().unwrap();
         assert_eq!(state.tasks.get(&task.id).unwrap().status, TaskStatus::Archived);

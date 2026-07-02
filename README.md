@@ -73,9 +73,9 @@ lae install status
 |----------|----------|
 | Rust CLI + Waybar module | `~/.local/share/lae/bin/lae`, `~/.local/bin/lae` (symlink), `~/.local/share/lae/lib/liblae_waybar.so` |
 | Hyprland keybinds + Omarchy unbinds | `~/.local/share/lae/hypr/bindings.conf`, `unbind-omarchy.conf` |
-| Walker menu helper | `~/.local/share/lae/bin/lae-task-menu-json` |
 | Workspace keybind helper (hyprctl + state sync) | `~/.local/share/lae/bin/lae-workspace-switch` |
-| Elephant menu | `~/.config/elephant/menus/lae_tasks.lua` |
+| Task manager launcher | `~/.local/share/lae/bin/lae-task-tui` |
+| Registered repos | `~/.config/lae/repos.toml` |
 | Config backup | `~/.local/share/lae/install/hypr/backups/<timestamp>/` |
 
 Waybar uses a native **CFFI module** (`cffi/lae`) for instant taskspace/workspace indicators — no exec polling.
@@ -86,7 +86,11 @@ Waybar uses a native **CFFI module** (`cffi/lae`) for instant taskspace/workspac
 
 ### Create and switch tasks
 
+Use the **task manager TUI** (**SUPER+Tab**, click the task label in Waybar, or `lae task tui-launch`) to create, switch, and archive tasks interactively. **Tab** / **h** / **l** switch between the unified task list and the **Repos** panel.
+
 ```bash
+lae task tui                         # run TUI in the current terminal
+lae task tui-launch                  # open TUI in your terminal emulator ([terminal].command)
 lae task new my-feature              # creates task dirs + Hyprland workspaces, switches in
 lae task new other --no-switch       # create without switching
 lae task list
@@ -94,11 +98,11 @@ lae task switch my-feature
 lae task archive my-feature
 ```
 
-Task homes are created under `~/lae-tasks/<id>/` (notes + empty `repo/` directory). Git clone and Distrobox setup are **not** part of the Rust CLI yet.
+Task homes are created under `~/lae-tasks/<id>/` (notes + optional scratch `repo/` directory). Register git repos in the TUI **Repos** panel (saved to `~/.config/lae/repos.toml`); new tasks attach to a selected repo or use a scratch workspace with no repo.
 
 ### Switch back to the default taskspace
 
-Open the **task menu** (Waybar task label, SUPER+Tab, or `lae task menu`) and choose **default**, or:
+Open the **task manager** (Waybar task label, **SUPER+Tab**, or `lae task tui-launch`) and switch to **host**, or:
 
 ```bash
 lae taskspace default        # SUPER+H
@@ -110,12 +114,12 @@ Legacy aliases still work: `lae context default`, `lae desktop go 1`, etc.
 
 | Action | Binding |
 |--------|---------|
-| Task menu (Walker) | Click task name in Waybar, **SUPER+Tab**, or `lae task menu` |
+| Task manager (TUI) | Click task name in Waybar, **SUPER+Tab**, or `lae task tui-launch` |
 | Workspace 1–9 / 10 within current taskspace | **SUPER+1..9**, **SUPER+0** (= workspace 10) — `hyprctl dispatch` via `lae-workspace-switch`, then async state sync |
-| Default / host taskspace | **SUPER+H** or Walker → **default** |
+| Default / host taskspace | **SUPER+H** or TUI → **host** |
 | Host terminal | **SUPER+Return** (your existing Omarchy bind — unchanged) |
 
-SUPER+Space remains the normal Walker app launcher, not the task menu.
+SUPER+Space remains the normal Walker app launcher.
 
 Default and task taskspaces both use **10** workspace slots (`1`–`10`, SUPER+0 → slot 10) so keybinds behave the same in either mode. Set `workspace_count = 10` under `[default]` in `~/.config/lae/config.toml` to change the slot count for both.
 
@@ -147,7 +151,7 @@ lae uninstall hypr|waybar
 lae taskspace default|current   # alias: context
 lae workspace go|next|prev|goto                              # alias: desktop
 
-lae task new|list|switch|current|archive|menu|menu-json
+lae task new|list|switch|current|archive|menu|tui|tui-launch
 lae waybar refresh-cache|status|module
 ```
 
@@ -220,21 +224,14 @@ lae daemon start
 sqlite3 ~/.local/share/lae/state.db "SELECT context_mode, current_task_id FROM session;"
 ```
 
-**Walker task menu is empty**
-
-Elephant loads menu scripts at startup — after `install hypr` or changing `lae_tasks.lua`, restart Walker so Elephant picks up the menu:
+**Task manager does not open**
 
 ```bash
-~/.local/share/lae/bin/lae-task-menu-json   # should list default + tasks
-omarchy-restart-walker
+~/.local/share/lae/bin/lae-task-tui   # should launch the TUI in a terminal
+lae doctor
 ```
 
-If entries still do not appear, verify Elephant sees the provider:
-
-```bash
-elephant listproviders | grep laetasks
-elephant query 'menus:laetasks;;256'
-```
+After `install hypr`, run `hyprctl reload` so **SUPER+Tab** picks up the new bind.
 
 **Waybar taskspace indicator stuck or laggy**
 
