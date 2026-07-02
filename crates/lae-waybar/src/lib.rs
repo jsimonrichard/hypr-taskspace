@@ -31,8 +31,8 @@ use waybar_cffi::{
 };
 
 thread_local! {
-    /// Set during init on the Waybar/GTK thread; read only from `main_ctx.invoke` closures.
-    static MAIN_RUNTIME: RefCell<Option<Rc<Runtime>>> = const { RefCell::new(None) };
+    /// One entry per Waybar bar instance (multi-monitor); indexed by `Runtime::id`.
+    static RUNTIMES: RefCell<Vec<Rc<Runtime>>> = RefCell::new(Vec::new());
 }
 
 struct Widgets {
@@ -67,6 +67,15 @@ struct Runtime {
     visible_count: RefCell<u32>,
     pending: Arc<Mutex<Option<PendingRefresh>>>,
     last_state_rev: Arc<AtomicU64>,
+}
+
+fn register_runtime(runtime: Rc<Runtime>) -> usize {
+    RUNTIMES.with(|cell| {
+        let mut runtimes = cell.borrow_mut();
+        let id = runtimes.len();
+        runtimes.push(runtime);
+        id
+    })
 }
 
 struct LaeBar {
@@ -158,6 +167,7 @@ impl Runtime {
     }
 
     fn queue_and_dispatch(
+        runtime_id: usize,
         pending: &Arc<Mutex<Option<PendingRefresh>>>,
         scheduled: &Arc<AtomicBool>,
         main_ctx: &glib::MainContext,
@@ -176,8 +186,8 @@ impl Runtime {
         let main_ctx = main_ctx.clone();
         main_ctx.invoke_with_priority(glib::Priority::HIGH, move || {
             scheduled.store(false, Ordering::Release);
-            MAIN_RUNTIME.with(|cell| {
-                if let Some(runtime) = cell.borrow().as_ref() {
+            RUNTIMES.with(|cell| {
+                if let Some(runtime) = cell.borrow().get(runtime_id) {
                     runtime.process_pending();
                 }
             });
@@ -661,6 +671,7 @@ fn apply_module(label: &Label, module: &WaybarModuleJson) {
 
 impl LaeBar {
     fn start_state_event_listener(
+        runtime_id: usize,
         pending: Arc<Mutex<Option<PendingRefresh>>>,
         scheduled: Arc<AtomicBool>,
         main_ctx: glib::MainContext,
@@ -675,11 +686,18 @@ impl LaeBar {
                     .map(PendingRefresh::Fast)
                     .unwrap_or(PendingRefresh::Full),
             };
-            Runtime::queue_and_dispatch(&pending, &scheduled, &main_ctx, refresh);
+            Runtime::queue_and_dispatch(
+                runtime_id,
+                &pending,
+                &scheduled,
+                &main_ctx,
+                refresh,
+            );
         }))
     }
 
     fn start_hyprland_listener(
+        runtime_id: usize,
         pending: Arc<Mutex<Option<PendingRefresh>>>,
         scheduled: Arc<AtomicBool>,
         main_ctx: glib::MainContext,
@@ -699,6 +717,7 @@ impl LaeBar {
                     );
                     hypr_ids.lock().ok().map(|mut g| g.insert(id, name.clone()));
                     Runtime::queue_and_dispatch(
+                        runtime_id,
                         &pending,
                         &scheduled,
                         &main_ctx,
@@ -714,6 +733,7 @@ impl LaeBar {
                         .or_else(|| ((1..=10).contains(&id)).then(|| id.to_string()));
                     if let Some(name) = name {
                         Runtime::queue_and_dispatch(
+                            runtime_id,
                             &pending,
                             &scheduled,
                             &main_ctx,
@@ -723,6 +743,7 @@ impl LaeBar {
                 }
             } else if is_full_refresh_event(event) {
                 Runtime::queue_and_dispatch(
+                    runtime_id,
                     &pending,
                     &scheduled,
                     &main_ctx,
@@ -777,10 +798,10 @@ impl Module for LaeBar {
             pending: pending.clone(),
             last_state_rev: last_state_rev.clone(),
         });
-
-        MAIN_RUNTIME.with(|cell| *cell.borrow_mut() = Some(runtime.clone()));
+        let runtime_id = register_runtime(runtime.clone());
 
         let state_listener = Self::start_state_event_listener(
+            runtime_id,
             pending.clone(),
             dispatch_scheduled.clone(),
             main_ctx.clone(),
@@ -789,6 +810,7 @@ impl Module for LaeBar {
 
         let hypr_ids = Arc::new(Mutex::new(HashMap::new()));
         let hypr_listener = Self::start_hyprland_listener(
+            runtime_id,
             pending,
             dispatch_scheduled,
             main_ctx,
@@ -833,8 +855,8 @@ impl Module for LaeBar {
         if self.runtime.reconcile_db_taskspace() {
             return;
         }
+        self.runtime.sync_active_workspace();
         if !self.hypr_events {
-            self.runtime.sync_active_workspace();
             self.runtime.reload_from_daemon();
         }
     }
@@ -846,10 +868,10 @@ impl Module for LaeBar {
         if self.runtime.reconcile_db_taskspace() {
             return;
         }
+        self.runtime.sync_active_workspace();
         if !self.hypr_events {
-            self.runtime.sync_active_workspace();
+            self.runtime.reload_from_daemon();
         }
-        self.runtime.reload_from_daemon();
     }
 }
 
