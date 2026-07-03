@@ -3,7 +3,7 @@ mod daemon_check;
 mod modal;
 mod ui;
 
-use std::io::{self, stdout, Stdout};
+use std::io::{self, stdout, ErrorKind, Stdout};
 use std::time::{Duration, Instant};
 
 use crossterm::event::{self, Event, KeyEventKind};
@@ -56,13 +56,17 @@ pub fn run() -> Result<()> {
             app.set_daemon_status(running);
         }
 
-        terminal
-            .draw(|frame| app.draw(frame))
-            .map_err(|e| lae_core::LaeError::Other(e.to_string()))?;
+        loop {
+            match terminal.draw(|frame| app.draw(frame)) {
+                Ok(_) => break,
+                Err(err) if err.kind() == ErrorKind::Interrupted => continue,
+                Err(err) => return Err(lae_core::LaeError::Other(err.to_string())),
+            }
+        }
 
         let timeout = tick.saturating_sub(last_tick.elapsed());
-        if event::poll(timeout).map_err(|e| lae_core::LaeError::Other(e.to_string()))? {
-            match event::read().map_err(|e| lae_core::LaeError::Other(e.to_string()))? {
+        if poll_event(timeout)? {
+            match read_event()? {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
                     if let Err(err) = app.handle_key(key) {
                         app.status = Some((false, err.to_string()));
@@ -94,4 +98,24 @@ pub fn run() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn poll_event(timeout: Duration) -> Result<bool> {
+    loop {
+        match event::poll(timeout) {
+            Ok(value) => return Ok(value),
+            Err(err) if err.kind() == ErrorKind::Interrupted => continue,
+            Err(err) => return Err(lae_core::LaeError::Other(err.to_string())),
+        }
+    }
+}
+
+fn read_event() -> Result<Event> {
+    loop {
+        match event::read() {
+            Ok(event) => return Ok(event),
+            Err(err) if err.kind() == ErrorKind::Interrupted => continue,
+            Err(err) => return Err(lae_core::LaeError::Other(err.to_string())),
+        }
+    }
 }

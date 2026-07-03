@@ -96,12 +96,13 @@ impl Registry {
     }
 
     fn migrate_schema(&self, conn: &Connection) -> Result<()> {
-        let cols = table_columns(conn, "session")?;
+        let mut cols = table_columns(conn, "session")?;
         if cols.iter().any(|c| c == "last_workspace") && !cols.iter().any(|c| c == "last_desktop") {
             conn.execute(
                 "ALTER TABLE session RENAME COLUMN last_workspace TO last_desktop",
                 [],
             )?;
+            cols = table_columns(conn, "session")?;
         }
         let win_cols = table_columns(conn, "windows")?;
         if !win_cols.is_empty() && !win_cols.iter().any(|c| c == "workspace_name") {
@@ -110,18 +111,29 @@ impl Registry {
                 [],
             )?;
         }
+        if !cols.iter().any(|c| c == "last_monitor_workspace") {
+            conn.execute(
+                "ALTER TABLE session ADD COLUMN last_monitor_workspace TEXT NOT NULL DEFAULT '{}'",
+                [],
+            )?;
+        }
         Ok(())
     }
 
     pub fn load_state(&self) -> Result<SessionState> {
         let conn = self.connect()?;
-        let session = conn.query_row("SELECT * FROM session WHERE id = 1", [], |row| {
-            Ok(SessionRow {
-                context_mode: row.get(1)?,
-                current_task_id: row.get(2)?,
-                last_desktop: row.get(5)?,
-            })
-        })?;
+        let session = conn.query_row(
+            "SELECT context_mode, current_task_id, last_desktop, COALESCE(last_monitor_workspace, '{}') FROM session WHERE id = 1",
+            [],
+            |row| {
+                Ok(SessionRow {
+                    context_mode: row.get(0)?,
+                    current_task_id: row.get(1)?,
+                    last_desktop: row.get(2)?,
+                    last_monitor_workspace: row.get(3)?,
+                })
+            },
+        )?;
 
         let mut tasks = HashMap::new();
         let mut stmt = conn.prepare("SELECT * FROM tasks")?;
@@ -164,6 +176,8 @@ impl Registry {
 
         let last_workspace: HashMap<String, i32> =
             serde_json::from_str(&session.last_desktop).unwrap_or_default();
+        let last_monitor_workspace: HashMap<String, HashMap<String, i32>> =
+            serde_json::from_str(&session.last_monitor_workspace).unwrap_or_default();
 
         Ok(SessionState {
             context_mode: parse_context_mode(&session.context_mode),
@@ -173,6 +187,7 @@ impl Registry {
                 session.current_task_id
             },
             last_workspace,
+            last_monitor_workspace,
             default_workspace_count: self.config.default_workspace_count,
             tasks,
             windows,
@@ -183,13 +198,16 @@ impl Registry {
         let conn = self.connect()?;
         let last_desktop = serde_json::to_string(&state.last_workspace)
             .map_err(|e| LaeError::Other(e.to_string()))?;
+        let last_monitor_workspace = serde_json::to_string(&state.last_monitor_workspace)
+            .map_err(|e| LaeError::Other(e.to_string()))?;
         conn.execute(
-            "UPDATE session SET context_mode = ?, current_task_id = ?, previous_context = NULL, previous_task_id = NULL, last_desktop = ?, default_desktop_count = ? WHERE id = 1",
+            "UPDATE session SET context_mode = ?, current_task_id = ?, previous_context = NULL, previous_task_id = NULL, last_desktop = ?, default_desktop_count = ?, last_monitor_workspace = ? WHERE id = 1",
             params![
                 state.context_mode.as_str(),
                 state.current_task_id,
                 last_desktop,
                 state.default_workspace_count as i32,
+                last_monitor_workspace,
             ],
         )?;
         conn.execute("DELETE FROM tasks", [])?;
@@ -247,6 +265,7 @@ struct SessionRow {
     context_mode: String,
     current_task_id: Option<String>,
     last_desktop: String,
+    last_monitor_workspace: String,
 }
 
 fn table_columns(conn: &Connection, table: &str) -> Result<Vec<String>> {

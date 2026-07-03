@@ -9,6 +9,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::error::{LaeError, Result};
+use crate::hypr_log;
 use crate::hyprland;
 use crate::models::{SessionState, Task, TaskStatus};
 use crate::service::{MenuTask, TaskService};
@@ -194,7 +195,9 @@ impl DaemonClient {
     }
 
     pub fn workspace_goto(&self, name: &str) -> Result<Option<String>> {
-        hyprland::switch_workspace(name);
+        hypr_log::scoped(format!("daemon client workspace_goto {name}"), || {
+            hyprland::switch_workspace(name);
+        });
         if is_daemon_running() {
             spawn_daemon_request("workspace_remember_goto", json!({ "name": name }));
             Ok(Some(name.to_string()))
@@ -215,7 +218,9 @@ impl DaemonClient {
         let Some(name) = name else {
             return Ok(None);
         };
-        hyprland::switch_workspace(&name);
+        hypr_log::scoped(format!("daemon client hyprctl_then_remember slot {relative} → {name}"), || {
+            hyprland::switch_workspace(&name);
+        });
         self.sync_workspace_remember(relative)?;
         Ok(Some(name))
     }

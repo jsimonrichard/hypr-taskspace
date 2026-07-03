@@ -40,7 +40,21 @@ pub fn sync_from_workspace_name(state: &mut SessionState, name: &str) -> bool {
         let rel = (idx + 1) as i32;
         let key = state.taskspace_key();
         if state.last_workspace.get(&key).copied() != Some(rel) {
-            state.last_workspace.insert(key, rel);
+            state.last_workspace.insert(key.clone(), rel);
+            changed = true;
+        }
+        let before = state
+            .last_monitor_workspace
+            .get(&key)
+            .cloned()
+            .unwrap_or_default();
+        crate::workspace_nav::refresh_monitor_slots(state);
+        let after = state
+            .last_monitor_workspace
+            .get(&key)
+            .cloned()
+            .unwrap_or_default();
+        if before != after {
             changed = true;
         }
     }

@@ -90,6 +90,9 @@ pub struct SessionState {
     pub current_task_id: Option<String>,
     #[serde(default)]
     pub last_workspace: HashMap<String, i32>,
+    /// Per taskspace key: monitor name → relative workspace slot (1-based).
+    #[serde(default)]
+    pub last_monitor_workspace: HashMap<String, HashMap<String, i32>>,
     pub default_workspace_count: u32,
     #[serde(default)]
     pub tasks: HashMap<String, Task>,

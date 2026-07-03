@@ -6,6 +6,7 @@ pub mod daemon;
 pub mod distrobox;
 pub mod error;
 pub mod host;
+pub mod hypr_log;
 pub mod hyprland;
 pub mod hyprland_events;
 pub mod install;
@@ -45,8 +46,8 @@ pub use state_notify::{
     StateChangeKind, StateEventListener,
 };
 pub use workspace_nav::{
-    focus_last_workspace, set_taskspace, workspace_go, workspace_goto_name, workspace_next,
-    workspace_prev,
+    clear_navigation_memory, clear_runtime_slot_cache, focus_last_workspace, set_taskspace,
+    workspace_go, workspace_goto_name, workspace_next, workspace_prev,
 };
 pub use binary::resolve_lae_binary;
 pub use terminal::launch_task_tui;
@@ -56,6 +57,7 @@ pub use trace::{
     analyze_recent_latency, clear_log, enable_for_process, enabled as trace_enabled, event as trace_event,
     format_report, tail_raw, trace_path,
 };
+pub use hypr_log::{clear_log as clear_hypr_log, hypr_log_path, tail_raw as tail_hypr_log};
 pub use workspaces::{
     allowed_workspace_names, bar_active_workspace_name, bar_occupied_names, bar_workspace_names,
     workspace_display_label,

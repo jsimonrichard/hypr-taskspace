@@ -81,6 +81,14 @@ impl TaskService {
         Ok(())
     }
 
+    /// Drop remembered last-workspace and per-monitor layout state.
+    pub fn reset_navigation_layout(&self) -> Result<()> {
+        let mut state = self.load_state()?;
+        workspace_nav::clear_navigation_memory(&mut state);
+        workspace_nav::clear_runtime_slot_cache();
+        self.commit_state(&state, true, Some(StateChangeKind::Full))
+    }
+
     pub fn context_default(&self) -> Result<()> {
         let mut state = self.load_state()?;
         workspace_nav::set_taskspace(&mut state, ContextMode::Default, None)
@@ -227,7 +235,7 @@ impl TaskService {
         self.registry.touch_task(&mut task);
         state.tasks.insert(task_id.clone(), task.clone());
 
-        if hyprland::available() && self.config.hyprland_enabled {
+        if hyprland::available() && self.config.hyprland_enabled && !switch {
             workspace_nav::setup_task_workspaces(&task_id, self.config.default_workspace_count);
         }
 
@@ -355,10 +363,6 @@ impl TaskService {
             .entry(format!("task:{task_id}"))
             .or_insert(1);
 
-        if hyprland::available() {
-            workspace_nav::setup_task_workspaces_for_state(&task.id, &state);
-            hyprland::switch_workspace(&task.main_workspace());
-        }
         self.commit_state(&state, false, Some(StateChangeKind::Taskspace))?;
         Ok(task)
     }

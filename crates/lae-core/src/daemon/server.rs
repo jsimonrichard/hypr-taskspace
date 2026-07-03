@@ -329,6 +329,11 @@ fn dispatch(
         }
         "taskspace_label" => Ok(json!({ "label": svc.taskspace_label()? })),
 
+        "reset_navigation_layout" => {
+            svc.reset_navigation_layout()?;
+            Ok(json!({ "ok": true }))
+        }
+
         _ => Err(LaeError::Other(format!("Unknown method: {method}"))),
     }
 }

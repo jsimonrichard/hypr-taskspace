@@ -87,6 +87,9 @@ pub fn purge_task_windows(state: &mut SessionState, task_id: &str) {
 
 pub fn purge_task_session_keys(state: &mut SessionState, task_id: &str) {
     state.last_workspace.remove(&format!("task:{task_id}"));
+    state
+        .last_monitor_workspace
+        .remove(&format!("task:{task_id}"));
     if state.current_task_id.as_deref() == Some(task_id) {
         state.current_task_id = None;
         state.context_mode = crate::models::ContextMode::Default;

@@ -4,6 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use crate::error::Result;
+use crate::hypr_log;
 use crate::hyprland;
 use crate::models::SessionState;
 use crate::workspaces::bar_workspace_names;
@@ -27,7 +28,9 @@ pub fn read_slot_target(relative: i32) -> Option<String> {
 /// Switch via `hyprctl dispatch` using the slot cache (keybind hot path).
 pub fn switch_slot(relative: i32) -> Option<String> {
     let target = read_slot_target(relative)?;
-    hyprland::switch_workspace(&target);
+    hypr_log::scoped(format!("switch_slot cache slot {relative} → {target}"), || {
+        hyprland::switch_workspace(&target);
+    });
     Some(target)
 }
 

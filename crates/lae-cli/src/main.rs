@@ -2,11 +2,13 @@ use clap::{Parser, Subcommand};
 
 use lae_core::{
     allowed_workspace_names, analyze_recent_latency, build_all_modules, clear_log, daemon_socket_path,
-    diagnose_socket2, enable_for_process, format_report, hyprland, install_hypr, install_hypr_status,
+    diagnose_socket2, enable_for_process, format_report, hypr_log_path, hyprland, install_hypr,
+    install_hypr_status,
     install_waybar, install_waybar_status, is_daemon_running, launch_task_tui, load_config,
-    ping_daemon, refresh_modules_cache, run_doctor_checks, stop_daemon, tail_raw,
+    ping_daemon, refresh_modules_cache, run_doctor_checks, stop_daemon, tail_hypr_log, tail_raw,
     trace_path, uninstall_hypr, uninstall_waybar, workspace_module_key, DaemonClient, DaemonServer,
-    InstallHyprOptions, InstallWaybarOptions, LaeError, Registry, Result, TaskStatus,
+    InstallHyprOptions, InstallWaybarOptions, LaeError, Registry, Result, TaskService, TaskStatus,
+    clear_hypr_log,
 };
 
 #[derive(Parser)]
@@ -54,6 +56,17 @@ enum Commands {
     },
     #[command(subcommand)]
     Daemon(DaemonCommands),
+    /// Clear session navigation memory (workspace layout per monitor)
+    Reset {
+        #[command(subcommand)]
+        command: ResetCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum ResetCommands {
+    /// Clear last-workspace and per-monitor layout memory in state.db
+    Layout,
 }
 
 #[derive(Subcommand)]
@@ -167,6 +180,28 @@ enum DebugCommands {
     /// Diagnose Hyprland socket2 event socket (Waybar live updates)
     #[command(name = "hyprland-socket")]
     HyprlandSocket,
+    /// Hyprctl command log (enabled by default; set LAE_HYPR_LOG=0 to disable)
+    Hypr {
+        #[command(subcommand)]
+        command: DebugHyprCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum DebugHyprCommands {
+    #[command(subcommand, name = "log")]
+    Log(DebugHyprLogCommands),
+}
+
+#[derive(Subcommand)]
+enum DebugHyprLogCommands {
+    /// Print the last N hyprctl log lines (default 80)
+    Show {
+        #[arg(long, default_value_t = 80)]
+        last: usize,
+    },
+    Clear,
+    Path,
 }
 
 #[derive(Subcommand)]
@@ -273,12 +308,22 @@ fn run() -> Result<()> {
                 } => cmd_debug_trace_workspace(index, clear, wait_ms),
             },
             DebugCommands::HyprlandSocket => cmd_debug_hyprland_socket(),
+            DebugCommands::Hypr { command } => match command {
+                DebugHyprCommands::Log(log_cmd) => match log_cmd {
+                    DebugHyprLogCommands::Show { last } => cmd_debug_hypr_log_show(last),
+                    DebugHyprLogCommands::Clear => cmd_debug_hypr_log_clear(),
+                    DebugHyprLogCommands::Path => cmd_debug_hypr_log_path(),
+                },
+            },
         },
         Commands::Daemon(command) => match command {
             DaemonCommands::Start => cmd_daemon_start(),
             DaemonCommands::Run => cmd_daemon_run(),
             DaemonCommands::Stop => cmd_daemon_stop(),
             DaemonCommands::Status => cmd_daemon_status(),
+        },
+        Commands::Reset { command } => match command {
+            ResetCommands::Layout => cmd_reset_layout(),
         },
     }
 }
@@ -432,6 +477,7 @@ fn cmd_install_hypr(dry_run: bool, workspace: Option<std::path::PathBuf>) -> Res
         if !path_ok {
             eprintln!("Note: {path_detail}");
         }
+        reset_navigation_layout_after_install()?;
     }
     Ok(())
 }
@@ -453,6 +499,18 @@ fn cmd_install_waybar(dry_run: bool, workspace: Option<std::path::PathBuf>) -> R
             println!("Applied: {}.", actions.join(", "));
         }
     }
+    Ok(())
+}
+
+fn reset_navigation_layout_after_install() -> Result<()> {
+    TaskService::with_defaults()?.reset_navigation_layout()?;
+    println!("Reset workspace layout memory (per-monitor mappings cleared).");
+    Ok(())
+}
+
+fn cmd_reset_layout() -> Result<()> {
+    TaskService::with_defaults()?.reset_navigation_layout()?;
+    println!("Cleared last-workspace and per-monitor layout memory.");
     Ok(())
 }
 
@@ -782,6 +840,37 @@ fn cmd_debug_hyprland_socket() -> Result<()> {
     }
     if !d.available {
         std::process::exit(1);
+    }
+    Ok(())
+}
+
+fn cmd_debug_hypr_log_show(last: usize) -> Result<()> {
+    let text = tail_hypr_log(last)?;
+    if text.is_empty() {
+        if let Some(path) = hypr_log_path() {
+            println!("No hyprctl log entries yet ({})", path.display());
+        } else {
+            println!("No hyprctl log path (XDG_RUNTIME_DIR unavailable).");
+        }
+    } else {
+        println!("{text}");
+    }
+    Ok(())
+}
+
+fn cmd_debug_hypr_log_clear() -> Result<()> {
+    clear_hypr_log()?;
+    println!("Cleared hyprctl log.");
+    Ok(())
+}
+
+fn cmd_debug_hypr_log_path() -> Result<()> {
+    match hypr_log_path() {
+        Some(path) => println!("{}", path.display()),
+        None => {
+            println!("(XDG_RUNTIME_DIR unavailable)");
+            std::process::exit(1);
+        }
     }
     Ok(())
 }
