@@ -196,7 +196,7 @@ impl DaemonClient {
 
     pub fn workspace_goto(&self, name: &str) -> Result<Option<String>> {
         hypr_log::scoped(format!("daemon client workspace_goto {name}"), || {
-            hyprland::switch_workspace(name);
+            hyprland::switch_workspace_for_navigation(name);
         });
         if is_daemon_running() {
             spawn_daemon_request("workspace_remember_goto", json!({ "name": name }));
@@ -219,7 +219,7 @@ impl DaemonClient {
             return Ok(None);
         };
         hypr_log::scoped(format!("daemon client hyprctl_then_remember slot {relative} → {name}"), || {
-            hyprland::switch_workspace(&name);
+            hyprland::switch_workspace_for_navigation(&name);
         });
         self.sync_workspace_remember(relative)?;
         Ok(Some(name))

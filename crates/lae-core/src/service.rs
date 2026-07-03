@@ -100,9 +100,22 @@ impl TaskService {
         let mut state = self.load_state()?;
         let name = workspace_nav::workspace_name_for_relative(&state, relative);
         if let Some(ref target) = name {
-            hyprland::switch_workspace(target);
+            hyprland::switch_workspace_for_navigation(target);
             workspace_nav::remember_workspace(&mut state, relative);
             self.persist_workspace_switch(&state)?;
+        }
+        Ok(name)
+    }
+
+    /// Hyprland-only workspace switch for keybind hot path (no state write).
+    pub fn workspace_dispatch(&self, relative: i32) -> Result<Option<String>> {
+        let name = crate::workspace_slots::read_slot_target(relative).or_else(|| {
+            self.load_state()
+                .ok()
+                .and_then(|state| workspace_nav::workspace_name_for_relative(&state, relative))
+        });
+        if let Some(ref target) = name {
+            hyprland::switch_workspace_for_navigation(target);
         }
         Ok(name)
     }
@@ -156,7 +169,7 @@ impl TaskService {
         if !allowed.iter().any(|n| n == name) {
             return Ok(None);
         }
-        hyprland::switch_workspace(name);
+        hyprland::switch_workspace_for_navigation(name);
         let allowed = crate::workspaces::allowed_workspace_names(&state);
         if let Some(idx) = allowed.iter().position(|n| n == name) {
             workspace_nav::remember_workspace(&mut state, (idx + 1) as i32);

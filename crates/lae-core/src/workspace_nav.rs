@@ -63,7 +63,7 @@ pub fn workspace_prev_relative(state: &SessionState) -> Option<i32> {
 pub fn workspace_go(state: &mut SessionState, relative: i32) -> Option<String> {
     let name = workspace_name_for_relative(state, relative)?;
     hypr_log::scoped(format!("workspace_go slot {relative} → {name}"), || {
-        hyprland::switch_workspace(&name);
+        hyprland::switch_workspace_for_navigation(&name);
         remember_workspace(state, relative);
     });
     Some(name)
@@ -85,7 +85,7 @@ pub fn workspace_goto_name(state: &mut SessionState, name: &str) -> Option<Strin
         return None;
     }
     hypr_log::scoped(format!("workspace_goto_name {name}"), || {
-        hyprland::switch_workspace(name);
+        hyprland::switch_workspace_for_navigation(name);
         if let Some(idx) = allowed.iter().position(|n| n == name) {
             remember_workspace(state, (idx + 1) as i32);
         }
@@ -524,7 +524,7 @@ fn workspace_name_at_relative(names: &[String], relative: i32) -> Option<String>
 fn focus_relative_in_taskspace(state: &SessionState, relative: i32) -> Option<String> {
     let name = relative_to_name(state, relative)?;
     hypr_log::scoped(format!("focus_relative_in_taskspace slot {relative} → {name}"), || {
-        hyprland::switch_workspace(&name);
+        hyprland::switch_workspace_for_navigation(&name);
     });
     Some(name)
 }

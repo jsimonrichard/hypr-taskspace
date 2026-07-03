@@ -119,6 +119,11 @@ enum WorkspaceCommands {
         #[arg(value_parser = clap::value_parser!(i32).range(1..=10))]
         index: i32,
     },
+    /// Adaptive Hyprland switch only (keybind hot path; use with `remember`).
+    Dispatch {
+        #[arg(value_parser = clap::value_parser!(i32).range(1..=10))]
+        index: i32,
+    },
     Next,
     Prev,
     Goto {
@@ -276,6 +281,7 @@ fn run() -> Result<()> {
         Commands::Workspace(command) | Commands::Desktop(command) => match command {
             WorkspaceCommands::Go { index } => cmd_workspace_go(index),
             WorkspaceCommands::Remember { index } => cmd_workspace_remember(index),
+            WorkspaceCommands::Dispatch { index } => cmd_workspace_dispatch(index),
             WorkspaceCommands::Next => cmd_workspace_next(),
             WorkspaceCommands::Prev => cmd_workspace_prev(),
             WorkspaceCommands::Goto { name } => cmd_workspace_goto(&name),
@@ -579,6 +585,11 @@ fn cmd_workspace_go(index: i32) -> Result<()> {
 
 fn cmd_workspace_remember(index: i32) -> Result<()> {
     client()?.remember_workspace_go(index)?;
+    Ok(())
+}
+
+fn cmd_workspace_dispatch(index: i32) -> Result<()> {
+    TaskService::with_defaults()?.workspace_dispatch(index)?;
     Ok(())
 }
 

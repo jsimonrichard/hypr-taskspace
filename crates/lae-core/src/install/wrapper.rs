@@ -34,17 +34,7 @@ set -euo pipefail
 slot="$1"
 export XDG_RUNTIME_DIR="${{XDG_RUNTIME_DIR:-/run/user/$(id -u)}}"
 export HOME="${{HOME:-$(getent passwd "$(id -u)" | cut -d: -f6)}}"
-cache="${{XDG_RUNTIME_DIR}}/lae/slot-${{slot}}"
-if [[ -f "$cache" ]]; then
-  target=$(tr -d '\n' <"$cache")
-  if [[ "$target" =~ ^[0-9]+$ ]]; then
-    hyprctl dispatch workspace "$target"
-  else
-    hyprctl dispatch workspace "name:${{target}}"
-  fi
-else
-  hyprctl dispatch workspace "$slot"
-fi
+"{lae}" workspace dispatch "$slot"
 "{lae}" workspace remember "$slot" >/dev/null 2>&1 &
 "#,
         lae = lae_bin.display()
