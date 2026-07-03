@@ -4,6 +4,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
 use ratatui::Frame;
 
+use lae_core::models::slugify;
+
 use crate::app::{
     App, ListEntry, Panel, RepoFormField, Screen, TaskRow,
 };
@@ -184,7 +186,7 @@ fn task_line(task: &TaskRow) -> Line<'static> {
         "󱓝"
     };
     let marker = if task.current { " ●" } else { "" };
-    let detail = if task.is_default {
+    let detail = if task.is_default || slugify(&task.name) == task.id {
         String::new()
     } else {
         format!("  {}", task.id)
