@@ -1,6 +1,6 @@
 use crate::models::SessionState;
 use crate::workspaces::{
-    allowed_workspace_names, is_default_taskspace_workspace_name,
+    allowed_workspace_names, is_default_taskspace_workspace_name, is_global_workspace_name,
     resolve_bar_workspace_name, task_for_workspace_name,
 };
 
@@ -10,22 +10,21 @@ pub fn sync_from_workspace_name(state: &mut SessionState, name: &str) -> bool {
         return false;
     }
 
-    let allowed = allowed_workspace_names(state);
-    let Some(resolved) = resolve_bar_workspace_name(name, state, &allowed) else {
-        return false;
-    };
-
     let mut changed = false;
 
-    if is_default_taskspace_workspace_name(&resolved, state.default_workspace_count) {
-        if state.context_mode != crate::models::ContextMode::Default
-            || state.current_task_id.is_some()
+    if is_default_taskspace_workspace_name(name, state.default_workspace_count) {
+        let visiting_global_from_task = state.context_mode == crate::models::ContextMode::Task
+            && state.current_task_id.is_some()
+            && is_global_workspace_name(name, state);
+        if !visiting_global_from_task
+            && (state.context_mode != crate::models::ContextMode::Default
+                || state.current_task_id.is_some())
         {
             state.context_mode = crate::models::ContextMode::Default;
             state.current_task_id = None;
             changed = true;
         }
-    } else if let Some(task) = task_for_workspace_name(state, &resolved) {
+    } else if let Some(task) = task_for_workspace_name(state, name) {
         let task_id = task.id.clone();
         if state.context_mode != crate::models::ContextMode::Task
             || state.current_task_id.as_deref() != Some(task_id.as_str())
@@ -35,6 +34,11 @@ pub fn sync_from_workspace_name(state: &mut SessionState, name: &str) -> bool {
             changed = true;
         }
     }
+
+    let allowed = allowed_workspace_names(state);
+    let Some(resolved) = resolve_bar_workspace_name(name, state, &allowed) else {
+        return changed;
+    };
 
     if let Some(idx) = allowed.iter().position(|n| n == &resolved) {
         let rel = (idx + 1) as i32;
@@ -111,21 +115,42 @@ mod tests {
     }
 
     #[test]
-    fn numeric_hypr_name_stays_in_task_taskspace() {
+    fn task_workspace_name_stays_in_task_taskspace() {
         let mut state = task_state();
-        sync_from_workspace_name(&mut state, "8");
+        sync_from_workspace_name(&mut state, "auth-fix-8");
         assert_eq!(state.context_mode, ContextMode::Task);
         assert_eq!(state.current_task_id.as_deref(), Some("auth-fix"));
         assert_eq!(state.last_workspace.get("task:auth-fix"), Some(&8));
     }
 
     #[test]
-    fn global_slot_switches_to_default_taskspace() {
+    fn global_slot_stays_in_task_taskspace() {
         let mut state = task_state();
         state.global_workspace_slots = vec![1];
         sync_from_workspace_name(&mut state, "1");
+        assert_eq!(state.context_mode, ContextMode::Task);
+        assert_eq!(state.current_task_id.as_deref(), Some("auth-fix"));
+        assert_eq!(state.last_workspace.get("task:auth-fix"), Some(&1));
+    }
+
+    #[test]
+    fn non_global_default_workspace_switches_to_default_taskspace() {
+        let mut state = task_state();
+        state.global_workspace_slots = vec![1];
+        sync_from_workspace_name(&mut state, "3");
         assert_eq!(state.context_mode, ContextMode::Default);
         assert!(state.current_task_id.is_none());
-        assert_eq!(state.last_workspace.get("default"), Some(&1));
+        assert_eq!(state.last_workspace.get("default"), Some(&3));
+    }
+
+    #[test]
+    fn global_then_local_slot_stays_in_task() {
+        let mut state = task_state();
+        state.global_workspace_slots = vec![1];
+        sync_from_workspace_name(&mut state, "1");
+        sync_from_workspace_name(&mut state, "auth-fix-2");
+        assert_eq!(state.context_mode, ContextMode::Task);
+        assert_eq!(state.current_task_id.as_deref(), Some("auth-fix"));
+        assert_eq!(state.last_workspace.get("task:auth-fix"), Some(&2));
     }
 }

@@ -109,6 +109,14 @@ pub fn resolve_bar_workspace_name(
         return Some(hypr_name.to_string());
     }
     relative_slot_from_name(hypr_name).and_then(|rel| {
+        if hypr_name
+            .parse::<u32>()
+            .ok()
+            .is_some_and(|_| is_default_taskspace_workspace_name(hypr_name, state.default_workspace_count))
+            && !bar_names.iter().any(|n| n == hypr_name)
+        {
+            return None;
+        }
         if is_global_workspace_slot(rel, &state.global_workspace_slots) {
             let global_name = default_taskspace_workspace_name(rel);
             if bar_names.iter().any(|n| n == &global_name) {
@@ -277,8 +285,41 @@ mod tests {
             Some("1".into())
         );
         assert_eq!(
-            resolve_bar_workspace_name("8", &state, &bar),
+            resolve_bar_workspace_name("auth-fix-8", &state, &bar),
             Some("auth-fix-8".into())
         );
+        assert!(resolve_bar_workspace_name("8", &state, &bar).is_none());
+    }
+
+    #[test]
+    fn resolve_bar_does_not_map_foreign_default_number_to_task_slot() {
+        let mut state = SessionState {
+            context_mode: ContextMode::Task,
+            current_task_id: Some("auth-fix".into()),
+            default_workspace_count: 10,
+            global_workspace_slots: vec![1],
+            ..Default::default()
+        };
+        state.tasks.insert(
+            "auth-fix".into(),
+            Task {
+                id: "auth-fix".into(),
+                name: "Auth Fix".into(),
+                status: TaskStatus::Active,
+                repo_url: None,
+                repo_path: "/tmp".into(),
+                source_repo_path: None,
+                branch: None,
+                container_name: "tsk-auth-fix".into(),
+                workspace_count: 10,
+                browser_profile: None,
+                created_at: chrono::Utc::now(),
+                last_active_at: chrono::Utc::now(),
+                agent_notes_path: None,
+                ports: vec![],
+            },
+        );
+        let bar = allowed_workspace_names(&state);
+        assert!(resolve_bar_workspace_name("2", &state, &bar).is_none());
     }
 }

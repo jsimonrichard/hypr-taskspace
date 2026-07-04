@@ -598,8 +598,8 @@ mod tests {
         );
         let name = workspace_go(&mut state, 1);
         assert_eq!(name.as_deref(), Some("1"));
-        assert_eq!(state.context_mode, ContextMode::Default);
-        assert!(state.current_task_id.is_none());
+        assert_eq!(state.context_mode, ContextMode::Task);
+        assert_eq!(state.current_task_id.as_deref(), Some("auth-fix"));
     }
 
     #[test]
