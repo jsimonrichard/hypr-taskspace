@@ -126,6 +126,11 @@ enum WorkspaceCommands {
         #[arg(value_parser = clap::value_parser!(i32).range(1..=10))]
         index: i32,
     },
+    /// Move the active window to a taskspace-scoped workspace (keybind hot path).
+    MoveDispatch {
+        #[arg(value_parser = clap::value_parser!(i32).range(1..=10))]
+        index: i32,
+    },
     Next,
     Prev,
     Goto {
@@ -321,6 +326,7 @@ fn run() -> Result<()> {
             WorkspaceCommands::Go { index } => cmd_workspace_go(index),
             WorkspaceCommands::Remember { index } => cmd_workspace_remember(index),
             WorkspaceCommands::Dispatch { index } => cmd_workspace_dispatch(index),
+            WorkspaceCommands::MoveDispatch { index } => cmd_workspace_move_dispatch(index),
             WorkspaceCommands::Next => cmd_workspace_next(),
             WorkspaceCommands::Prev => cmd_workspace_prev(),
             WorkspaceCommands::Goto { name } => cmd_workspace_goto(&name),
@@ -644,6 +650,11 @@ fn cmd_workspace_remember(index: i32) -> Result<()> {
 
 fn cmd_workspace_dispatch(index: i32) -> Result<()> {
     TaskService::with_defaults()?.workspace_dispatch(index)?;
+    Ok(())
+}
+
+fn cmd_workspace_move_dispatch(index: i32) -> Result<()> {
+    TaskService::with_defaults()?.workspace_move_dispatch(index)?;
     Ok(())
 }
 

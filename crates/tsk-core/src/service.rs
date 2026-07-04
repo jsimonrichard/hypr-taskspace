@@ -66,6 +66,7 @@ impl TaskService {
     pub fn initialize(&self) -> Result<()> {
         let mut state = self.load_state()?;
         state.default_workspace_count = self.config.default_workspace_count;
+        state.global_workspace_slots = self.config.global_workspace_slots.clone();
         self.commit_state(&state, None)
     }
 
@@ -94,10 +95,8 @@ impl TaskService {
 
     pub fn workspace_go(&self, relative: i32) -> Result<Option<String>> {
         let mut state = self.load_state()?;
-        let name = workspace_nav::workspace_name_for_relative(&state, relative);
-        if let Some(ref target) = name {
-            hyprland::switch_workspace_for_navigation(target);
-            workspace_nav::remember_workspace(&mut state, relative);
+        let name = workspace_nav::workspace_go(&mut state, relative);
+        if name.is_some() {
             self.persist_workspace_switch(&state)?;
         }
         Ok(name)
@@ -118,9 +117,8 @@ impl TaskService {
 
     pub fn remember_workspace_go(&self, relative: i32) -> Result<Option<String>> {
         let mut state = self.load_state()?;
-        let name = workspace_nav::workspace_name_for_relative(&state, relative);
+        let name = workspace_nav::sync_workspace_slot(&mut state, relative);
         if name.is_some() {
-            workspace_nav::remember_workspace(&mut state, relative);
             self.persist_workspace_switch(&state)?;
         }
         Ok(name)
@@ -132,11 +130,18 @@ impl TaskService {
         if !allowed.iter().any(|n| n == name) {
             return Ok(None);
         }
-        if let Some(idx) = allowed.iter().position(|n| n == name) {
-            workspace_nav::remember_workspace(&mut state, (idx + 1) as i32);
-            self.persist_workspace_switch(&state)?;
-        }
+        crate::context_sync::sync_from_workspace_name(&mut state, name);
+        self.persist_workspace_switch(&state)?;
         Ok(Some(name.to_string()))
+    }
+
+    /// Move the active window to a taskspace-scoped workspace (keybind hot path).
+    pub fn workspace_move_dispatch(&self, relative: i32) -> Result<Option<String>> {
+        if let Some(name) = crate::workspace_slots::move_slot(relative) {
+            return Ok(Some(name));
+        }
+        let state = self.load_state()?;
+        Ok(workspace_nav::move_window_to_relative(&state, relative))
     }
 
     pub fn workspace_next(&self) -> Result<Option<String>> {
@@ -161,17 +166,11 @@ impl TaskService {
 
     pub fn workspace_goto(&self, name: &str) -> Result<Option<String>> {
         let mut state = self.load_state()?;
-        let allowed = crate::workspaces::allowed_workspace_names(&state);
-        if !allowed.iter().any(|n| n == name) {
-            return Ok(None);
-        }
-        hyprland::switch_workspace_for_navigation(name);
-        let allowed = crate::workspaces::allowed_workspace_names(&state);
-        if let Some(idx) = allowed.iter().position(|n| n == name) {
-            workspace_nav::remember_workspace(&mut state, (idx + 1) as i32);
+        let result = workspace_nav::workspace_goto_name(&mut state, name);
+        if result.is_some() {
             self.persist_workspace_switch(&state)?;
         }
-        Ok(Some(name.to_string()))
+        Ok(result)
     }
 
     pub fn create_task(

@@ -207,10 +207,6 @@ impl DaemonClient {
     }
 
     fn hyprctl_then_remember(&self, relative: i32) -> Result<Option<String>> {
-        if let Some(name) = crate::workspace_slots::switch_slot(relative) {
-            self.sync_workspace_remember(relative)?;
-            return Ok(Some(name));
-        }
         let name = {
             let state = self.direct.load_state()?;
             workspace_nav::workspace_name_for_relative(&state, relative)

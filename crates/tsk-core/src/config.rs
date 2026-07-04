@@ -14,6 +14,8 @@ pub fn default_config_contents() -> String {
     format!(
         r#"[default]
 workspace_count = 10
+# Slots that always map to default Hyprland workspaces (e.g. 1 → workspace "1"), even in a task taskspace.
+# global_workspaces = [1]
 
 [tasks]
 base_dir = "~/tsk-tasks"
@@ -51,6 +53,8 @@ allow_user_file_comments = false
 #[derive(Debug, Clone)]
 pub struct TskConfig {
     pub default_workspace_count: u32,
+    /// 1-based slot indices that always use default (numeric) Hyprland workspace names.
+    pub global_workspace_slots: Vec<u32>,
     pub tasks_base_dir: PathBuf,
     pub workspaces_per_task: u32,
     pub max_tasks: u32,
@@ -68,6 +72,7 @@ impl Default for TskConfig {
     fn default() -> Self {
         Self {
             default_workspace_count: 10,
+            global_workspace_slots: Vec::new(),
             tasks_base_dir: expand("~/tsk-tasks"),
             workspaces_per_task: 10,
             max_tasks: 9,
@@ -113,6 +118,7 @@ struct RawConfig {
 struct RawDefault {
     workspace_count: Option<u32>,
     desktop_count: Option<u32>,
+    global_workspaces: Option<Vec<u32>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -185,6 +191,9 @@ fn parse_config(raw: RawConfig) -> TskConfig {
         .workspace_count
         .or(raw.default.desktop_count)
         .unwrap_or(10);
+    if let Some(slots) = raw.default.global_workspaces {
+        cfg.global_workspace_slots = normalize_global_workspace_slots(slots, cfg.default_workspace_count);
+    }
     if let Some(base) = raw.tasks.base_dir {
         cfg.tasks_base_dir = expand(base);
     }
@@ -221,6 +230,16 @@ fn parse_config(raw: RawConfig) -> TskConfig {
     cfg
 }
 
+fn normalize_global_workspace_slots(slots: Vec<u32>, workspace_count: u32) -> Vec<u32> {
+    let mut out: Vec<u32> = slots
+        .into_iter()
+        .filter(|slot| (1..=workspace_count).contains(slot))
+        .collect();
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -242,6 +261,20 @@ mod tests {
     fn default_config_socket_is_under_local_share() {
         let contents = default_config_contents();
         assert!(contents.contains("~/.local/share/tsk/daemon.sock"));
+    }
+
+    #[test]
+    fn global_workspaces_are_normalized() {
+        let raw: RawConfig = toml::from_str(
+            r#"
+[default]
+workspace_count = 10
+global_workspaces = [10, 1, 1, 99, 3]
+"#,
+        )
+        .unwrap();
+        let cfg = parse_config(raw);
+        assert_eq!(cfg.global_workspace_slots, vec![1, 3, 10]);
     }
 
     #[test]

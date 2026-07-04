@@ -16,9 +16,9 @@ use tsk_core::{
         is_full_refresh_event, is_monitor_focus_event, is_workspace_focus_event,
         parse_focusedmon_v2, parse_workspace_v2, HyprlandEventListener,
     },
-    read_state_rev, sync_from_workspace_name, trace_enabled, trace_event,
+    is_global_workspace_name, read_state_rev, sync_from_workspace_name, trace_enabled, trace_event,
     visible_default_workspace_count, launch_task_tui, workspace_display_label,
-    workspace_goto_name, Registry, SessionState, StateChangeKind, StateEventListener,
+    workspace_goto_name, ContextMode, Registry, SessionState, StateChangeKind, StateEventListener,
     WaybarModuleJson, ACTIVE_WORKSPACE_ICON,
 };
 use serde::Deserialize;
@@ -120,6 +120,9 @@ const BAR_BUTTON_CSS: &str = r#"
 #tsk-workspaces button.empty {
   opacity: 0.5;
 }
+#tsk-workspaces button.global {
+  color: #a6e3a1;
+}
 "#;
 
 fn install_bar_button_styles(root: &GtkBox) {
@@ -132,7 +135,7 @@ fn install_bar_button_styles(root: &GtkBox) {
         .add_provider(&provider, STYLE_PROVIDER_PRIORITY_APPLICATION);
 }
 
-const BUTTON_CLASSES: &[&str] = &["active", "empty", "idle"];
+const BUTTON_CLASSES: &[&str] = &["active", "empty", "idle", "global"];
 
 const LABEL_CLASSES: &[&str] = &[
     "active", "empty", "idle", "hidden", "task", "default",
@@ -302,6 +305,7 @@ impl Runtime {
         workspace_name: &str,
         active: bool,
         occupied: &HashSet<String>,
+        state: Option<&SessionState>,
     ) {
         entry.button.set_relief(ReliefStyle::None);
         let text = if active {
@@ -323,6 +327,11 @@ impl Runtime {
         } else {
             ctx.add_class("idle");
         }
+        if state.is_some_and(|state| {
+            state.context_mode == ContextMode::Task && is_global_workspace_name(workspace_name, state)
+        }) {
+            ctx.add_class("global");
+        }
     }
 
     fn set_button_active(
@@ -334,7 +343,13 @@ impl Runtime {
         let Some(entry) = self.buttons.borrow().get(name).cloned() else {
             return;
         };
-        Self::style_button(&entry, name, active, occupied);
+        Self::style_button(
+            &entry,
+            name,
+            active,
+            occupied,
+            self.state.borrow().as_ref(),
+        );
     }
 
     fn flip_active(
@@ -387,7 +402,7 @@ impl Runtime {
             let label = Label::new(None);
             button.add(&label);
             let entry = WorkspaceButton { button, label };
-            Self::style_button(&entry, name, is_active, occupied);
+            Self::style_button(&entry, name, is_active, occupied, Some(state));
             let ws_name = name.clone();
             entry.button.connect_clicked(move |_| {
                 Self::on_workspace_clicked(&ws_name);
@@ -446,7 +461,7 @@ impl Runtime {
             return false;
         }
 
-        let bar_active = bar_active_workspace_name(workspace_name, &bar);
+        let bar_active = bar_active_workspace_name(workspace_name, session, &bar);
         if *self.active_name.borrow() == bar_active {
             return true;
         }
@@ -530,7 +545,7 @@ impl Runtime {
         } else {
             self.occupied.borrow().clone()
         };
-        let bar_active = bar_active_workspace_name(&workspace_name, &bar);
+        let bar_active = bar_active_workspace_name(&workspace_name, &state, &bar);
         let old_active = self.active_name.borrow().clone();
         let old_visible = *self.visible_count.borrow();
         let new_active_rel = bar
@@ -577,7 +592,7 @@ impl Runtime {
                     .as_deref()
                     .map(normalize_hypr_workspace_name)
                     .filter(|n| !n.is_empty())
-                    .map(|n| bar_active_workspace_name(&n, &bar))
+                    .map(|n| bar_active_workspace_name(&n, &synced, &bar))
                     .filter(|n| bar.iter().any(|b| b == n))
                     .unwrap_or_else(|| bar.first().cloned().unwrap_or_else(|| "1".into()));
 
@@ -642,7 +657,13 @@ impl Runtime {
         let active = self.active_name.borrow().clone();
         for (name, entry) in self.buttons.borrow().iter() {
             let is_active = name == &active;
-            Self::style_button(entry, name, is_active, &occupied);
+            Self::style_button(
+                entry,
+                name,
+                is_active,
+                &occupied,
+                self.state.borrow().as_ref(),
+            );
         }
 
         self.store_snapshot(&state, &bar, &occupied, &active);

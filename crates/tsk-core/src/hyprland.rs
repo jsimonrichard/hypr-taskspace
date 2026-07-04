@@ -347,6 +347,14 @@ pub fn switch_workspace_for_navigation(name: &str) {
     });
 }
 
+/// Move the active window to a workspace by **name** (Omarchy SUPER+SHIFT+number).
+pub fn move_active_window_to_workspace(name: &str) {
+    let target = workspace_dispatch_arg(name);
+    hypr_log::scoped(format!("move_active_window_to_workspace {name}"), || {
+        dispatch_sync(&["movetoworkspace", &target]);
+    });
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum NavigationStrategy {
     FocusExistingMonitor,

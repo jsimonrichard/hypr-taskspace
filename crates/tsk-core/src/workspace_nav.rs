@@ -19,6 +19,13 @@ pub fn remember_workspace(state: &mut SessionState, relative: i32) {
     refresh_monitor_slots(state);
 }
 
+/// Update taskspace + slot memory after navigating to a resolved workspace name.
+pub fn sync_workspace_slot(state: &mut SessionState, relative: i32) -> Option<String> {
+    let name = workspace_name_for_relative(state, relative)?;
+    crate::context_sync::sync_from_workspace_name(state, &name);
+    Some(name)
+}
+
 /// Clear remembered workspace / per-monitor layout (for install or manual reset).
 pub fn clear_navigation_memory(state: &mut SessionState) {
     state.last_monitor_workspace.clear();
@@ -64,7 +71,7 @@ pub fn workspace_go(state: &mut SessionState, relative: i32) -> Option<String> {
     let name = workspace_name_for_relative(state, relative)?;
     hypr_log::scoped(format!("workspace_go slot {relative} → {name}"), || {
         hyprland::switch_workspace_for_navigation(&name);
-        remember_workspace(state, relative);
+        crate::context_sync::sync_from_workspace_name(state, &name);
     });
     Some(name)
 }
@@ -86,11 +93,17 @@ pub fn workspace_goto_name(state: &mut SessionState, name: &str) -> Option<Strin
     }
     hypr_log::scoped(format!("workspace_goto_name {name}"), || {
         hyprland::switch_workspace_for_navigation(name);
-        if let Some(idx) = allowed.iter().position(|n| n == name) {
-            remember_workspace(state, (idx + 1) as i32);
-        }
+        crate::context_sync::sync_from_workspace_name(state, name);
     });
     Some(name.to_string())
+}
+
+pub fn move_window_to_relative(state: &SessionState, relative: i32) -> Option<String> {
+    let name = workspace_name_for_relative(state, relative)?;
+    hypr_log::scoped(format!("move_window_to_relative slot {relative} → {name}"), || {
+        hyprland::move_active_window_to_workspace(&name);
+    });
+    Some(name)
 }
 
 pub fn focus_last_workspace(state: &mut SessionState) -> Option<String> {
@@ -552,6 +565,82 @@ mod tests {
     use super::*;
     use crate::models::SessionState;
     use std::collections::HashMap;
+
+    #[test]
+    fn workspace_go_syncs_default_taskspace_for_global_slot() {
+        use crate::models::{ContextMode, Task, TaskStatus};
+
+        let mut state = SessionState {
+            context_mode: ContextMode::Task,
+            current_task_id: Some("auth-fix".into()),
+            default_workspace_count: 10,
+            global_workspace_slots: vec![1],
+            ..Default::default()
+        };
+        state.tasks.insert(
+            "auth-fix".into(),
+            Task {
+                id: "auth-fix".into(),
+                name: "Auth Fix".into(),
+                status: TaskStatus::Active,
+                repo_url: None,
+                repo_path: "/tmp".into(),
+                source_repo_path: None,
+                branch: None,
+                container_name: "tsk-auth-fix".into(),
+                workspace_count: 10,
+                browser_profile: None,
+                created_at: chrono::Utc::now(),
+                last_active_at: chrono::Utc::now(),
+                agent_notes_path: None,
+                ports: vec![],
+            },
+        );
+        let name = workspace_go(&mut state, 1);
+        assert_eq!(name.as_deref(), Some("1"));
+        assert_eq!(state.context_mode, ContextMode::Default);
+        assert!(state.current_task_id.is_none());
+    }
+
+    #[test]
+    fn move_window_to_relative_uses_global_workspace_name() {
+        use crate::models::{ContextMode, Task, TaskStatus};
+
+        let mut state = SessionState {
+            context_mode: ContextMode::Task,
+            current_task_id: Some("auth-fix".into()),
+            default_workspace_count: 10,
+            global_workspace_slots: vec![1],
+            ..Default::default()
+        };
+        state.tasks.insert(
+            "auth-fix".into(),
+            Task {
+                id: "auth-fix".into(),
+                name: "Auth Fix".into(),
+                status: TaskStatus::Active,
+                repo_url: None,
+                repo_path: "/tmp".into(),
+                source_repo_path: None,
+                branch: None,
+                container_name: "tsk-auth-fix".into(),
+                workspace_count: 10,
+                browser_profile: None,
+                created_at: chrono::Utc::now(),
+                last_active_at: chrono::Utc::now(),
+                agent_notes_path: None,
+                ports: vec![],
+            },
+        );
+        assert_eq!(
+            move_window_to_relative(&state, 1).as_deref(),
+            Some("1")
+        );
+        assert_eq!(
+            move_window_to_relative(&state, 2).as_deref(),
+            Some("auth-fix-2")
+        );
+    }
 
     #[test]
     fn set_taskspace_default_clears_task() {

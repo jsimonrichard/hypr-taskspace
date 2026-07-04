@@ -97,6 +97,9 @@ pub struct SessionState {
     #[serde(default)]
     pub last_monitor_workspace: HashMap<String, HashMap<String, i32>>,
     pub default_workspace_count: u32,
+    /// 1-based slots that map to default (numeric) Hyprland workspaces in any taskspace.
+    #[serde(default)]
+    pub global_workspace_slots: Vec<u32>,
     #[serde(default)]
     pub tasks: HashMap<String, Task>,
     #[serde(default)]

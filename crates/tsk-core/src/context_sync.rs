@@ -11,7 +11,7 @@ pub fn sync_from_workspace_name(state: &mut SessionState, name: &str) -> bool {
     }
 
     let allowed = allowed_workspace_names(state);
-    let Some(resolved) = resolve_bar_workspace_name(name, &allowed) else {
+    let Some(resolved) = resolve_bar_workspace_name(name, state, &allowed) else {
         return false;
     };
 
@@ -117,5 +117,15 @@ mod tests {
         assert_eq!(state.context_mode, ContextMode::Task);
         assert_eq!(state.current_task_id.as_deref(), Some("auth-fix"));
         assert_eq!(state.last_workspace.get("task:auth-fix"), Some(&8));
+    }
+
+    #[test]
+    fn global_slot_switches_to_default_taskspace() {
+        let mut state = task_state();
+        state.global_workspace_slots = vec![1];
+        sync_from_workspace_name(&mut state, "1");
+        assert_eq!(state.context_mode, ContextMode::Default);
+        assert!(state.current_task_id.is_none());
+        assert_eq!(state.last_workspace.get("default"), Some(&1));
     }
 }

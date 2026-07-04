@@ -198,6 +198,7 @@ impl Registry {
             last_workspace,
             last_monitor_workspace,
             default_workspace_count: self.config.default_workspace_count,
+            global_workspace_slots: self.config.global_workspace_slots.clone(),
             tasks,
             windows,
         })

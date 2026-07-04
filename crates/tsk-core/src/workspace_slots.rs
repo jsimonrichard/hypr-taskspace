@@ -34,6 +34,14 @@ pub fn switch_slot(relative: i32) -> Option<String> {
     Some(target)
 }
 
+pub fn move_slot(relative: i32) -> Option<String> {
+    let target = read_slot_target(relative)?;
+    hypr_log::scoped(format!("move_slot cache slot {relative} → {target}"), || {
+        hyprland::move_active_window_to_workspace(&target);
+    });
+    Some(target)
+}
+
 pub fn write_slot_cache(state: &SessionState) {
     let Ok(dir) = tsk_runtime_dir() else {
         return;

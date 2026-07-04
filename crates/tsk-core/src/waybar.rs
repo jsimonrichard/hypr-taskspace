@@ -39,6 +39,7 @@ struct WaybarData {
     occupied_workspace_indices: Vec<i32>,
     active_workspace: i32,
     active_workspace_name: Option<String>,
+    global_workspace_slots: Vec<u32>,
 }
 
 pub fn notify_waybar() {
@@ -139,6 +140,7 @@ fn build_waybar_data_with(
         occupied_workspace_indices: occupied.iter().copied().collect(),
         active_workspace: active_rel,
         active_workspace_name: active_name,
+        global_workspace_slots: state.global_workspace_slots.clone(),
     }
 }
 
@@ -214,6 +216,14 @@ fn workspace_module(data: &WaybarData, index: usize) -> WaybarModuleJson {
         .unwrap_or_else(|| index.to_string());
     let occupied: HashSet<i32> = data.occupied_workspace_indices.iter().copied().collect();
     let mut classes = Vec::new();
+    if data.context_mode == "task"
+        && workspace_name
+            .parse::<u32>()
+            .ok()
+            .is_some_and(|slot| data.global_workspace_slots.contains(&slot))
+    {
+        classes.push("global");
+    }
     if is_active {
         classes.push("active");
     } else if !occupied.contains(&(index as i32)) {
