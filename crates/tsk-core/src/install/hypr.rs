@@ -91,6 +91,9 @@ pub fn install_hypr(cfg: &TskConfig, options: &InstallHyprOptions) -> Result<Vec
             })?.is_file()
             {
                 let dest = share_dest.join(entry.file_name());
+                if should_preserve_hypr_share_file(&dest, &entry.path())? {
+                    continue;
+                }
                 ensure_parent(&dest)?;
                 fs::copy(entry.path(), &dest).map_err(|source| TskError::Write {
                     path: dest,
@@ -154,7 +157,32 @@ pub fn install_hypr(cfg: &TskConfig, options: &InstallHyprOptions) -> Result<Vec
     };
     manifest::save_manifest(&cfg.install_hypr_share_dir, &m)?;
 
+    if crate::install::systemd::is_systemd_unit_installed() {
+        let _ = crate::install::systemd::install_systemd(
+            cfg,
+            &crate::install::systemd::InstallSystemdOptions {
+                dry_run: false,
+                enable: false,
+                start: false,
+            },
+        );
+    }
+
     reload::apply_after_hypr()
+}
+
+fn should_preserve_hypr_share_file(dest: &Path, src: &Path) -> Result<bool> {
+    if src.file_name().and_then(|n| n.to_str()) != Some("daemon-systemd.conf") {
+        return Ok(false);
+    }
+    if !dest.is_file() {
+        return Ok(false);
+    }
+    let existing = fs::read_to_string(dest).map_err(|source| TskError::Read {
+        path: dest.to_path_buf(),
+        source,
+    })?;
+    Ok(existing.contains("exec-once = systemctl"))
 }
 
 pub fn uninstall_hypr(cfg: &TskConfig, keep_files: bool) -> Result<Vec<String>> {

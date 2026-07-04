@@ -1,0 +1,18 @@
+[Unit]
+Description=Hypr Taskspace daemon
+After=graphical-session.target
+PartOf=graphical-session.target
+ConditionEnvironment=WAYLAND_DISPLAY
+
+[Service]
+Type=simple
+ExecStart=@TSK_BIN@ daemon run
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=10
+KillMode=mixed
+KillSignal=SIGTERM
+PassEnvironment=WAYLAND_DISPLAY HYPRLAND_INSTANCE_SIGNATURE XDG_RUNTIME_DIR XDG_CURRENT_DESKTOP DISPLAY
+
+[Install]
+WantedBy=graphical-session.target

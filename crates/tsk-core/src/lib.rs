@@ -39,8 +39,11 @@ pub use daemon::{
 };
 pub use error::{TskError, Result};
 pub use install::{
-    install_hypr, install_hypr_status, install_waybar, install_waybar_status, run_doctor_checks,
-    uninstall_hypr, uninstall_waybar, DoctorCheck, InstallHyprOptions, InstallWaybarOptions,
+    install_hypr, install_hypr_status, install_systemd, install_systemd_status, install_waybar,
+    install_waybar_status, is_systemd_unit_installed, render_service_unit, run_doctor_checks,
+    systemd_restart, systemd_start, systemd_stop, systemctl_is_active, systemctl_is_enabled,
+    uninstall_hypr, uninstall_systemd, uninstall_waybar, DoctorCheck, InstallHyprOptions,
+    InstallSystemdOptions, InstallWaybarOptions,
 };
 pub use models::{ContextMode, SessionState, Task, TaskStatus};
 pub use repos::{

@@ -82,7 +82,7 @@ fn draw_tabs(frame: &mut Frame, area: Rect, app: &App) {
 
 fn draw_daemon_warning(frame: &mut Frame, area: Rect) {
     let line = Line::from(Span::styled(
-        " ⚠  Daemon not running — run `tsk daemon start`, then press r to refresh",
+        " ⚠  Daemon not running — run `tsk install systemd` or `tsk daemon start`, then press r to refresh",
         Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
     ));
     frame.render_widget(Paragraph::new(line), area);

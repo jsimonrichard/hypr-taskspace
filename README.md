@@ -2,7 +2,7 @@
 
 Task-centric Hyprland control plane. Each task gets its own **taskspace** with named **workspaces** (`auth-fix-1`, `auth-fix-2`, …). The **default** taskspace uses plain Hyprland workspace names **`1`–`10`** for everyday host work.
 
-Hyprland keybinds call `~/.local/share/tsk/bin/tsk`, built and installed by `tsk install hypr`. Run **`tsk daemon start`** so one background process owns session state (recommended).
+Hyprland keybinds call `~/.local/share/tsk/bin/tsk`, built and installed by `tsk install hypr`. The **tsk daemon** runs as a user systemd service (installed by `tsk install all` or `tsk install systemd`) and starts automatically with Hyprland.
 
 ## Prerequisites
 
@@ -48,8 +48,8 @@ Verify:
 ~/.local/share/tsk/bin/tsk --help
 ~/.local/share/tsk/bin/tsk status
 tsk doctor
-tsk daemon start    # recommended — single writer for state.db
-tsk daemon status
+tsk install status
+tsk daemon status    # or: systemctl --user status tskd.service
 ```
 
 On first run, tsk creates `~/.config/tsk/config.toml` and `~/.local/share/tsk/state.db`.
@@ -125,7 +125,7 @@ Default and task taskspaces both use **10** workspace slots (`1`–`10`, SUPER+0
 
 ### Waybar update path
 
-State lives in `~/.local/share/tsk/state.db`. The daemon (`tsk daemon start`) is the recommended single writer; the CLI falls back to direct DB access when the daemon is stopped. After every taskspace change:
+State lives in `~/.local/share/tsk/state.db`. The daemon is the recommended single writer; the CLI falls back to direct DB access when the daemon is stopped. After every taskspace change:
 
 1. Writes `state.db`
 2. Bumps `$XDG_RUNTIME_DIR/tsk/state.rev`
@@ -135,9 +135,12 @@ State lives in `~/.local/share/tsk/state.db`. The daemon (`tsk daemon start`) is
 The Waybar CFFI module subscribes to Hyprland workspace events **and** the state-events socket; `update()` also polls `state.rev` if both are missed.
 
 ```bash
-tsk daemon start   # listens on ~/.local/share/tsk/daemon.sock (see [daemon].socket in config)
-tsk doctor         # warns if daemon is not running
+tsk install systemd              # user unit at ~/.config/systemd/user/tskd.service
+systemctl --user status tskd.service
+tsk doctor                       # warns if daemon is not running
 ```
+
+The Hyprland install sources `~/.local/share/tsk/hypr/daemon-systemd.conf`, which imports the Hyprland session environment and starts the unit on login.
 
 ### CLI reference
 
@@ -145,8 +148,8 @@ tsk doctor         # warns if daemon is not running
 tsk status | doctor | windows [--task ID]
 
 tsk daemon start|stop|restart|status|run
-tsk install all|hypr|waybar|status
-tsk uninstall hypr|waybar
+tsk install all|hypr|waybar|systemd|status
+tsk uninstall hypr|waybar|systemd
 
 tsk taskspace default|current
 tsk workspace go|remember|dispatch|next|prev|goto

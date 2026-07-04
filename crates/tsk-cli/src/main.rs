@@ -3,11 +3,12 @@ use clap::{Parser, Subcommand};
 use tsk_core::{
     allowed_workspace_names, analyze_recent_latency, build_all_modules, clear_log, daemon_socket_path,
     diagnose_socket2, enable_for_process, format_report, hypr_log_path, hyprland, install_hypr,
-    install_hypr_status,
-    install_waybar, install_waybar_status, is_daemon_running, launch_task_tui, load_config,
-    ping_daemon, run_doctor_checks, stop_daemon, tail_hypr_log, tail_raw,
-    trace_path, uninstall_hypr, uninstall_waybar, workspace_module_key, DaemonClient, DaemonServer,
-    InstallHyprOptions, InstallWaybarOptions, TskError, Registry, Result, TaskService, TaskStatus,
+    install_hypr_status, install_systemd, install_systemd_status, install_waybar,
+    install_waybar_status, is_daemon_running, is_systemd_unit_installed, launch_task_tui, load_config,
+    ping_daemon, run_doctor_checks, stop_daemon, systemd_restart, systemd_start, systemd_stop,
+    systemctl_is_active, tail_hypr_log, tail_raw, trace_path, uninstall_hypr, uninstall_systemd,
+    uninstall_waybar, workspace_module_key, DaemonClient, DaemonServer, InstallHyprOptions,
+    InstallSystemdOptions, InstallWaybarOptions, TskError, Registry, Result, TaskService, TaskStatus,
     TaskRepoSource, detect_vcs_root, find_repo, find_repo_by_path,
     load_repos, register_repo, repo_label, ensure_repo_removable, unregister_repo,
     clear_hypr_log,
@@ -109,6 +110,15 @@ enum InstallCommands {
         #[arg(long)]
         workspace: Option<std::path::PathBuf>,
     },
+    /// Install user systemd unit for the tsk daemon
+    Systemd {
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long, help = "Skip `systemctl --user enable`")]
+        no_enable: bool,
+        #[arg(long, help = "Skip `systemctl --user start` after install")]
+        no_start: bool,
+    },
     Status,
 }
 
@@ -119,6 +129,7 @@ enum UninstallCommands {
         keep_files: bool,
     },
     Waybar,
+    Systemd,
 }
 
 #[derive(Subcommand)]
@@ -335,11 +346,17 @@ fn run() -> Result<()> {
                 dry_run,
                 workspace,
             } => cmd_install_waybar(dry_run, workspace),
+            InstallCommands::Systemd {
+                dry_run,
+                no_enable,
+                no_start,
+            } => cmd_install_systemd(dry_run, no_enable, no_start),
             InstallCommands::Status => cmd_install_status(),
         },
         Commands::Uninstall { command } => match command {
             UninstallCommands::Hypr { keep_files } => cmd_uninstall_hypr(keep_files),
             UninstallCommands::Waybar => cmd_uninstall_waybar(),
+            UninstallCommands::Systemd => cmd_uninstall_systemd(),
         },
         Commands::Taskspace(command) => match command {
             TaskspaceCommands::Default => cmd_taskspace_default(),
@@ -564,7 +581,11 @@ fn cmd_install_all(dry_run: bool, workspace: Option<std::path::PathBuf>) -> Resu
     if !dry_run {
         println!();
     }
-    cmd_install_waybar(dry_run, workspace)
+    cmd_install_waybar(dry_run, workspace.clone())?;
+    if !dry_run {
+        println!();
+    }
+    cmd_install_systemd(dry_run, false, false)
 }
 
 fn cmd_install_hypr(dry_run: bool, workspace: Option<std::path::PathBuf>) -> Result<()> {
@@ -617,6 +638,28 @@ fn cmd_install_waybar(dry_run: bool, workspace: Option<std::path::PathBuf>) -> R
     Ok(())
 }
 
+fn cmd_install_systemd(dry_run: bool, no_enable: bool, no_start: bool) -> Result<()> {
+    let cfg = load_config()?;
+    let options = InstallSystemdOptions {
+        dry_run,
+        enable: !no_enable,
+        start: !no_start,
+    };
+    let actions = install_systemd(&cfg, &options)?;
+    if dry_run {
+        for line in actions {
+            println!("{line}");
+        }
+    } else {
+        println!("Installed systemd user service.");
+        if !actions.is_empty() {
+            println!("Applied: {}.", actions.join(", "));
+        }
+        println!("The daemon starts with Hyprland and can be managed with `systemctl --user {SERVICE}` or `tsk daemon` commands.", SERVICE = "tskd.service");
+    }
+    Ok(())
+}
+
 fn reset_navigation_layout_after_install() -> Result<()> {
     TaskService::with_defaults()?.reset_navigation_layout()?;
     println!("Reset workspace layout memory (per-monitor mappings cleared).");
@@ -646,6 +689,18 @@ fn cmd_install_status() -> Result<()> {
     } else {
         println!("Waybar integration: not installed");
     }
+    let s = install_systemd_status(&cfg)?;
+    if s.get("installed").and_then(|v| v.as_bool()).unwrap_or(false) {
+        println!("Systemd daemon service: installed");
+        if let Some(p) = s.get("unit_path").and_then(|v| v.as_str()) {
+            println!("  unit: {p}");
+        }
+        let enabled = s.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
+        let active = s.get("active").and_then(|v| v.as_bool()).unwrap_or(false);
+        println!("  enabled: {enabled}, active: {active}");
+    } else {
+        println!("Systemd daemon service: not installed");
+    }
     Ok(())
 }
 
@@ -664,6 +719,18 @@ fn cmd_uninstall_waybar() -> Result<()> {
     let actions = uninstall_waybar(&cfg)?;
     println!("Uninstalled Waybar integration.");
     if !actions.is_empty() {
+        println!("Applied: {}.", actions.join(", "));
+    }
+    Ok(())
+}
+
+fn cmd_uninstall_systemd() -> Result<()> {
+    let cfg = load_config()?;
+    let actions = uninstall_systemd(&cfg)?;
+    if actions.is_empty() {
+        println!("Systemd daemon service: not installed.");
+    } else {
+        println!("Uninstalled systemd daemon service.");
         println!("Applied: {}.", actions.join(", "));
     }
     Ok(())
@@ -1102,12 +1169,23 @@ fn cmd_daemon_start() -> Result<()> {
         println!("Daemon already running.");
         return Ok(());
     }
+    if is_systemd_unit_installed() {
+        systemd_start()?;
+        wait_for_daemon("started")?;
+        return Ok(());
+    }
     spawn_daemon_and_wait()?;
     println!("Daemon started.");
     Ok(())
 }
 
 fn cmd_daemon_restart() -> Result<()> {
+    if is_systemd_unit_installed() {
+        let was_running = is_daemon_running();
+        systemd_restart()?;
+        wait_for_daemon(if was_running { "restarted" } else { "started" })?;
+        return Ok(());
+    }
     let was_running = stop_daemon()?;
     if was_running {
         println!("Daemon stopped.");
@@ -1119,6 +1197,19 @@ fn cmd_daemon_restart() -> Result<()> {
         println!("Daemon started.");
     }
     Ok(())
+}
+
+fn wait_for_daemon(action: &str) -> Result<()> {
+    for _ in 0..50 {
+        if ping_daemon()? {
+            println!("Daemon {action}.");
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    Err(TskError::Other(format!(
+        "daemon did not become reachable after systemd {action}"
+    )))
 }
 
 fn spawn_daemon_and_wait() -> Result<()> {
@@ -1181,6 +1272,11 @@ fn cmd_daemon_run() -> Result<()> {
 }
 
 fn cmd_daemon_stop() -> Result<()> {
+    if is_systemd_unit_installed() {
+        systemd_stop()?;
+        println!("Daemon stopped.");
+        return Ok(());
+    }
     if stop_daemon()? {
         println!("Daemon stopped.");
     } else {
@@ -1190,6 +1286,18 @@ fn cmd_daemon_stop() -> Result<()> {
 }
 
 fn cmd_daemon_status() -> Result<()> {
+    if is_systemd_unit_installed() {
+        let active = systemctl_is_active().unwrap_or(false);
+        let path = daemon_socket_path()?;
+        if is_daemon_running() {
+            println!("running (systemd, {})", path.display());
+        } else if active {
+            println!("systemd unit active but daemon not reachable ({})", path.display());
+        } else {
+            println!("stopped (systemd unit inactive; CLI will use direct mode)");
+        }
+        return Ok(());
+    }
     if is_daemon_running() {
         let path = daemon_socket_path()?;
         println!("running ({})", path.display());

@@ -11,7 +11,7 @@ use crate::error::Result;
 use crate::is_daemon_running;
 use crate::hyprland;
 use crate::hyprland_events::diagnose_socket2;
-use crate::install::{install_hypr_status, install_waybar_status, manifest};
+use crate::install::{install_hypr_status, install_systemd_status, install_waybar_status, manifest};
 use crate::install::waybar::CFFI_MODULE;
 
 #[derive(Debug, Clone)]
@@ -125,6 +125,12 @@ pub fn run_doctor_checks(cfg: &TskConfig) -> Result<Vec<DoctorCheck>> {
     });
 
     let daemon_running = is_daemon_running();
+    let systemd = install_systemd_status(cfg).ok();
+    let systemd_installed = systemd
+        .as_ref()
+        .and_then(|s| s.get("installed"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
     checks.push(DoctorCheck {
         label: "TSK daemon running".into(),
         passed: daemon_running,
@@ -132,8 +138,42 @@ pub fn run_doctor_checks(cfg: &TskConfig) -> Result<Vec<DoctorCheck>> {
             daemon_socket_path()
                 .map(|p| p.display().to_string())
                 .unwrap_or_else(|_| "ok".into())
+        } else if systemd_installed {
+            "run: systemctl --user start tskd.service (or log into Hyprland)".into()
         } else {
-            "run: tsk daemon start".into()
+            "run: tsk install systemd (recommended) or tsk daemon start".into()
+        },
+    });
+
+    checks.push(DoctorCheck {
+        label: "TSK daemon systemd unit".into(),
+        passed: systemd_installed
+            && systemd
+                .as_ref()
+                .and_then(|s| s.get("enabled"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+        detail: if systemd_installed {
+            let enabled = systemd
+                .as_ref()
+                .and_then(|s| s.get("enabled"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let active = systemd
+                .as_ref()
+                .and_then(|s| s.get("active"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            format!(
+                "{} (enabled: {enabled}, active: {active})",
+                systemd
+                    .as_ref()
+                    .and_then(|s| s.get("unit_path"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+            )
+        } else {
+            "run: tsk install systemd".into()
         },
     });
 
