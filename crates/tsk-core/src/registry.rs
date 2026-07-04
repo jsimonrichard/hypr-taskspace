@@ -47,6 +47,11 @@ CREATE TABLE IF NOT EXISTS windows (
     workspace_name TEXT NOT NULL DEFAULT '',
     pid INTEGER
 );
+
+CREATE TABLE IF NOT EXISTS repos (
+    id TEXT PRIMARY KEY,
+    path TEXT NOT NULL UNIQUE
+);
 "#;
 
 pub struct Registry {

@@ -171,7 +171,7 @@ impl TaskRepoSource {
                 crate::repos::load_repo_config(&root)
                     .ok()
                     .flatten()
-                    .and_then(|repo| repo.url)
+                    .and_then(|config| config.url)
             }
             _ => None,
         }

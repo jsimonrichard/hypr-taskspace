@@ -93,7 +93,7 @@ tsk task archive my-feature
 tsk task terminal                    # host shell in current task checkout
 ```
 
-Task homes are created under `~/tsk-tasks/<id>/` for notes and agent metadata. Linked git/jj checkouts live under `~/tsk-tasks/<id>/workspace/<repo-folder-name>` (scratch tasks use `workspace/scratch`). Repo settings live in each checkout at `.tsk/repo.toml`; `~/.config/tsk/repo-bookmarks.txt` only lists paths.
+Task homes are created under `~/tsk-tasks/<id>/` for notes and agent metadata. Linked git/jj checkouts live under `~/tsk-tasks/<id>/workspace/<repo-folder-name>` (scratch tasks use `workspace/scratch`). Optional checkout settings (custom name, remote URL, VCS kind) live in `.tsk/repo.toml`; registered checkout paths and stable ids live in `state.db`.
 
 ```bash
 tsk repo add                         # register cwd (writes .tsk/repo.toml in the checkout)

@@ -1,25 +1,48 @@
-//! Registered repositories — settings live in each checkout at `.tsk/repo.toml`.
+//! Registered repositories — checkout-local settings live in `.tsk/repo.toml`.
 //!
-//! `~/.config/tsk/repo-bookmarks.txt` only stores checkout paths (pointers), not settings.
+//! Stable repo ids and checkout paths live in `state.db` (`repos` table).
+//! Legacy `~/.config/tsk/repo-bookmarks.txt` paths are migrated into the database on first load.
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
+use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::error::{TskError, Result};
-use crate::models::{slugify, Task};
+use crate::models::Task;
 use crate::task_paths::scratch_checkout_path;
-use crate::vcs::{detect_vcs_root, repo_label};
-use crate::xdg::{ensure_parent, expand, tsk_config_dir};
+use crate::vcs::{detect_vcs_root, repo_label, VcsKind};
+use crate::xdg::{ensure_parent, expand, tsk_config_dir, tsk_state_db};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+const REPOS_SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS repos (
+    id TEXT PRIMARY KEY,
+    path TEXT NOT NULL UNIQUE
+);
+"#;
+
+/// Checkout-local settings persisted in `.tsk/repo.toml`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RepoConfig {
+    /// Optional display name; defaults to the checkout folder name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vcs: Option<VcsKind>,
+}
+
+/// Runtime view of a registered checkout (path and id come from `state.db`).
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RegisteredRepo {
     pub id: String,
     pub name: String,
     pub path: PathBuf,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    pub vcs: Option<VcsKind>,
 }
 
 pub fn repo_config_path(vcs_root: &Path) -> PathBuf {
@@ -43,6 +66,13 @@ pub fn normalize_repo_path(path: &Path) -> PathBuf {
     expand(path)
 }
 
+pub fn repo_id_from_path(path: &Path) -> String {
+    let path = normalize_repo_path(path);
+    let canonical = std::fs::canonicalize(&path).unwrap_or(path);
+    let digest = Sha256::digest(canonical.display().to_string().as_bytes());
+    format!("{:x}", digest)[..12].to_string()
+}
+
 /// True when the task uses an isolated scratch repo under its task home.
 pub fn is_task_scratch_repo(task_id: &str, repo_path: &Path, tasks_base_dir: &Path) -> bool {
     paths_match(
@@ -51,7 +81,21 @@ pub fn is_task_scratch_repo(task_id: &str, repo_path: &Path, tasks_base_dir: &Pa
     )
 }
 
-pub fn load_repo_config(vcs_root: &Path) -> Result<Option<RegisteredRepo>> {
+#[derive(Deserialize)]
+struct RepoConfigFile {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    url: Option<String>,
+    #[serde(default)]
+    vcs: Option<VcsKind>,
+    #[serde(default, rename = "id")]
+    _legacy_id: Option<String>,
+    #[serde(default, rename = "path")]
+    _legacy_path: Option<PathBuf>,
+}
+
+pub fn load_repo_config(vcs_root: &Path) -> Result<Option<RepoConfig>> {
     let path = repo_config_path(vcs_root);
     if !path.is_file() {
         return Ok(None);
@@ -60,96 +104,153 @@ pub fn load_repo_config(vcs_root: &Path) -> Result<Option<RegisteredRepo>> {
         path: path.clone(),
         source,
     })?;
-    let mut repo: RegisteredRepo =
+    let file: RepoConfigFile =
         toml::from_str(&raw).map_err(|e| TskError::Config(e.to_string()))?;
-    repo.path = normalize_repo_path(vcs_root);
-    Ok(Some(repo))
+    let config = RepoConfig {
+        name: file.name,
+        url: file.url,
+        vcs: file.vcs,
+    };
+    Ok(normalize_repo_config(vcs_root, config))
 }
 
-pub fn save_repo_config(repo: &RegisteredRepo) -> Result<()> {
-    let root = normalize_repo_path(&repo.path);
+fn normalize_repo_config(vcs_root: &Path, mut config: RepoConfig) -> Option<RepoConfig> {
+    if config.name.as_deref() == Some(repo_label(vcs_root).as_str()) {
+        config.name = None;
+    }
+    if config == RepoConfig::default() {
+        None
+    } else {
+        Some(config)
+    }
+}
+
+pub fn save_repo_config(vcs_root: &Path, config: &RepoConfig) -> Result<()> {
+    let root = normalize_repo_path(vcs_root);
     let path = repo_config_path(&root);
-    ensure_parent(&path)?;
     let tsk_dir = root.join(".tsk");
     std::fs::create_dir_all(&tsk_dir).map_err(|source| TskError::Write {
         path: tsk_dir,
         source,
     })?;
-    let body = toml::to_string_pretty(repo).map_err(|e| TskError::Other(e.to_string()))?;
+    if config == &RepoConfig::default() {
+        if path.is_file() {
+            std::fs::remove_file(&path).map_err(|source| TskError::Write {
+                path: path.clone(),
+                source,
+            })?;
+        }
+        return Ok(());
+    }
+    ensure_parent(&path)?;
+    let body = toml::to_string_pretty(config).map_err(|e| TskError::Other(e.to_string()))?;
     std::fs::write(&path, body).map_err(|source| TskError::Write { path, source })
 }
 
-fn load_bookmarks() -> Result<Vec<PathBuf>> {
-    let path = repo_bookmarks_path();
-    if !path.is_file() {
-        return Ok(vec![]);
+fn repos_db_conn() -> Result<Connection> {
+    let path = tsk_state_db();
+    ensure_parent(&path)?;
+    let conn = Connection::open(&path).map_err(TskError::from)?;
+    conn.execute_batch(REPOS_SCHEMA)?;
+    migrate_bookmarks_to_db(&conn)?;
+    Ok(conn)
+}
+
+fn migrate_bookmarks_to_db(conn: &Connection) -> Result<()> {
+    let bookmarks_path = repo_bookmarks_path();
+    if !bookmarks_path.is_file() {
+        return Ok(());
     }
-    let raw = std::fs::read_to_string(&path).map_err(|source| TskError::Read {
-        path: path.clone(),
+    let raw = std::fs::read_to_string(&bookmarks_path).map_err(|source| TskError::Read {
+        path: bookmarks_path.clone(),
         source,
     })?;
-    Ok(raw
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        .map(PathBuf::from)
-        .collect())
-}
-
-fn save_bookmarks(paths: &[PathBuf]) -> Result<()> {
-    let path = repo_bookmarks_path();
-    ensure_parent(&path)?;
-    let mut unique: Vec<PathBuf> = Vec::new();
-    for candidate in paths {
-        let candidate = normalize_repo_path(candidate);
-        if candidate.is_dir()
-            && !unique.iter().any(|existing| paths_match(existing, &candidate))
-        {
-            unique.push(candidate);
+    for line in raw.lines().map(str::trim).filter(|line| !line.is_empty() && !line.starts_with('#')) {
+        let path = normalize_repo_path(Path::new(line));
+        if path.is_dir() {
+            upsert_repo_record(conn, &path)?;
         }
     }
-    unique.sort_by(|a, b| a.display().to_string().cmp(&b.display().to_string()));
-    let body = unique
-        .iter()
-        .map(|p| p.display().to_string())
-        .collect::<Vec<_>>()
-        .join("\n");
-    let body = if body.is_empty() {
-        body
-    } else {
-        format!("{body}\n")
-    };
-    std::fs::write(&path, body).map_err(|source| TskError::Write { path, source })
+    std::fs::remove_file(&bookmarks_path).map_err(|source| TskError::Write {
+        path: bookmarks_path,
+        source,
+    })?;
+    Ok(())
 }
 
-fn bookmark_key(path: &Path) -> String {
-    normalize_repo_path(path).display().to_string()
+fn upsert_repo_record(conn: &Connection, path: &Path) -> Result<()> {
+    let path = normalize_repo_path(path);
+    let id = repo_id_from_path(&path);
+    let path_str = path.display().to_string();
+    conn.execute(
+        "INSERT INTO repos (id, path) VALUES (?1, ?2)
+         ON CONFLICT(path) DO UPDATE SET id = excluded.id",
+        params![id, path_str],
+    )
+    .map_err(TskError::from)?;
+    Ok(())
+}
+
+fn delete_repo_record(conn: &Connection, path: &Path) -> Result<()> {
+    let path = normalize_repo_path(path);
+    conn.execute(
+        "DELETE FROM repos WHERE path = ?1",
+        params![path.display().to_string()],
+    )
+    .map_err(TskError::from)?;
+    Ok(())
+}
+
+fn load_repo_records() -> Result<Vec<(String, PathBuf)>> {
+    let conn = repos_db_conn()?;
+    let mut stmt = conn
+        .prepare("SELECT id, path FROM repos ORDER BY path")
+        .map_err(TskError::from)?;
+    let rows = stmt
+        .query_map([], |row| {
+            let id: String = row.get(0)?;
+            let path: String = row.get(1)?;
+            Ok((id, PathBuf::from(path)))
+        })
+        .map_err(TskError::from)?;
+    rows.collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(TskError::from)
+}
+
+fn build_registered_repo(path: PathBuf, id: String, config: Option<RepoConfig>) -> RegisteredRepo {
+    let config = config.unwrap_or_default();
+    RegisteredRepo {
+        id,
+        name: config
+            .name
+            .clone()
+            .unwrap_or_else(|| repo_label(&path)),
+        path,
+        url: config.url,
+        vcs: config.vcs,
+    }
 }
 
 pub fn load_repos(extra_paths: impl IntoIterator<Item = PathBuf>) -> Result<Vec<RegisteredRepo>> {
-    let mut paths: BTreeMap<String, PathBuf> = BTreeMap::new();
-    for path in load_bookmarks()? {
-        paths.insert(bookmark_key(&path), normalize_repo_path(&path));
+    let mut paths: BTreeMap<String, (String, PathBuf)> = BTreeMap::new();
+    for (id, path) in load_repo_records()? {
+        paths.insert(path.display().to_string(), (id, normalize_repo_path(&path)));
     }
     for path in extra_paths {
-        paths.insert(bookmark_key(&path), normalize_repo_path(&path));
+        let path = normalize_repo_path(&path);
+        let key = path.display().to_string();
+        paths
+            .entry(key)
+            .or_insert_with(|| (repo_id_from_path(&path), path));
     }
 
     let mut repos: Vec<RegisteredRepo> = Vec::new();
-    for path in paths.into_values() {
+    for (id, path) in paths.into_values() {
         if !path.is_dir() {
             continue;
         }
-        let repo = if let Some(config) = load_repo_config(&path)? {
-            config
-        } else {
-            RegisteredRepo {
-                id: slugify(&repo_label(&path)),
-                name: repo_label(&path),
-                path: path.clone(),
-                url: None,
-            }
-        };
+        let config = load_repo_config(&path)?;
+        let repo = build_registered_repo(path, id, config);
         if !repos.iter().any(|r| paths_match(&r.path, &repo.path)) {
             repos.push(repo);
         }
@@ -157,21 +258,6 @@ pub fn load_repos(extra_paths: impl IntoIterator<Item = PathBuf>) -> Result<Vec<
 
     repos.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     Ok(repos)
-}
-
-pub fn unique_repo_id(repos: &[RegisteredRepo], seed: &str) -> String {
-    let base = slugify(seed);
-    let base = if base.is_empty() { "repo".into() } else { base };
-    if !repos.iter().any(|r| r.id == base) {
-        return base;
-    }
-    for n in 2..100 {
-        let candidate = format!("{base}-{n}");
-        if !repos.iter().any(|r| r.id == candidate) {
-            return candidate;
-        }
-    }
-    format!("{base}-{}", repos.len() + 1)
 }
 
 pub fn find_repo<'a>(repos: &'a [RegisteredRepo], id: &str) -> Option<&'a RegisteredRepo> {
@@ -182,7 +268,7 @@ pub fn find_repo_by_path<'a>(repos: &'a [RegisteredRepo], path: &Path) -> Option
     repos.iter().find(|r| paths_match(&r.path, path))
 }
 
-pub fn register_repo(path: &Path, existing: &[RegisteredRepo]) -> Result<RegisteredRepo> {
+pub fn register_repo(path: &Path, _existing: &[RegisteredRepo]) -> Result<RegisteredRepo> {
     let root = detect_vcs_root(Some(path)).ok_or_else(|| {
         TskError::Other(format!(
             "No git or jj repo found at {}",
@@ -191,33 +277,24 @@ pub fn register_repo(path: &Path, existing: &[RegisteredRepo]) -> Result<Registe
     })?;
     let root = normalize_repo_path(&root);
 
-    let repo = if let Some(config) = load_repo_config(&root)? {
-        config
-    } else {
-        RegisteredRepo {
-            id: unique_repo_id(existing, &repo_label(&root)),
-            name: repo_label(&root),
-            path: root.clone(),
-            url: None,
-        }
-    };
-    save_repo_config(&repo)?;
+    let conn = repos_db_conn()?;
+    upsert_repo_record(&conn, &root)?;
 
-    let mut bookmarks = load_bookmarks()?;
-    if !bookmarks.iter().any(|p| paths_match(p, &root)) {
-        bookmarks.push(root);
+    let config = load_repo_config(&root)?;
+    let id = repo_id_from_path(&root);
+    let repo = build_registered_repo(root.clone(), id, config.clone());
+
+    if repo_config_path(&root).is_file() {
+        save_repo_config(&root, &config.clone().unwrap_or_default())?;
     }
-    save_bookmarks(&bookmarks)?;
+
     Ok(repo)
 }
 
 pub fn unregister_repo(path: &Path) -> Result<()> {
     let root = normalize_repo_path(path);
-    let bookmarks: Vec<_> = load_bookmarks()?
-        .into_iter()
-        .filter(|p| !paths_match(p, &root))
-        .collect();
-    save_bookmarks(&bookmarks)?;
+    let conn = repos_db_conn()?;
+    delete_repo_record(&conn, &root)?;
 
     let config_path = repo_config_path(&root);
     if config_path.is_file() {
@@ -270,7 +347,7 @@ pub fn collect_task_repo_paths(tasks: impl IntoIterator<Item = impl AsRef<Path>>
     let mut paths = Vec::new();
     for path in tasks {
         let path = normalize_repo_path(path.as_ref());
-        let key = bookmark_key(&path);
+        let key = path.display().to_string();
         if seen.insert(key) {
             paths.push(path);
         }
@@ -282,31 +359,73 @@ pub fn collect_task_repo_paths(tasks: impl IntoIterator<Item = impl AsRef<Path>>
 mod tests {
     use super::*;
 
+    fn with_temp_db<F: FnOnce()>(f: F) {
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var("XDG_DATA_HOME", dir.path());
+        std::env::set_var("XDG_CONFIG_HOME", dir.path());
+        f();
+        std::env::remove_var("XDG_DATA_HOME");
+        std::env::remove_var("XDG_CONFIG_HOME");
+    }
+
     #[test]
     fn repo_config_roundtrip_in_checkout() {
         let dir = tempfile::tempdir().unwrap();
         let checkout = dir.path().join("my-app");
         std::fs::create_dir_all(&checkout).unwrap();
-        let repo = RegisteredRepo {
-            id: "my-app".into(),
-            name: "My App".into(),
-            path: checkout.clone(),
+        let config = RepoConfig {
+            name: Some("My App".into()),
             url: Some("https://example.com/app.git".into()),
+            vcs: Some(VcsKind::Git),
         };
-        save_repo_config(&repo).unwrap();
+        save_repo_config(&checkout, &config).unwrap();
         let loaded = load_repo_config(&checkout).unwrap().unwrap();
-        assert_eq!(loaded.id, "my-app");
+        assert_eq!(loaded.name.as_deref(), Some("My App"));
         assert_eq!(loaded.url.as_deref(), Some("https://example.com/app.git"));
+        assert_eq!(loaded.vcs, Some(VcsKind::Git));
     }
 
     #[test]
-    fn unique_repo_id_appends_suffix() {
-        let repos = vec![RegisteredRepo {
-            id: "my-app".into(),
-            name: "My App".into(),
-            path: "/tmp/my-app".into(),
-            url: None,
-        }];
-        assert_eq!(unique_repo_id(&repos, "My App"), "my-app-2");
+    fn repo_config_ignores_legacy_id_and_path_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let checkout = dir.path().join("legacy-app");
+        std::fs::create_dir_all(checkout.join(".tsk")).unwrap();
+        std::fs::write(
+            repo_config_path(&checkout),
+            r#"
+id = "legacy-app"
+name = "Custom"
+path = "/tmp/legacy-app"
+"#,
+        )
+        .unwrap();
+        let loaded = load_repo_config(&checkout).unwrap().unwrap();
+        assert_eq!(loaded.name.as_deref(), Some("Custom"));
+    }
+
+    #[test]
+    fn repo_id_is_stable_hash_of_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let checkout = dir.path().join("my-app");
+        std::fs::create_dir_all(&checkout).unwrap();
+        let id_a = repo_id_from_path(&checkout);
+        let id_b = repo_id_from_path(&checkout);
+        assert_eq!(id_a, id_b);
+        assert_eq!(id_a.len(), 12);
+    }
+
+    #[test]
+    fn register_repo_persists_in_database() {
+        with_temp_db(|| {
+            let dir = tempfile::tempdir().unwrap();
+            let checkout = dir.path().join("project");
+            std::fs::create_dir_all(checkout.join(".git")).unwrap();
+            let repo = register_repo(&checkout, &[]).unwrap();
+            assert_eq!(repo.name, "project");
+            assert_eq!(repo.id, repo_id_from_path(&checkout));
+            let loaded = load_repos([]).unwrap();
+            assert_eq!(loaded.len(), 1);
+            assert!(paths_match(&loaded[0].path, &checkout));
+        });
     }
 }
