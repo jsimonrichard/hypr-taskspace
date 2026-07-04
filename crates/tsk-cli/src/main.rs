@@ -24,9 +24,12 @@ struct Cli {
 enum Commands {
     Status,
     Doctor,
+    /// List or restore window placement
     Windows {
-        #[arg(long)]
+        #[arg(long, help = "Filter list by task id (with `list` or bare `windows`)")]
         task: Option<String>,
+        #[command(subcommand)]
+        command: Option<WindowsCommands>,
     },
     Install {
         #[command(subcommand)]
@@ -69,6 +72,20 @@ enum Commands {
 enum ResetCommands {
     /// Clear last-workspace and per-monitor layout memory in state.db
     Layout,
+}
+
+#[derive(Subcommand)]
+enum WindowsCommands {
+    /// List open windows and their task association
+    List {
+        #[arg(long)]
+        task: Option<String>,
+    },
+    /// Move all windows back to their home workspaces
+    Restore {
+        #[arg(long, help = "Show planned moves without changing Hyprland")]
+        dry_run: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -298,7 +315,13 @@ fn run() -> Result<()> {
     match Cli::parse().command {
         Commands::Status => cmd_status(),
         Commands::Doctor => cmd_doctor(),
-        Commands::Windows { task } => cmd_windows(task.as_deref()),
+        Commands::Windows { task, command } => match command {
+            None => cmd_windows_list(task.as_deref()),
+            Some(WindowsCommands::List { task: list_task }) => {
+                cmd_windows_list(list_task.as_deref().or(task.as_deref()))
+            }
+            Some(WindowsCommands::Restore { dry_run }) => cmd_windows_restore(dry_run),
+        },
         Commands::Install { command } => match command {
             InstallCommands::All {
                 dry_run,
@@ -485,7 +508,7 @@ fn cmd_doctor() -> Result<()> {
     Ok(())
 }
 
-fn cmd_windows(task_filter: Option<&str>) -> Result<()> {
+fn cmd_windows_list(task_filter: Option<&str>) -> Result<()> {
     let state = client()?.load_state()?;
     for w in hyprland::get_clients()? {
         let task_id = state
@@ -496,16 +519,42 @@ fn cmd_windows(task_filter: Option<&str>) -> Result<()> {
         if task_filter.is_some_and(|t| t != task_id) {
             continue;
         }
+        let ws_name = if w.workspace_name.is_empty() {
+            w.workspace.to_string()
+        } else {
+            w.workspace_name.clone()
+        };
+        let home = state
+            .windows
+            .get(&w.address)
+            .map(|r| r.home_workspace_name.as_str())
+            .filter(|h| !h.is_empty())
+            .unwrap_or("-");
         println!(
-            "{} [{task_id}] {} ws={}",
+            "{} [{task_id}] {} ws={ws_name} home={home}",
             w.address,
             w.title,
-            if w.workspace_name.is_empty() {
-                w.workspace.to_string()
-            } else {
-                w.workspace_name.clone()
-            }
         );
+    }
+    Ok(())
+}
+
+fn cmd_windows_restore(dry_run: bool) -> Result<()> {
+    let report = TaskService::with_defaults()?.restore_windows(dry_run)?;
+    if report.moves.is_empty() {
+        println!(
+            "No misplaced windows ({} synced, {} already home).",
+            report.synced, report.already_home
+        );
+        return Ok(());
+    }
+    if dry_run {
+        println!("Would restore {} window(s):", report.moves.len());
+    } else {
+        println!("Restored {} window(s):", report.restored);
+    }
+    for mv in &report.moves {
+        println!("  {} \"{}\"  {} → {}", mv.address, mv.title, mv.from, mv.to);
     }
     Ok(())
 }

@@ -19,6 +19,7 @@ use serde_json::{json, Value};
 
 use crate::daemon::client::{daemon_pid_path, daemon_socket_path};
 use crate::error::{TskError, Result};
+use crate::hyprland_events::HyprlandEventListener;
 use crate::service::TaskService;
 use crate::xdg::ensure_parent;
 
@@ -91,6 +92,13 @@ impl DaemonServer {
             }
         });
 
+        let _window_listener = start_window_registry_listener(self.service.clone());
+        if let Ok(svc) = self.service.lock() {
+            if let Err(err) = svc.sync_window_registry() {
+                eprintln!("tsk daemon: window registry sync: {err}");
+            }
+        }
+
         while !self.stop.load(Ordering::Relaxed) && !SHUTDOWN.load(Ordering::Relaxed) {
             match listener.accept() {
                 Ok((stream, _)) => {
@@ -133,6 +141,24 @@ fn cleanup_runtime_files() {
     if let Ok(path) = daemon_pid_path() {
         let _ = fs::remove_file(path);
     }
+}
+
+fn start_window_registry_listener(
+    service: Arc<Mutex<TaskService>>,
+) -> Option<HyprlandEventListener> {
+    HyprlandEventListener::start(Arc::new(move |event, _payload| {
+        if !matches!(
+            event,
+            "openwindow" | "closewindow" | "movewindow" | "movewindowv2"
+        ) {
+            return;
+        }
+        if let Ok(svc) = service.lock() {
+            if let Err(err) = svc.sync_window_registry() {
+                eprintln!("tsk daemon: window registry sync: {err}");
+            }
+        }
+    }))
 }
 
 fn handle_client(mut stream: UnixStream, service: Arc<Mutex<TaskService>>) {

@@ -84,6 +84,9 @@ pub struct WindowRecord {
     pub class_name: String,
     pub workspace: i32,
     pub workspace_name: String,
+    /// Hyprland workspace name where the window was first registered (recovery target).
+    #[serde(default)]
+    pub home_workspace_name: String,
     pub pid: Option<i32>,
 }
 

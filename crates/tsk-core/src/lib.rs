@@ -26,6 +26,7 @@ pub mod binary;
 pub mod waybar;
 pub mod workspace_nav;
 pub mod workspace_slots;
+pub mod window_registry;
 pub mod workspaces;
 pub mod xdg;
 
@@ -62,6 +63,7 @@ pub use state_notify::{
     publish as publish_state_change, publish_with_workspace, read_state_rev, state_events_socket_path,
     StateChangeKind, StateEventListener,
 };
+pub use window_registry::{RestoreMove, RestoreReport, restore_windows, sync_window_registry};
 pub use workspace_nav::{
     clear_navigation_memory, clear_runtime_slot_cache, focus_last_workspace, set_taskspace,
     workspace_go, workspace_goto_name, workspace_next, workspace_prev,

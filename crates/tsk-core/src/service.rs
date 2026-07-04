@@ -173,6 +173,24 @@ impl TaskService {
         Ok(result)
     }
 
+    /// Sync window home tags from Hyprland and move misplaced windows back.
+    pub fn restore_windows(&self, dry_run: bool) -> Result<crate::window_registry::RestoreReport> {
+        let mut state = self.load_state()?;
+        let report = crate::window_registry::restore_windows(&mut state, dry_run)?;
+        if !dry_run {
+            self.commit_state(&state, Some(StateChangeKind::Full))?;
+        }
+        Ok(report)
+    }
+
+    /// Refresh the window registry from Hyprland (tags new windows at their current workspace).
+    pub fn sync_window_registry(&self) -> Result<usize> {
+        let mut state = self.load_state()?;
+        let count = crate::window_registry::sync_window_registry(&mut state)?;
+        self.registry.save_state(&state)?;
+        Ok(count)
+    }
+
     pub fn create_task(
         &self,
         name: &str,

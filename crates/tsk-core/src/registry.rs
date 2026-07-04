@@ -116,6 +116,12 @@ impl Registry {
                 [],
             )?;
         }
+        if !win_cols.is_empty() && !win_cols.iter().any(|c| c == "home_workspace_name") {
+            conn.execute(
+                "ALTER TABLE windows ADD COLUMN home_workspace_name TEXT NOT NULL DEFAULT ''",
+                [],
+            )?;
+        }
         if !cols.iter().any(|c| c == "last_monitor_workspace") {
             conn.execute(
                 "ALTER TABLE session ADD COLUMN last_monitor_workspace TEXT NOT NULL DEFAULT '{}'",
@@ -161,7 +167,7 @@ impl Registry {
 
         let mut windows = HashMap::new();
         let mut stmt = conn.prepare(
-            "SELECT hypr_address, task_id, title, class, workspace, workspace_name, pid FROM windows",
+            "SELECT hypr_address, task_id, title, class, workspace, workspace_name, COALESCE(home_workspace_name, ''), pid FROM windows",
         )?;
         let rows = stmt.query_map([], |row| {
             let address: String = row.get(0)?;
@@ -174,7 +180,8 @@ impl Registry {
                     class_name: row.get(3)?,
                     workspace: row.get(4)?,
                     workspace_name: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
-                    pid: row.get::<_, Option<i32>>(6)?,
+                    home_workspace_name: row.get(6)?,
+                    pid: row.get::<_, Option<i32>>(7)?,
                 },
             ))
         })?;
@@ -227,7 +234,7 @@ impl Registry {
         conn.execute("DELETE FROM windows", [])?;
         for window in state.windows.values() {
             conn.execute(
-                "INSERT INTO windows (hypr_address, task_id, title, class, workspace, workspace_name, pid) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                "INSERT INTO windows (hypr_address, task_id, title, class, workspace, workspace_name, home_workspace_name, pid) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![
                     window.hypr_address,
                     window.task_id,
@@ -235,6 +242,7 @@ impl Registry {
                     window.class_name,
                     window.workspace,
                     window.workspace_name,
+                    window.home_workspace_name,
                     window.pid,
                 ],
             )?;

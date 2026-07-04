@@ -355,6 +355,22 @@ pub fn move_active_window_to_workspace(name: &str) {
     });
 }
 
+/// Move a specific window without changing the active workspace.
+pub fn move_window_to_workspace_silent(address: &str, name: &str) {
+    if !available() {
+        return;
+    }
+    let addr = address.strip_prefix("0x").unwrap_or(address);
+    let target = workspace_dispatch_arg(name);
+    hypr_log::scoped(format!("move_window_to_workspace_silent 0x{addr} → {name}"), || {
+        dispatch_sync(&[
+            "movetoworkspacesilent",
+            &target,
+            &format!("address:0x{addr}"),
+        ]);
+    });
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum NavigationStrategy {
     FocusExistingMonitor,
