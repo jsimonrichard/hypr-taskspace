@@ -42,9 +42,10 @@ pub use install::{
 };
 pub use models::{ContextMode, SessionState, Task, TaskStatus};
 pub use repos::{
-    collect_task_repo_paths, find_repo, find_repo_by_path, is_task_scratch_repo, load_repo_config,
-    load_repos, normalize_repo_path, paths_match, register_repo, repo_bookmarks_path,
-    repo_config_path, repo_display_path, save_repo_config, unregister_repo, RegisteredRepo,
+    collect_task_repo_paths, ensure_repo_removable, find_repo, find_repo_by_path,
+    is_task_scratch_repo, load_repo_config, load_repos, normalize_repo_path, paths_match,
+    register_repo, repo_bookmarks_path, repo_config_path, repo_display_path, save_repo_config,
+    task_belongs_to_repo, task_source_repo_path, tasks_for_repo, unregister_repo, RegisteredRepo,
     unique_repo_id,
 };
 pub use task_paths::{

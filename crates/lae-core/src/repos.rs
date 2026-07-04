@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{LaeError, Result};
-use crate::models::slugify;
+use crate::models::{slugify, Task};
 use crate::task_paths::scratch_checkout_path;
 use crate::vcs::{detect_vcs_root, repo_label};
 use crate::xdg::{ensure_parent, expand, lae_config_dir};
@@ -231,6 +231,38 @@ pub fn unregister_repo(path: &Path) -> Result<()> {
 
 pub fn repo_display_path(repo: &RegisteredRepo) -> PathBuf {
     normalize_repo_path(&repo.path)
+}
+
+/// Registered checkout a task was created from.
+pub fn task_source_repo_path(task: &Task) -> &Path {
+    task.source_repo_path
+        .as_deref()
+        .unwrap_or(task.repo_path.as_path())
+}
+
+pub fn task_belongs_to_repo(task: &Task, repo: &RegisteredRepo) -> bool {
+    paths_match(task_source_repo_path(task), &repo_display_path(repo))
+}
+
+pub fn tasks_for_repo<'a>(
+    repo: &RegisteredRepo,
+    tasks: impl IntoIterator<Item = &'a Task>,
+) -> Vec<&'a Task> {
+    tasks
+        .into_iter()
+        .filter(|task| task_belongs_to_repo(task, repo))
+        .collect()
+}
+
+pub fn ensure_repo_removable(repo: &RegisteredRepo, tasks: &[Task]) -> Result<()> {
+    let count = tasks_for_repo(repo, tasks).len();
+    if count > 0 {
+        return Err(LaeError::Other(format!(
+            "Cannot remove \"{}\": {count} task(s) still use this repo — delete them first",
+            repo.name
+        )));
+    }
+    Ok(())
 }
 
 pub fn collect_task_repo_paths(tasks: impl IntoIterator<Item = impl AsRef<Path>>) -> Vec<PathBuf> {

@@ -2,9 +2,9 @@ use std::path::PathBuf;
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use lae_core::{
-    collect_task_repo_paths, detect_vcs_root, ensure_daemon, load_repos, paths_match,
-    repo_display_path, unregister_repo, ContextMode, DaemonClient, RegisteredRepo, Result, Task,
-    TaskRepoSource,
+    collect_task_repo_paths, detect_vcs_root, ensure_daemon, ensure_repo_removable, load_repos,
+    paths_match, repo_display_path, unregister_repo, ContextMode, DaemonClient, RegisteredRepo,
+    Result, Task, TaskRepoSource,
 };
 use crate::grep_dir_picker::{GrepDirPicker, PickerAction};
 use crate::modal::{arrow_nav_delta, ModalButtonAction, ModalButtonBar};
@@ -15,6 +15,7 @@ use crate::ui;
 pub enum Panel {
     Tasks,
     Repos,
+    Archived,
 }
 
 #[derive(Debug, Clone)]
@@ -93,7 +94,9 @@ pub struct App {
     pub panel: Panel,
     pub repos: Vec<RegisteredRepo>,
     pub entries: Vec<ListEntry>,
+    pub archived_entries: Vec<ListEntry>,
     pub list_state: ratatui::widgets::ListState,
+    pub archived_list_state: ratatui::widgets::ListState,
     pub repo_list_state: ratatui::widgets::ListState,
     pub screen: Screen,
     pub status: Option<(bool, String)>,
@@ -110,7 +113,9 @@ impl App {
             panel: Panel::Tasks,
             repos: Vec::new(),
             entries: Vec::new(),
+            archived_entries: Vec::new(),
             list_state: ratatui::widgets::ListState::default(),
+            archived_list_state: ratatui::widgets::ListState::default(),
             repo_list_state: ratatui::widgets::ListState::default(),
             screen: Screen::Main,
             status: None,
@@ -171,10 +176,13 @@ impl App {
         );
         self.refresh_repos(task_paths)?;
 
-        let prev_task_id = self
-            .selected_task()
+        let prev_task_id = Self::selected_task_from(&self.entries, &self.list_state)
             .map(|t| t.id.clone())
             .filter(|id| !id.is_empty());
+        let prev_archived_task_id =
+            Self::selected_task_from(&self.archived_entries, &self.archived_list_state)
+                .map(|t| t.id.clone())
+                .filter(|id| !id.is_empty());
         let prev_repo_sel = self.repo_list_state.selected();
 
         let mut matched = std::collections::HashSet::new();
@@ -204,6 +212,10 @@ impl App {
                 .collect();
             repo_tasks.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
 
+            if repo_tasks.is_empty() {
+                continue;
+            }
+
             self.entries.push(ListEntry::Header {
                 label: repo.name.clone(),
             });
@@ -230,29 +242,68 @@ impl App {
             });
             for task in scratch {
                 self.entries.push(ListEntry::Task(TaskRow {
-                        id: task.id.clone(),
-                        name: task.name.clone(),
-                        current: current_task == Some(task.id.as_str()),
-                        is_default: false,
+                    id: task.id.clone(),
+                    name: task.name.clone(),
+                    current: current_task == Some(task.id.as_str()),
+                    is_default: false,
                     is_archived: false,
                 }));
             }
         }
 
+        self.archived_entries.clear();
         if !archived_tasks.is_empty() {
-            let mut archived = archived_tasks;
-            archived.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
-            self.entries.push(ListEntry::Header {
-                label: "archived".into(),
-            });
-            for task in archived {
-                self.entries.push(ListEntry::Task(TaskRow {
-                    id: task.id.clone(),
-                    name: task.name.clone(),
-                    current: false,
-                    is_default: false,
-                    is_archived: true,
-                }));
+            let mut archived_matched = std::collections::HashSet::new();
+            for repo in &self.repos {
+                let mut repo_tasks: Vec<&Task> = archived_tasks
+                    .iter()
+                    .filter(|t| {
+                        let key = t
+                            .source_repo_path
+                            .as_deref()
+                            .unwrap_or(t.repo_path.as_path());
+                        paths_match(key, &repo_display_path(repo))
+                    })
+                    .collect();
+                repo_tasks.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+
+                if repo_tasks.is_empty() {
+                    continue;
+                }
+
+                self.archived_entries.push(ListEntry::Header {
+                    label: repo.name.clone(),
+                });
+                for task in repo_tasks {
+                    archived_matched.insert(task.id.clone());
+                    self.archived_entries.push(ListEntry::Task(TaskRow {
+                        id: task.id.clone(),
+                        name: task.name.clone(),
+                        current: false,
+                        is_default: false,
+                        is_archived: true,
+                    }));
+                }
+            }
+
+            let mut scratch: Vec<&Task> = archived_tasks
+                .iter()
+                .filter(|t| !archived_matched.contains(&t.id))
+                .collect();
+            if !scratch.is_empty() {
+                scratch.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+                self.archived_entries.push(ListEntry::Header {
+                    label: "scratch".into(),
+                });
+                for task in scratch {
+                    self.archived_entries.push(ListEntry::Task(TaskRow {
+                        id: task.id.clone(),
+                        name: task.name.clone(),
+                        current: false,
+                        is_default: false,
+                        is_archived: true,
+                    }));
+                }
             }
         }
 
@@ -267,10 +318,24 @@ impl App {
                     matches!(entry, ListEntry::Task(t) if t.current)
                 })
             })
-            .or_else(|| self.first_selectable());
+            .or_else(|| Self::first_selectable_in(&self.entries));
 
         self.list_state.select(new_sel);
-        self.ensure_selection_on_task();
+        Self::ensure_selection_on_task_in(&self.entries, &mut self.list_state);
+
+        let new_archived_sel = prev_archived_task_id
+            .and_then(|id| {
+                self.archived_entries.iter().position(|entry| {
+                    matches!(entry, ListEntry::Task(t) if t.id == id)
+                })
+            })
+            .or_else(|| Self::first_selectable_in(&self.archived_entries));
+
+        self.archived_list_state.select(new_archived_sel);
+        Self::ensure_selection_on_task_in(
+            &self.archived_entries,
+            &mut self.archived_list_state,
+        );
 
         let repo_sel = prev_repo_sel
             .filter(|i| *i < self.repos.len())
@@ -329,17 +394,25 @@ impl App {
     fn handle_main_key(&mut self, key: KeyEvent) -> Result<()> {
         match key.code {
             KeyCode::Tab | KeyCode::Char('l') | KeyCode::Right => {
-                self.panel = Panel::Repos;
+                self.panel = match self.panel {
+                    Panel::Tasks => Panel::Repos,
+                    Panel::Repos => Panel::Archived,
+                    Panel::Archived => Panel::Tasks,
+                };
                 return Ok(());
             }
             KeyCode::BackTab | KeyCode::Char('h') | KeyCode::Left => {
-                self.panel = Panel::Tasks;
+                self.panel = match self.panel {
+                    Panel::Tasks => Panel::Archived,
+                    Panel::Archived => Panel::Repos,
+                    Panel::Repos => Panel::Tasks,
+                };
                 return Ok(());
             }
             _ => {}
         }
         match self.panel {
-            Panel::Tasks => self.handle_tasks_panel_key(key)?,
+            Panel::Tasks | Panel::Archived => self.handle_tasks_panel_key(key)?,
             Panel::Repos => self.handle_repos_panel_key(key)?,
         }
         Ok(())
@@ -355,7 +428,7 @@ impl App {
                 self.reload()?;
                 self.status = Some((true, "Refreshed".into()));
             }
-            KeyCode::Char('d') => self.begin_archive()?,
+            KeyCode::Char('d') if self.panel == Panel::Tasks => self.begin_archive()?,
             KeyCode::Char('D') => self.begin_delete()?,
             KeyCode::Enter => self.switch_selected_task()?,
             _ => {}
@@ -675,11 +748,24 @@ impl App {
             self.status = Some((false, "Select a repo to remove".into()));
             return;
         };
+        let Ok(active) = self.client.list_active_tasks() else {
+            self.status = Some((false, "Could not load tasks".into()));
+            return;
+        };
+        let Ok(archived) = self.client.list_archived_tasks() else {
+            self.status = Some((false, "Could not load tasks".into()));
+            return;
+        };
+        let all_tasks: Vec<Task> = active.into_iter().chain(archived).collect();
+        if let Err(err) = ensure_repo_removable(&repo, &all_tasks) {
+            self.status = Some((false, err.to_string()));
+            return;
+        }
         self.status = None;
         self.screen = Screen::ConfirmDeleteRepo {
             repo_path: repo_display_path(&repo),
             repo_name: repo.name,
-            buttons: ModalButtonBar::cancel_confirm("Remove"),
+            buttons: ModalButtonBar::confirm_first("Yes"),
         };
     }
 
@@ -700,6 +786,16 @@ impl App {
         match action {
             Some(ModalButtonAction::Cancel) => self.screen = Screen::Main,
             Some(ModalButtonAction::Confirm) => {
+                if let Some(repo) = self
+                    .repos
+                    .iter()
+                    .find(|r| paths_match(&repo_display_path(r), &repo_path))
+                {
+                    let active = self.client.list_active_tasks()?;
+                    let archived = self.client.list_archived_tasks()?;
+                    let all_tasks: Vec<Task> = active.into_iter().chain(archived).collect();
+                    ensure_repo_removable(repo, &all_tasks)?;
+                }
                 unregister_repo(&repo_path)?;
                 self.reload()?;
                 self.status = Some((true, format!("Removed {repo_name}")));
@@ -806,73 +902,106 @@ impl App {
             .and_then(|i| self.repos.get(i))
     }
 
-    fn first_selectable(&self) -> Option<usize> {
-        self.entries
+    fn first_selectable_in(entries: &[ListEntry]) -> Option<usize> {
+        entries
             .iter()
             .position(|entry| matches!(entry, ListEntry::Task(_)))
     }
 
-    fn next_selectable(&self, from: usize) -> Option<usize> {
-        ((from + 1)..self.entries.len()).find(|&i| matches!(self.entries[i], ListEntry::Task(_)))
+    fn next_selectable_in(entries: &[ListEntry], from: usize) -> Option<usize> {
+        ((from + 1)..entries.len()).find(|&i| matches!(entries[i], ListEntry::Task(_)))
     }
 
-    fn prev_selectable(&self, from: usize) -> Option<usize> {
+    fn prev_selectable_in(entries: &[ListEntry], from: usize) -> Option<usize> {
         (0..from)
             .rev()
-            .find(|&i| matches!(self.entries[i], ListEntry::Task(_)))
+            .find(|&i| matches!(entries[i], ListEntry::Task(_)))
     }
 
-    fn ensure_selection_on_task(&mut self) {
-        let Some(sel) = self.list_state.selected() else {
-            if let Some(i) = self.first_selectable() {
-                self.list_state.select(Some(i));
+    fn ensure_selection_on_task_in(
+        entries: &[ListEntry],
+        list_state: &mut ratatui::widgets::ListState,
+    ) {
+        let Some(sel) = list_state.selected() else {
+            if let Some(i) = Self::first_selectable_in(entries) {
+                list_state.select(Some(i));
             }
             return;
         };
-        if matches!(self.entries.get(sel), Some(ListEntry::Task(_))) {
+        if matches!(entries.get(sel), Some(ListEntry::Task(_))) {
             return;
         }
-        if let Some(i) = self.next_selectable(sel).or_else(|| self.prev_selectable(sel)) {
-            self.list_state.select(Some(i));
-        } else if let Some(i) = self.first_selectable() {
-            self.list_state.select(Some(i));
+        if let Some(i) = Self::next_selectable_in(entries, sel)
+            .or_else(|| Self::prev_selectable_in(entries, sel))
+        {
+            list_state.select(Some(i));
+        } else if let Some(i) = Self::first_selectable_in(entries) {
+            list_state.select(Some(i));
         } else {
-            self.list_state.select(None);
+            list_state.select(None);
         }
     }
 
     fn select_next(&mut self) {
-        let Some(from) = self.list_state.selected() else {
-            if let Some(i) = self.first_selectable() {
-                self.list_state.select(Some(i));
+        let entries: Vec<ListEntry> = match self.panel {
+            Panel::Archived => self.archived_entries.clone(),
+            _ => self.entries.clone(),
+        };
+        let list_state = match self.panel {
+            Panel::Archived => &mut self.archived_list_state,
+            _ => &mut self.list_state,
+        };
+        let Some(from) = list_state.selected() else {
+            if let Some(i) = Self::first_selectable_in(&entries) {
+                list_state.select(Some(i));
             }
             return;
         };
-        if let Some(i) = self.next_selectable(from) {
-            self.list_state.select(Some(i));
+        if let Some(i) = Self::next_selectable_in(&entries, from) {
+            list_state.select(Some(i));
         }
     }
 
     fn select_prev(&mut self) {
-        let Some(from) = self.list_state.selected() else {
-            if let Some(i) = self.first_selectable() {
-                self.list_state.select(Some(i));
+        let entries: Vec<ListEntry> = match self.panel {
+            Panel::Archived => self.archived_entries.clone(),
+            _ => self.entries.clone(),
+        };
+        let list_state = match self.panel {
+            Panel::Archived => &mut self.archived_list_state,
+            _ => &mut self.list_state,
+        };
+        let Some(from) = list_state.selected() else {
+            if let Some(i) = Self::first_selectable_in(&entries) {
+                list_state.select(Some(i));
             }
             return;
         };
-        if let Some(i) = self.prev_selectable(from) {
-            self.list_state.select(Some(i));
+        if let Some(i) = Self::prev_selectable_in(&entries, from) {
+            list_state.select(Some(i));
         }
     }
 
-    fn selected_task(&self) -> Option<&TaskRow> {
-        self.list_state
+    fn selected_task_from<'a>(
+        entries: &'a [ListEntry],
+        list_state: &ratatui::widgets::ListState,
+    ) -> Option<&'a TaskRow> {
+        list_state
             .selected()
-            .and_then(|i| self.entries.get(i))
+            .and_then(|i| entries.get(i))
             .and_then(|entry| match entry {
                 ListEntry::Task(task) => Some(task),
                 ListEntry::Header { .. } => None,
             })
+    }
+
+    fn selected_task(&self) -> Option<&TaskRow> {
+        match self.panel {
+            Panel::Archived => {
+                Self::selected_task_from(&self.archived_entries, &self.archived_list_state)
+            }
+            _ => Self::selected_task_from(&self.entries, &self.list_state),
+        }
     }
 
     fn switch_selected_task(&mut self) -> Result<()> {
@@ -937,7 +1066,7 @@ impl App {
             container_exists: preview.container_exists,
             data_dir: preview.data_dir.display().to_string(),
             is_archived: task.is_archived,
-            buttons: ModalButtonBar::cancel_confirm("Delete"),
+            buttons: ModalButtonBar::confirm_first("Yes"),
         };
         Ok(())
     }

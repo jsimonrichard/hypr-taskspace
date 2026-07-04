@@ -9,7 +9,7 @@ use lae_core::{
     trace_path, uninstall_hypr, uninstall_waybar, workspace_module_key, DaemonClient, DaemonServer,
     InstallHyprOptions, InstallWaybarOptions, LaeError, Registry, Result, TaskService, TaskStatus,
     TaskRepoSource, detect_vcs_root, find_repo, find_repo_by_path,
-    load_repos, register_repo, repo_label, unregister_repo,
+    load_repos, register_repo, repo_label, ensure_repo_removable, unregister_repo,
     clear_hypr_log,
 };
 
@@ -741,16 +741,22 @@ fn cmd_repo_list() -> Result<()> {
 }
 
 fn cmd_repo_remove(id_or_path: &str) -> Result<()> {
+    let client = client()?;
+    let active = client.list_active_tasks()?;
+    let archived = client.list_archived_tasks()?;
+    let all_tasks: Vec<_> = active.into_iter().chain(archived).collect();
+
     let repos = load_repos([])?;
     let repo = find_repo(&repos, id_or_path)
-        .map(|r| r.path.clone())
+        .cloned()
         .or_else(|| {
             let path = std::path::PathBuf::from(id_or_path);
-            find_repo_by_path(&repos, &path).map(|r| r.path.clone())
+            find_repo_by_path(&repos, &path).cloned()
         })
         .ok_or_else(|| LaeError::Other(format!("Unknown repo '{id_or_path}'")))?;
-    unregister_repo(&repo)?;
-    println!("Removed {}", repo.display());
+    ensure_repo_removable(&repo, &all_tasks)?;
+    unregister_repo(&repo.path)?;
+    println!("Removed {}", repo.path.display());
     Ok(())
 }
 

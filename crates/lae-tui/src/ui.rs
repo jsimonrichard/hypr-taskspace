@@ -38,7 +38,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         draw_tabs(frame, chunks[0], app);
     }
     match app.panel {
-        Panel::Tasks => draw_task_list(frame, chunks[1], app),
+        Panel::Tasks | Panel::Archived => draw_task_list(frame, chunks[1], app),
         Panel::Repos => draw_repo_list(frame, chunks[1], app),
     }
     draw_help(frame, chunks[2], app);
@@ -65,10 +65,17 @@ fn draw_tabs(frame: &mut Frame, area: Rect, app: &App) {
     } else {
         Style::default().fg(Color::DarkGray)
     };
+    let archived_style = if app.panel == Panel::Archived {
+        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
     let line = Line::from(vec![
         Span::styled(" Tasks ", tasks_style),
         Span::raw("  "),
         Span::styled(" Repos ", repos_style),
+        Span::raw("  "),
+        Span::styled(" Archived ", archived_style),
     ]);
     frame.render_widget(Paragraph::new(line), area);
 }
@@ -89,10 +96,19 @@ fn panel_block() -> Block<'static> {
 
 fn draw_task_list(frame: &mut Frame, area: Rect, app: &mut App) {
     let block = panel_block();
+    let (entries, list_state) = match app.panel {
+        Panel::Archived => (&app.archived_entries, &mut app.archived_list_state),
+        _ => (&app.entries, &mut app.list_state),
+    };
 
-    if app.entries.is_empty() {
+    if entries.is_empty() {
+        let empty_msg = if app.panel == Panel::Archived {
+            "No archived tasks"
+        } else {
+            "No tasks — press n to create one"
+        };
         frame.render_widget(
-            Paragraph::new("No tasks — press n to create one")
+            Paragraph::new(empty_msg)
                 .block(block)
                 .wrap(Wrap { trim: true }),
             area,
@@ -100,8 +116,7 @@ fn draw_task_list(frame: &mut Frame, area: Rect, app: &mut App) {
         return;
     }
 
-    let items: Vec<ListItem> = app
-        .entries
+    let items: Vec<ListItem> = entries
         .iter()
         .map(|entry| match entry {
             ListEntry::Header { label } => ListItem::new(header_line(label)).style(
@@ -122,7 +137,7 @@ fn draw_task_list(frame: &mut Frame, area: Rect, app: &mut App) {
         )
         .highlight_symbol("▸ ");
 
-    frame.render_stateful_widget(list, area, &mut app.list_state);
+    frame.render_stateful_widget(list, area, list_state);
 }
 
 fn draw_repo_list(frame: &mut Frame, area: Rect, app: &mut App) {
@@ -183,23 +198,15 @@ fn header_line(label: &str) -> Line<'static> {
 }
 
 fn task_line(task: &TaskRow) -> Line<'static> {
-    let icon = if task.is_default {
-        "󰣇"
-    } else if task.is_archived {
-        "󰁰"
-    } else {
-        "󱓝"
-    };
+    let icon = if task.is_default { "󰣇" } else { "󱓝" };
     let marker = if task.current { " ●" } else { "" };
-    let name_style = if task.is_archived {
-        Style::default().fg(Color::DarkGray)
-    } else {
-        Style::default().add_modifier(Modifier::BOLD)
-    };
     Line::from(vec![
         Span::raw("    "),
         Span::raw(format!("{icon} ")),
-        Span::styled(task.name.clone(), name_style),
+        Span::styled(
+            task.name.clone(),
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
         Span::raw(marker),
     ])
 }
@@ -208,6 +215,9 @@ fn draw_help(frame: &mut Frame, area: Rect, app: &App) {
     let text = match &app.screen {
         Screen::Main if app.panel == Panel::Tasks => {
             "↑/↓ move  Enter switch  n new  d archive  D delete  r refresh  h/l Tab panels  q quit"
+        }
+        Screen::Main if app.panel == Panel::Archived => {
+            "↑/↓ move  D delete  r refresh  h/l Tab panels  q quit"
         }
         Screen::Main if app.panel == Panel::Repos => {
             "↑/↓ move  n browse/add  d remove  r refresh  h/l Tab panels  q quit"
@@ -416,7 +426,7 @@ fn draw_confirm_delete_repo(frame: &mut Frame, area: Rect, app: &App) {
 
     let popup = centered_rect(70, 28, area);
     let body = format!(
-        "Remove \"{repo_name}\" from lae?\n\nDeletes `.lae/repo.toml` in the checkout.\nExisting tasks are not deleted."
+        "Remove \"{repo_name}\" from lae?\n\nDeletes `.lae/repo.toml` in the checkout."
     );
     draw_modal_dialog(
         frame,
