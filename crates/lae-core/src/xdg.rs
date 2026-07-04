@@ -67,14 +67,6 @@ pub fn user_bin_dir() -> PathBuf {
     expand("~/.local/bin")
 }
 
-pub fn lae_waybar_file() -> Result<PathBuf> {
-    Ok(lae_runtime_dir()?.join("waybar.json"))
-}
-
-pub fn lae_waybar_modules_cache() -> Result<PathBuf> {
-    Ok(lae_runtime_dir()?.join("waybar-modules.json"))
-}
-
 pub fn ensure_parent(path: &Path) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|source| LaeError::Write {

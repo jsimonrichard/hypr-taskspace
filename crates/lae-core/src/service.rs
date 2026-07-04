@@ -8,7 +8,6 @@ use crate::hyprland;
 use crate::models::{ContextMode, SessionState, Task, TaskStatus};
 use crate::registry::Registry;
 use crate::state_notify::{self, StateChangeKind};
-use crate::waybar::refresh_modules_cache;
 use crate::workspace_nav;
 use crate::workspaces::{default_taskspace_workspace_names, task_taskspace_workspace_names};
 use crate::xdg::{ensure_parent, lae_runtime_dir};
@@ -30,47 +29,42 @@ impl TaskService {
     }
 
     pub fn save_state(&self, state: &SessionState) -> Result<()> {
-        self.commit_state(state, false, None)
+        self.commit_state(state, None)
     }
 
     /// Persist state and notify Waybar subscribers.
     fn commit_state(
         &self,
         state: &SessionState,
-        refresh_cache: bool,
         change: Option<StateChangeKind>,
     ) -> Result<()> {
         self.registry.save_state(state)?;
-        self.write_runtime_files(state, refresh_cache)?;
+        self.write_runtime_files(state)?;
         if let Some(kind) = change {
             state_notify::publish(kind);
         }
         Ok(())
     }
 
-    /// Persist state after a workspace switch — skips legacy Waybar JSON cache rebuild.
-    /// The CFFI module updates from Hyprland socket events; cache refresh is unnecessary here.
+    /// Persist state after a workspace switch (no state-events publish).
     fn persist_workspace_switch(&self, state: &SessionState) -> Result<()> {
         self.registry.save_state(state)?;
-        self.write_runtime_files(state, false)
+        self.write_runtime_files(state)
     }
 
-    fn write_runtime_files(&self, state: &SessionState, refresh_cache: bool) -> Result<()> {
+    fn write_runtime_files(&self, state: &SessionState) -> Result<()> {
         if let Ok(dir) = lae_runtime_dir() {
             ensure_parent(&dir.join("_"))?;
             let _ = std::fs::write(dir.join("context"), state.taskspace_label());
         }
         crate::workspace_slots::write_slot_cache(state);
-        if refresh_cache {
-            let _ = refresh_modules_cache(&self.registry, false);
-        }
         Ok(())
     }
 
     pub fn initialize(&self) -> Result<()> {
         let mut state = self.load_state()?;
         state.default_workspace_count = self.config.default_workspace_count;
-        self.commit_state(&state, false, None)
+        self.commit_state(&state, None)
     }
 
     /// Rename default numeric slots — run once after daemon start (background).
@@ -86,14 +80,14 @@ impl TaskService {
         let mut state = self.load_state()?;
         workspace_nav::clear_navigation_memory(&mut state);
         workspace_nav::clear_runtime_slot_cache();
-        self.commit_state(&state, true, Some(StateChangeKind::Full))
+        self.commit_state(&state, Some(StateChangeKind::Full))
     }
 
     pub fn context_default(&self) -> Result<()> {
         let mut state = self.load_state()?;
         workspace_nav::set_taskspace(&mut state, ContextMode::Default, None)
             .map_err(|e| crate::error::LaeError::Other(e))?;
-        self.commit_state(&state, false, Some(StateChangeKind::Taskspace))
+        self.commit_state(&state, Some(StateChangeKind::Taskspace))
     }
 
     pub fn workspace_go(&self, relative: i32) -> Result<Option<String>> {
@@ -253,10 +247,10 @@ impl TaskService {
         }
 
         if switch {
-            self.commit_state(&state, false, Some(StateChangeKind::Full))?;
+            self.commit_state(&state, Some(StateChangeKind::Full))?;
             self.switch_task(&task_id)
         } else {
-            self.commit_state(&state, false, Some(StateChangeKind::Full))?;
+            self.commit_state(&state, Some(StateChangeKind::Full))?;
             Ok(task)
         }
     }
@@ -276,7 +270,7 @@ impl TaskService {
         if was_current {
             workspace_nav::set_taskspace(&mut state, ContextMode::Default, None)
                 .map_err(LaeError::Other)?;
-            self.commit_state(&state, false, Some(StateChangeKind::Taskspace))?;
+            self.commit_state(&state, Some(StateChangeKind::Taskspace))?;
         }
 
         let _closed = crate::task_cleanup::close_task_windows(&task)?;
@@ -292,7 +286,7 @@ impl TaskService {
             entry.status = TaskStatus::Archived;
         }
 
-        self.commit_state(&state, false, Some(StateChangeKind::Full))
+        self.commit_state(&state, Some(StateChangeKind::Full))
     }
 
     pub fn delete_task(&self, task_id: &str) -> Result<()> {
@@ -306,7 +300,7 @@ impl TaskService {
         if crate::task_cleanup::is_active_task_context(&state, &task) {
             workspace_nav::set_taskspace(&mut state, ContextMode::Default, None)
                 .map_err(LaeError::Other)?;
-            self.commit_state(&state, false, Some(StateChangeKind::Taskspace))?;
+            self.commit_state(&state, Some(StateChangeKind::Taskspace))?;
         }
 
         let _closed = crate::task_cleanup::close_task_windows(&task)?;
@@ -329,7 +323,7 @@ impl TaskService {
         crate::task_cleanup::purge_task_session_keys(&mut state, task_id);
         state.tasks.remove(task_id);
 
-        self.commit_state(&state, false, Some(StateChangeKind::Full))
+        self.commit_state(&state, Some(StateChangeKind::Full))
     }
 
     pub fn preview_task_teardown(&self, task_id: &str) -> Result<crate::task_cleanup::TaskTeardownPreview> {
@@ -376,7 +370,7 @@ impl TaskService {
             .entry(format!("task:{task_id}"))
             .or_insert(1);
 
-        self.commit_state(&state, false, Some(StateChangeKind::Taskspace))?;
+        self.commit_state(&state, Some(StateChangeKind::Taskspace))?;
         Ok(task)
     }
 

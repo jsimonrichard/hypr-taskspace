@@ -132,23 +132,6 @@ pub fn parse_workspace_v2(payload: &str) -> Option<(i32, String)> {
     Some((id, name.to_string()))
 }
 
-/// Workspace name from a socket2 workspace event, if applicable.
-#[allow(dead_code)]
-pub fn workspace_name_from_event(event: &str, payload: &str) -> Option<String> {
-    match event {
-        "workspacev2" => parse_workspace_v2(payload).map(|(_, name)| name),
-        "workspace" => {
-            let name = payload.trim();
-            if name.is_empty() {
-                None
-            } else {
-                Some(name.to_string())
-            }
-        }
-        _ => None,
-    }
-}
-
 /// Parse `focusedmonv2` payload: `MONITOR,WORKSPACEID`
 pub fn parse_focusedmon_v2(payload: &str) -> Option<i32> {
     let (_, id_raw) = payload.split_once(',')?;
@@ -178,12 +161,6 @@ pub fn is_full_refresh_event(event: &str) -> bool {
             | "destroyworkspace"
             | "destroyworkspacev2"
     )
-}
-
-/// Events that should refresh Waybar workspace indicators.
-#[allow(dead_code)]
-pub fn is_waybar_refresh_event(event: &str) -> bool {
-    is_workspace_focus_event(event) || is_full_refresh_event(event)
 }
 
 pub struct HyprlandEventListener {
@@ -265,8 +242,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn refresh_events_include_workspace_v2() {
-        assert!(is_waybar_refresh_event("workspacev2"));
+    fn workspace_focus_events_use_workspace_v2() {
         assert!(is_workspace_focus_event("workspacev2"));
         assert!(!is_full_refresh_event("workspacev2"));
     }

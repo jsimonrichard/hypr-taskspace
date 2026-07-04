@@ -64,9 +64,8 @@ pub use workspaces::{
 };
 pub use waybar::{
     build_all_modules, build_all_modules_for_active_name, fetch_occupied_indices,
-    fetch_occupied_names, read_waybar_modules_cache, refresh_modules_cache, write_modules_cache,
-    workspace_label, workspace_module_key, WaybarModuleJson, WaybarModulesCache,
-    ACTIVE_WORKSPACE_ICON, WAYBAR_MODULE_COUNT, WAYBAR_SIGNAL,
+    fetch_occupied_names, workspace_label, workspace_module_key, WaybarModuleJson,
+    WaybarModulesCache, ACTIVE_WORKSPACE_ICON, WAYBAR_MODULE_COUNT, WAYBAR_SIGNAL,
 };
 pub use hyprland_events::{
     diagnose_socket2, is_full_refresh_event, is_monitor_focus_event, is_workspace_focus_event,

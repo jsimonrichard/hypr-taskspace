@@ -1,17 +1,15 @@
 use std::collections::{HashMap, HashSet};
-use std::fs;
 use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 
 use crate::context_sync;
-use crate::error::{LaeError, Result};
+use crate::error::Result;
 use crate::hyprland;
 use crate::models::SessionState;
-use crate::registry::Registry;
 use crate::taskspaces::visible_default_workspace_count;
 use crate::workspaces::allowed_workspace_names;
-use crate::xdg::{ensure_parent, lae_runtime_dir, lae_waybar_file, lae_waybar_modules_cache};
+use crate::xdg::{ensure_parent, lae_runtime_dir};
 
 pub const WAYBAR_MODULE_COUNT: usize = 10;
 pub const ACTIVE_WORKSPACE_ICON: &str = "󱓻";
@@ -41,34 +39,6 @@ struct WaybarData {
     occupied_workspace_indices: Vec<i32>,
     active_workspace: i32,
     active_workspace_name: Option<String>,
-}
-
-pub fn read_waybar_modules_cache() -> Result<WaybarModulesCache> {
-    let path = lae_waybar_modules_cache()?;
-    let raw = fs::read_to_string(&path).map_err(|source| LaeError::Read {
-        path: path.clone(),
-        source,
-    })?;
-    serde_json::from_str(&raw).map_err(|source| LaeError::Parse { path, source })
-}
-
-pub fn write_modules_cache(modules: &WaybarModulesCache, notify: bool) -> Result<()> {
-    let path = lae_waybar_modules_cache()?;
-    ensure_parent(&path)?;
-    let tmp = path.with_extension("tmp");
-    let body = serde_json::to_string(modules).map_err(|e| LaeError::Other(e.to_string()))?;
-    fs::write(&tmp, format!("{body}\n")).map_err(|source| LaeError::Write {
-        path: tmp.clone(),
-        source,
-    })?;
-    fs::rename(&tmp, &path).map_err(|source| LaeError::Write {
-        path: path.clone(),
-        source,
-    })?;
-    if notify {
-        notify_waybar();
-    }
-    Ok(())
 }
 
 pub fn notify_waybar() {
@@ -125,39 +95,6 @@ fn build_all_modules_with_active_name(
         );
     }
     modules
-}
-
-pub fn refresh_modules_cache(registry: &Registry, notify: bool) -> Result<bool> {
-    let mut state = registry.load_state()?;
-    let changed = context_sync::sync_from_active_workspace(&mut state);
-    let modules = build_all_modules(&state, false);
-    let previous = read_waybar_modules_cache().ok();
-    if Some(&modules) != previous.as_ref() {
-        write_modules_cache(&modules, notify)?;
-        write_waybar_json(&state)?;
-    }
-    if changed {
-        registry.save_state(&state)?;
-    }
-    Ok(changed)
-}
-
-fn write_waybar_json(state: &SessionState) -> Result<()> {
-    let path = lae_waybar_file()?;
-    ensure_parent(&path)?;
-    let data = build_waybar_data(state, true);
-    let body = serde_json::to_string(&data).map_err(|e| LaeError::Other(e.to_string()))?;
-    fs::write(&path, format!("{body}\n")).map_err(|source| LaeError::Write { path, source })
-}
-
-fn build_waybar_data(state: &SessionState, sync: bool) -> WaybarData {
-    let mut state = state.clone();
-    if sync {
-        context_sync::sync_from_active_workspace(&mut state);
-    }
-    let allowed = allowed_workspace_names(&state);
-    let occupied = occupied_relative_indices(&allowed);
-    build_waybar_data_with(&state, None, &occupied)
 }
 
 fn build_waybar_data_with(

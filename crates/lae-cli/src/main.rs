@@ -5,7 +5,7 @@ use lae_core::{
     diagnose_socket2, enable_for_process, format_report, hypr_log_path, hyprland, install_hypr,
     install_hypr_status,
     install_waybar, install_waybar_status, is_daemon_running, launch_task_tui, load_config,
-    ping_daemon, refresh_modules_cache, run_doctor_checks, stop_daemon, tail_hypr_log, tail_raw,
+    ping_daemon, run_doctor_checks, stop_daemon, tail_hypr_log, tail_raw,
     trace_path, uninstall_hypr, uninstall_waybar, workspace_module_key, DaemonClient, DaemonServer,
     InstallHyprOptions, InstallWaybarOptions, LaeError, Registry, Result, TaskService, TaskStatus,
     clear_hypr_log,
@@ -36,12 +36,8 @@ enum Commands {
     },
     #[command(subcommand)]
     Taskspace(TaskspaceCommands),
-    #[command(subcommand, name = "context", about = "Alias for taskspace (deprecated name)")]
-    Context(TaskspaceCommands),
     #[command(subcommand)]
     Workspace(WorkspaceCommands),
-    #[command(subcommand, name = "desktop", about = "Alias for workspace (deprecated name)")]
-    Desktop(WorkspaceCommands),
     Task {
         #[command(subcommand)]
         command: TaskCommands,
@@ -165,7 +161,6 @@ enum TaskCommands {
 
 #[derive(Subcommand)]
 enum WaybarCommands {
-    RefreshCache,
     Status,
     Module {
         #[arg(value_parser = ["task", "workspace"])]
@@ -217,6 +212,8 @@ enum DaemonCommands {
     Run,
     /// Stop the running daemon
     Stop,
+    /// Stop then start the daemon
+    Restart,
     /// Check whether the daemon is reachable
     Status,
 }
@@ -274,11 +271,11 @@ fn run() -> Result<()> {
             UninstallCommands::Hypr { keep_files } => cmd_uninstall_hypr(keep_files),
             UninstallCommands::Waybar => cmd_uninstall_waybar(),
         },
-        Commands::Taskspace(command) | Commands::Context(command) => match command {
+        Commands::Taskspace(command) => match command {
             TaskspaceCommands::Default => cmd_taskspace_default(),
             TaskspaceCommands::Current => cmd_taskspace_current(),
         },
-        Commands::Workspace(command) | Commands::Desktop(command) => match command {
+        Commands::Workspace(command) => match command {
             WorkspaceCommands::Go { index } => cmd_workspace_go(index),
             WorkspaceCommands::Remember { index } => cmd_workspace_remember(index),
             WorkspaceCommands::Dispatch { index } => cmd_workspace_dispatch(index),
@@ -297,7 +294,6 @@ fn run() -> Result<()> {
             TaskCommands::Tui => cmd_task_tui(),
         },
         Commands::Waybar { command } => match command {
-            WaybarCommands::RefreshCache => cmd_waybar_refresh_cache(),
             WaybarCommands::Status => cmd_waybar_install_status(),
             WaybarCommands::Module { name, index } => cmd_waybar_module(&name, index),
         },
@@ -326,6 +322,7 @@ fn run() -> Result<()> {
             DaemonCommands::Start => cmd_daemon_start(),
             DaemonCommands::Run => cmd_daemon_run(),
             DaemonCommands::Stop => cmd_daemon_stop(),
+            DaemonCommands::Restart => cmd_daemon_restart(),
             DaemonCommands::Status => cmd_daemon_status(),
         },
         Commands::Reset { command } => match command {
@@ -755,12 +752,6 @@ fn cmd_task_tui_launch() -> Result<()> {
     launch_task_tui()
 }
 
-fn cmd_waybar_refresh_cache() -> Result<()> {
-    let registry = Registry::with_defaults()?;
-    refresh_modules_cache(&registry, true)?;
-    Ok(())
-}
-
 fn cmd_waybar_install_status() -> Result<()> {
     let cfg = load_config()?;
     let status = install_waybar_status(&cfg)?;
@@ -891,7 +882,26 @@ fn cmd_daemon_start() -> Result<()> {
         println!("Daemon already running.");
         return Ok(());
     }
+    spawn_daemon_and_wait()?;
+    println!("Daemon started.");
+    Ok(())
+}
 
+fn cmd_daemon_restart() -> Result<()> {
+    let was_running = stop_daemon()?;
+    if was_running {
+        println!("Daemon stopped.");
+    }
+    spawn_daemon_and_wait()?;
+    if was_running {
+        println!("Daemon restarted.");
+    } else {
+        println!("Daemon started.");
+    }
+    Ok(())
+}
+
+fn spawn_daemon_and_wait() -> Result<()> {
     let exe = std::env::current_exe().map_err(|e| LaeError::Other(e.to_string()))?;
     let mut child = std::process::Command::new(exe)
         .args(["daemon", "run"])
@@ -903,7 +913,6 @@ fn cmd_daemon_start() -> Result<()> {
 
     for _ in 0..50 {
         if ping_daemon()? {
-            println!("Daemon started.");
             return Ok(());
         }
         if let Ok(Some(status)) = child.try_wait() {
