@@ -1,0 +1,16 @@
+[package]
+name = "tsk-cli"
+description = "TSK command-line interface (Rust rewrite)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "tsk"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+tsk-core = { path = "../tsk-core" }
+tsk-tui = { path = "../tsk-tui" }
+serde_json = { workspace = true }

@@ -1,17 +1,17 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/lae-core",
-    "crates/lae-waybar",
-    "crates/lae-cli",
-    "crates/lae-tui",
+    "crates/tsk-core",
+    "crates/tsk-waybar",
+    "crates/tsk-cli",
+    "crates/tsk-tui",
 ]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/jsimonrichard/local-agentic-env"
+repository = "https://github.com/jsimonrichard/hypr-taskspace"
 
 [workspace.dependencies]
 chrono = { version = "0.4", features = ["serde"] }

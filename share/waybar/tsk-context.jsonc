@@ -1,0 +1,6 @@
+// Legacy Waybar exec-module reference (superseded by cffi/tsk).
+// Current install uses the Rust CFFI module — see README.md.
+//
+// Old exec modules:
+//   custom/tsk-task       — current task name
+//   custom/tsk-workspace-N — workspace N within current taskspace

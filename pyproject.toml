@@ -1,7 +1,7 @@
 [project]
-name = "local-agentic-env"
+name = "hypr-taskspace"
 version = "0.1.0"
-description = "Local Agentic Environment — legacy Python control plane (Rust CLI in crates/lae-cli is primary)"
+description = "Hypr Taskspace — legacy Python control plane (Rust CLI in crates/tsk-cli is primary)"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -11,15 +11,15 @@ dependencies = [
 ]
 
 [project.scripts]
-# Legacy Python CLI — use `python -m lae.cli.main` or the Rust `lae` from `lae install hypr`.
-lae-py = "lae.cli.main:main"
+# Legacy Python CLI — use `python -m tsk.cli.main` or the Rust `tsk` from `tsk install hypr`.
+tsk-py = "tsk.cli.main:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/lae"]
+packages = ["src/tsk"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "share/hypr" = "share/hypr"

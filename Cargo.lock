@@ -878,49 +878,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lae-cli"
-version = "0.1.0"
-dependencies = [
- "clap",
- "lae-core",
- "lae-tui",
- "serde_json",
-]
-
-[[package]]
-name = "lae-core"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "libc",
- "regex",
- "rusqlite",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.18",
- "toml",
-]
-
-[[package]]
-name = "lae-tui"
-version = "0.1.0"
-dependencies = [
- "crossterm 0.29.0",
- "lae-core",
- "ratatui",
-]
-
-[[package]]
-name = "lae-waybar"
-version = "0.1.0"
-dependencies = [
- "lae-core",
- "serde",
- "waybar-cffi",
-]
-
-[[package]]
 name = "libc"
 version = "0.2.186"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1575,6 +1532,49 @@ dependencies = [
  "serde_spanned",
  "toml_datetime",
  "winnow",
+]
+
+[[package]]
+name = "tsk-cli"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "serde_json",
+ "tsk-core",
+ "tsk-tui",
+]
+
+[[package]]
+name = "tsk-core"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "libc",
+ "regex",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "toml",
+]
+
+[[package]]
+name = "tsk-tui"
+version = "0.1.0"
+dependencies = [
+ "crossterm 0.29.0",
+ "ratatui",
+ "tsk-core",
+]
+
+[[package]]
+name = "tsk-waybar"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "tsk-core",
+ "waybar-cffi",
 ]
 
 [[package]]

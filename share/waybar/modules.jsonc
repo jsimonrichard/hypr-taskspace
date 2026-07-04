@@ -1,90 +1,90 @@
 {
-  "custom/lae-task": {
+  "custom/tsk-task": {
     "return-type": "json",
-    "exec": "~/.local/share/lae/bin/lae-waybar-json task",
+    "exec": "~/.local/share/tsk/bin/tsk-waybar-json task",
     "interval": "once",
     "signal": 11,
-    "on-click": "~/.local/share/lae/bin/lae-task-tui",
-    "on-click-right": "lae taskspace default"
+    "on-click": "~/.local/share/tsk/bin/tsk-task-tui",
+    "on-click-right": "tsk taskspace default"
   },
-  "custom/lae-workspace-1": {
+  "custom/tsk-workspace-1": {
     "return-type": "json",
-    "exec": "~/.local/share/lae/bin/lae-waybar-json workspace 1",
+    "exec": "~/.local/share/tsk/bin/tsk-waybar-json workspace 1",
     "interval": "once",
     "signal": 11,
-    "on-click": "~/.local/share/lae/bin/lae workspace go 1",
+    "on-click": "~/.local/share/tsk/bin/tsk workspace go 1",
     "tooltip": "Workspace 1"
   },
-  "custom/lae-workspace-2": {
+  "custom/tsk-workspace-2": {
     "return-type": "json",
-    "exec": "~/.local/share/lae/bin/lae-waybar-json workspace 2",
+    "exec": "~/.local/share/tsk/bin/tsk-waybar-json workspace 2",
     "interval": "once",
     "signal": 11,
-    "on-click": "~/.local/share/lae/bin/lae workspace go 2",
+    "on-click": "~/.local/share/tsk/bin/tsk workspace go 2",
     "tooltip": "Workspace 2"
   },
-  "custom/lae-workspace-3": {
+  "custom/tsk-workspace-3": {
     "return-type": "json",
-    "exec": "~/.local/share/lae/bin/lae-waybar-json workspace 3",
+    "exec": "~/.local/share/tsk/bin/tsk-waybar-json workspace 3",
     "interval": "once",
     "signal": 11,
-    "on-click": "~/.local/share/lae/bin/lae workspace go 3",
+    "on-click": "~/.local/share/tsk/bin/tsk workspace go 3",
     "tooltip": "Workspace 3"
   },
-  "custom/lae-workspace-4": {
+  "custom/tsk-workspace-4": {
     "return-type": "json",
-    "exec": "~/.local/share/lae/bin/lae-waybar-json workspace 4",
+    "exec": "~/.local/share/tsk/bin/tsk-waybar-json workspace 4",
     "interval": "once",
     "signal": 11,
-    "on-click": "~/.local/share/lae/bin/lae workspace go 4",
+    "on-click": "~/.local/share/tsk/bin/tsk workspace go 4",
     "tooltip": "Workspace 4"
   },
-  "custom/lae-workspace-5": {
+  "custom/tsk-workspace-5": {
     "return-type": "json",
-    "exec": "~/.local/share/lae/bin/lae-waybar-json workspace 5",
+    "exec": "~/.local/share/tsk/bin/tsk-waybar-json workspace 5",
     "interval": "once",
     "signal": 11,
-    "on-click": "~/.local/share/lae/bin/lae workspace go 5",
+    "on-click": "~/.local/share/tsk/bin/tsk workspace go 5",
     "tooltip": "Workspace 5"
   },
-  "custom/lae-workspace-6": {
+  "custom/tsk-workspace-6": {
     "return-type": "json",
-    "exec": "~/.local/share/lae/bin/lae-waybar-json workspace 6",
+    "exec": "~/.local/share/tsk/bin/tsk-waybar-json workspace 6",
     "interval": "once",
     "signal": 11,
-    "on-click": "~/.local/share/lae/bin/lae workspace go 6",
+    "on-click": "~/.local/share/tsk/bin/tsk workspace go 6",
     "tooltip": "Workspace 6"
   },
-  "custom/lae-workspace-7": {
+  "custom/tsk-workspace-7": {
     "return-type": "json",
-    "exec": "~/.local/share/lae/bin/lae-waybar-json workspace 7",
+    "exec": "~/.local/share/tsk/bin/tsk-waybar-json workspace 7",
     "interval": "once",
     "signal": 11,
-    "on-click": "~/.local/share/lae/bin/lae workspace go 7",
+    "on-click": "~/.local/share/tsk/bin/tsk workspace go 7",
     "tooltip": "Workspace 7"
   },
-  "custom/lae-workspace-8": {
+  "custom/tsk-workspace-8": {
     "return-type": "json",
-    "exec": "~/.local/share/lae/bin/lae-waybar-json workspace 8",
+    "exec": "~/.local/share/tsk/bin/tsk-waybar-json workspace 8",
     "interval": "once",
     "signal": 11,
-    "on-click": "~/.local/share/lae/bin/lae workspace go 8",
+    "on-click": "~/.local/share/tsk/bin/tsk workspace go 8",
     "tooltip": "Workspace 8"
   },
-  "custom/lae-workspace-9": {
+  "custom/tsk-workspace-9": {
     "return-type": "json",
-    "exec": "~/.local/share/lae/bin/lae-waybar-json workspace 9",
+    "exec": "~/.local/share/tsk/bin/tsk-waybar-json workspace 9",
     "interval": "once",
     "signal": 11,
-    "on-click": "~/.local/share/lae/bin/lae workspace go 9",
+    "on-click": "~/.local/share/tsk/bin/tsk workspace go 9",
     "tooltip": "Workspace 9"
   },
-  "custom/lae-workspace-10": {
+  "custom/tsk-workspace-10": {
     "return-type": "json",
-    "exec": "~/.local/share/lae/bin/lae-waybar-json workspace 10",
+    "exec": "~/.local/share/tsk/bin/tsk-waybar-json workspace 10",
     "interval": "once",
     "signal": 11,
-    "on-click": "~/.local/share/lae/bin/lae workspace go 10",
+    "on-click": "~/.local/share/tsk/bin/tsk workspace go 10",
     "tooltip": "Workspace 0"
   }
 }
