@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{LaeError, Result};
 use crate::models::slugify;
+use crate::task_paths::scratch_checkout_path;
 use crate::vcs::{detect_vcs_root, repo_label};
 use crate::xdg::{ensure_parent, expand, lae_config_dir};
 
@@ -46,7 +47,7 @@ pub fn normalize_repo_path(path: &Path) -> PathBuf {
 pub fn is_task_scratch_repo(task_id: &str, repo_path: &Path, tasks_base_dir: &Path) -> bool {
     paths_match(
         repo_path,
-        &tasks_base_dir.join(task_id).join("repo"),
+        &scratch_checkout_path(&tasks_base_dir.join(task_id)),
     )
 }
 

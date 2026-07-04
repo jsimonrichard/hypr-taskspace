@@ -1,8 +1,16 @@
-//! Detect local version-control roots (git, Jujutsu).
+//! Detect local version-control roots (git, Jujutsu) and manage task checkouts.
 
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
+use crate::error::{LaeError, Result};
 use crate::xdg::expand;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VcsKind {
+    Git,
+    Jj,
+}
 
 /// Walk upward from `start` (or the process cwd when `None`) looking for a git or jj workspace.
 pub fn detect_vcs_root(start: Option<&Path>) -> Option<PathBuf> {
@@ -13,10 +21,23 @@ pub fn detect_vcs_root(start: Option<&Path>) -> Option<PathBuf> {
 
     let mut dir = start.as_path();
     loop {
-        if dir.join(".jj").is_dir() || dir.join(".git").exists() {
+        if let Some(kind) = vcs_kind_at(dir) {
+            let _ = kind;
             return Some(dir.to_path_buf());
         }
         dir = dir.parent()?;
+    }
+}
+
+/// Which VCS owns `root` (must already be a repo root).
+pub fn vcs_kind_at(root: &Path) -> Option<VcsKind> {
+    let root = expand(root);
+    if root.join(".jj").is_dir() {
+        Some(VcsKind::Jj)
+    } else if root.join(".git").exists() {
+        Some(VcsKind::Git)
+    } else {
+        None
     }
 }
 
@@ -26,6 +47,397 @@ pub fn repo_label(path: &Path) -> String {
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| path.display().to_string())
+}
+
+/// Initialize an empty git repo for scratch tasks.
+pub fn init_scratch_repo(dest: &Path) -> Result<()> {
+    std::fs::create_dir_all(dest).map_err(|source| LaeError::Write {
+        path: dest.to_path_buf(),
+        source,
+    })?;
+    run_checked(
+        Command::new("git").args(["init", dest.to_str().unwrap_or("")]),
+        "git init",
+    )
+}
+
+/// Stable jj workspace name for a lae task checkout.
+pub fn jj_workspace_name_for_task(task_id: &str) -> String {
+    task_id.to_string()
+}
+
+/// Create a git worktree or jj workspace under `dest` linked to `source_root`.
+pub fn create_linked_checkout(
+    source_root: &Path,
+    dest: &Path,
+    workspace_name: &str,
+    kind: VcsKind,
+) -> Result<()> {
+    if dest.is_dir() {
+        return match linked_checkout_kind(dest) {
+            Some(VcsKind::Git) => Ok(()),
+            Some(VcsKind::Jj) => reconnect_jj_workspace(dest),
+            None => Err(LaeError::Other(format!(
+                "Checkout path exists but is not a git/jj workspace: {}",
+                dest.display()
+            ))),
+        };
+    }
+    if dest.exists() {
+        return Err(LaeError::Other(format!(
+            "Checkout path already exists: {}",
+            dest.display()
+        )));
+    }
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent).map_err(|source| LaeError::Write {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+
+    match kind {
+        VcsKind::Git => create_git_worktree(source_root, dest, workspace_name),
+        VcsKind::Jj => create_jj_workspace(source_root, dest, workspace_name),
+    }
+}
+
+/// Refresh a jj workspace after it became stale (reactivation / reuse).
+pub fn reconnect_jj_workspace(checkout: &Path) -> Result<()> {
+    let path = checkout.to_str().ok_or_else(|| {
+        LaeError::Other(format!("Invalid checkout path: {}", checkout.display()))
+    })?;
+    run_checked(
+        Command::new("jj").args([ "-R", path, "workspace", "update-stale"]),
+        "jj workspace update-stale",
+    )
+}
+
+/// Ensure a managed jj checkout is usable (no-op for git and non-jj paths).
+pub fn ensure_checkout_ready(checkout: &Path) -> Result<()> {
+    if linked_checkout_kind(checkout) == Some(VcsKind::Jj) {
+        reconnect_jj_workspace(checkout)?;
+    }
+    Ok(())
+}
+
+fn create_git_worktree(source_root: &Path, dest: &Path, branch: &str) -> Result<()> {
+    let branch = format!("lae-{branch}");
+    let source = source_root.to_str().ok_or_else(|| {
+        LaeError::Other(format!(
+            "Invalid source repo path: {}",
+            source_root.display()
+        ))
+    })?;
+    let dest_str = dest.to_str().ok_or_else(|| {
+        LaeError::Other(format!("Invalid checkout path: {}", dest.display()))
+    })?;
+
+    let add_new_branch = Command::new("git")
+        .args([
+            "-C",
+            source,
+            "worktree",
+            "add",
+            "-b",
+            branch.as_str(),
+            dest_str,
+        ])
+        .output();
+    match add_new_branch {
+        Ok(out) if out.status.success() => return Ok(()),
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            if !stderr.contains("already exists") {
+                return Err(LaeError::Other(format!(
+                    "git worktree add failed: {}",
+                    stderr.trim()
+                )));
+            }
+        }
+        Err(e) => {
+            return Err(LaeError::Other(format!("failed to run git worktree add: {e}")));
+        }
+    }
+
+    run_checked(
+        Command::new("git").args([
+            "-C",
+            source,
+            "worktree",
+            "add",
+            dest_str,
+            branch.as_str(),
+        ]),
+        "git worktree add",
+    )
+}
+
+fn create_jj_workspace(source_root: &Path, dest: &Path, name: &str) -> Result<()> {
+    let source = source_root.to_str().ok_or_else(|| {
+        LaeError::Other(format!(
+            "Invalid source repo path: {}",
+            source_root.display()
+        ))
+    })?;
+    let dest_str = dest.to_str().ok_or_else(|| {
+        LaeError::Other(format!("Invalid checkout path: {}", dest.display()))
+    })?;
+
+    run_checked(
+        Command::new("jj").args([
+            "-R",
+            source,
+            "workspace",
+            "add",
+            "--name",
+            name,
+            dest_str,
+        ]),
+        "jj workspace add",
+    )
+}
+
+/// Stop tracking a jj workspace without deleting files (e.g. archive).
+pub fn detach_jj_workspace(source_root: &Path, workspace_name: &str) -> Result<()> {
+    forget_jj_workspace(source_root, workspace_name)
+}
+
+/// Detach a linked checkout from its source repo without deleting files (archive).
+pub fn detach_linked_checkout(
+    checkout: &Path,
+    source_root: Option<&Path>,
+    workspace_name: Option<&str>,
+) -> Result<()> {
+    if !checkout.exists() {
+        return Ok(());
+    }
+    match linked_checkout_kind(checkout) {
+        Some(VcsKind::Jj) => {
+            let name = workspace_name
+                .map(str::to_string)
+                .or_else(|| jj_workspace_name_at(checkout).ok())
+                .unwrap_or_default();
+            if name.is_empty() {
+                return Ok(());
+            }
+            let source = source_root
+                .map(|p| p.to_path_buf())
+                .or_else(|| jj_repo_root_from_checkout(checkout))
+                .ok_or_else(|| {
+                    LaeError::Other(format!(
+                        "Could not find jj repository for {}",
+                        checkout.display()
+                    ))
+                })?;
+            forget_jj_workspace(&source, &name)
+        }
+        Some(VcsKind::Git) | None => Ok(()),
+    }
+}
+
+/// Remove a task-linked checkout (git worktree or jj workspace).
+pub fn remove_linked_checkout(
+    checkout: &Path,
+    source_root: Option<&Path>,
+    workspace_name: Option<&str>,
+) -> Result<()> {
+    if !checkout.exists() && source_root.is_none() {
+        return Ok(());
+    }
+
+    match linked_checkout_kind(checkout) {
+        Some(VcsKind::Git) if checkout.exists() => remove_git_worktree(checkout),
+        Some(VcsKind::Jj) => {
+            let name = workspace_name
+                .map(str::to_string)
+                .or_else(|| jj_workspace_name_at(checkout).ok())
+                .unwrap_or_default();
+            let source = source_root
+                .map(|p| p.to_path_buf())
+                .or_else(|| jj_repo_root_from_checkout(checkout));
+            if let Some(source) = source {
+                if !name.is_empty() {
+                    let _ = forget_jj_workspace(&source, &name);
+                }
+            }
+            if checkout.exists() {
+                std::fs::remove_dir_all(checkout).map_err(|source| LaeError::Write {
+                    path: checkout.to_path_buf(),
+                    source,
+                })?;
+            }
+            Ok(())
+        }
+        None if checkout.exists() => {
+            std::fs::remove_dir_all(checkout).map_err(|source| LaeError::Write {
+                path: checkout.to_path_buf(),
+                source,
+            })
+        }
+        _ => Ok(()),
+    }
+}
+
+fn linked_checkout_kind(checkout: &Path) -> Option<VcsKind> {
+    let checkout = expand(checkout);
+    if is_git_worktree(&checkout) {
+        Some(VcsKind::Git)
+    } else if checkout.join(".jj").is_dir() {
+        Some(VcsKind::Jj)
+    } else {
+        None
+    }
+}
+
+fn is_git_worktree(path: &Path) -> bool {
+    let git = path.join(".git");
+    git.is_file()
+}
+
+fn remove_git_worktree(checkout: &Path) -> Result<()> {
+    let path = checkout.to_str().ok_or_else(|| {
+        LaeError::Other(format!("Invalid checkout path: {}", checkout.display()))
+    })?;
+    let out = Command::new("git")
+        .args(["-C", path, "worktree", "remove", "--force", path])
+        .output()
+        .map_err(|e| LaeError::Other(format!("failed to run git worktree remove: {e}")))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    Err(LaeError::Other(format!(
+        "git worktree remove failed: {}",
+        stderr.trim()
+    )))
+}
+
+fn forget_jj_workspace(source_root: &Path, workspace_name: &str) -> Result<()> {
+    if workspace_name.is_empty() {
+        return Ok(());
+    }
+    let source = source_root.to_str().ok_or_else(|| {
+        LaeError::Other(format!(
+            "Invalid jj repository path: {}",
+            source_root.display()
+        ))
+    })?;
+    let out = Command::new("jj")
+        .args(["-R", source, "workspace", "forget", workspace_name])
+        .output()
+        .map_err(|e| LaeError::Other(format!("failed to run jj workspace forget: {e}")))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if !stderr.contains("unknown workspace") && !stderr.contains("No such workspace") {
+            eprintln!(
+                "lae: jj workspace forget {}: {}",
+                workspace_name,
+                stderr.trim()
+            );
+        }
+    }
+    Ok(())
+}
+
+fn jj_repo_root_from_checkout(checkout: &Path) -> Option<PathBuf> {
+    let path = checkout.to_str()?;
+    let out = Command::new("jj").args(["-R", path, "workspace", "root"]).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let root = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if root.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(root))
+    }
+}
+
+fn jj_workspace_name_at(checkout: &Path) -> Result<String> {
+    jj_workspace_name(checkout)
+}
+
+fn jj_workspace_name(checkout: &Path) -> Result<String> {
+    let path = checkout.to_str().ok_or_else(|| {
+        LaeError::Other(format!("Invalid checkout path: {}", checkout.display()))
+    })?;
+    let out = Command::new("jj")
+        .args(["-R", path, "workspace", "list"])
+        .output()
+        .map_err(|e| LaeError::Other(format!("failed to run jj workspace list: {e}")))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        return Err(LaeError::Other(format!(
+            "jj workspace list failed: {}",
+            stderr.trim()
+        )));
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let canonical = std::fs::canonicalize(checkout).unwrap_or_else(|_| expand(checkout));
+    for line in stdout.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let (name, rest) = line
+            .split_once(':')
+            .map(|(n, r)| (n.trim(), r.trim()))
+            .unwrap_or((line, ""));
+        let ws_path = expand(Path::new(rest.split_whitespace().next().unwrap_or(rest)));
+        let ws_canonical = std::fs::canonicalize(&ws_path).unwrap_or(ws_path);
+        if ws_canonical == canonical {
+            return Ok(name.to_string());
+        }
+    }
+    checkout
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .ok_or_else(|| {
+            LaeError::Other(format!(
+                "Could not determine jj workspace name for {}",
+                checkout.display()
+            ))
+        })
+}
+
+/// Current branch/bookmark name when available.
+pub fn current_branch(checkout: &Path) -> Option<String> {
+    let checkout = expand(checkout);
+    match vcs_kind_at(&checkout)? {
+        VcsKind::Git => {
+            let path = checkout.to_str()?;
+            let out = Command::new("git")
+                .args(["-C", path, "branch", "--show-current"])
+                .output()
+                .ok()?;
+            if !out.status.success() {
+                return None;
+            }
+            let branch = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if branch.is_empty() {
+                None
+            } else {
+                Some(branch)
+            }
+        }
+        VcsKind::Jj => None,
+    }
+}
+
+fn run_checked(cmd: &mut Command, label: &str) -> Result<()> {
+    let out = cmd
+        .output()
+        .map_err(|e| LaeError::Other(format!("failed to run {label}: {e}")))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        Err(LaeError::Other(format!(
+            "{label} failed: {}",
+            stderr.trim()
+        )))
+    }
 }
 
 #[cfg(test)]
@@ -45,6 +457,7 @@ mod tests {
             detect_vcs_root(Some(&repo.join("src"))).as_deref(),
             Some(repo.as_path())
         );
+        assert_eq!(vcs_kind_at(&repo), Some(VcsKind::Git));
     }
 
     #[test]
@@ -58,11 +471,36 @@ mod tests {
             detect_vcs_root(Some(&repo.join("src"))).as_deref(),
             Some(repo.as_path())
         );
+        assert_eq!(vcs_kind_at(&repo), Some(VcsKind::Jj));
     }
 
     #[test]
     fn detect_none_outside_repo() {
         let dir = tempdir().unwrap();
         assert!(detect_vcs_root(Some(dir.path())).is_none());
+    }
+
+    #[test]
+    fn git_worktree_roundtrip() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("main");
+        init_scratch_repo(&source).unwrap();
+        let source_str = source.to_str().unwrap();
+        for args in [
+            &["config", "user.email", "lae@test"][..],
+            &["config", "user.name", "lae"][..],
+            &["commit", "--allow-empty", "-m", "init"][..],
+        ] {
+            let mut cmd = Command::new("git");
+            cmd.arg("-C").arg(source_str);
+            cmd.args(args);
+            run_checked(&mut cmd, "git").unwrap();
+        }
+        let dest = dir.path().join("tasks").join("t1").join("workspace").join("main");
+        create_linked_checkout(&source, &dest, "t1", VcsKind::Git).unwrap();
+        assert!(dest.is_dir());
+        assert!(is_git_worktree(&dest));
+        remove_linked_checkout(&dest, Some(&source), Some("t1")).unwrap();
+        assert!(!dest.exists());
     }
 }

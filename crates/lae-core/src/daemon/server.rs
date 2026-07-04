@@ -281,7 +281,12 @@ fn dispatch(
                 .unwrap_or(true);
             let repo = crate::task_repo::TaskRepoSource::from_daemon_params(&params)?;
             let cwd = crate::task_repo::TaskRepoSource::cwd_from_daemon_params(&params);
-            let task = svc.create_task(name, switch, repo, cwd.as_deref())?;
+            let create_worktree = params
+                .get("create_worktree")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            let repo_options = crate::task_repo::TaskRepoOptions { create_worktree };
+            let task = svc.create_task(name, switch, repo, cwd.as_deref(), repo_options)?;
             Ok(serde_json::to_value(task).map_err(|e| LaeError::Other(e.to_string()))?)
         }
         "switch_task" => {
@@ -332,6 +337,16 @@ fn dispatch(
 
         "reset_navigation_layout" => {
             svc.reset_navigation_layout()?;
+            Ok(json!({ "ok": true }))
+        }
+
+        "open_terminal" => {
+            let task_id = params.get("task_id").and_then(|v| v.as_str());
+            let host = params
+                .get("host")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            svc.open_terminal(task_id, host)?;
             Ok(json!({ "ok": true }))
         }
 

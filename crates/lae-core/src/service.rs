@@ -180,6 +180,7 @@ impl TaskService {
         switch: bool,
         repo: crate::task_repo::TaskRepoSource,
         cwd: Option<&Path>,
+        repo_options: crate::task_repo::TaskRepoOptions,
     ) -> Result<Task> {
         let mut state = self.load_state()?;
         let active_count = state
@@ -197,7 +198,8 @@ impl TaskService {
         let task_id = self.registry.unique_task_id(&state, name);
         let task_home = self.config.tasks_base_dir.join(&task_id);
 
-        let (repo_path, create_repo_dir) = repo.resolve(&task_home, cwd)?;
+        let resolved = repo.resolve(&task_home, cwd, &repo_options)?;
+        let repo_path = resolved.checkout_path.clone();
         let repo_url = repo.resolve_url();
 
         let agent_dir = task_home.join(".lae");
@@ -216,12 +218,14 @@ impl TaskService {
                 source,
             })?;
         }
-        if create_repo_dir {
-            std::fs::create_dir_all(&repo_path).map_err(|source| LaeError::Write {
-                path: repo_path.clone(),
-                source,
-            })?;
-        }
+
+        crate::task_repo::provision_task_checkout(&resolved, &task_id)?;
+        let branch = crate::vcs::current_branch(&repo_path);
+        let source_repo_path = match &resolved.setup {
+            crate::task_repo::TaskRepoSetup::Linked { source_root, .. }
+            | crate::task_repo::TaskRepoSetup::Direct { source_root } => Some(source_root.clone()),
+            crate::task_repo::TaskRepoSetup::Scratch => None,
+        };
 
         let now = Utc::now();
         let mut task = Task {
@@ -230,7 +234,8 @@ impl TaskService {
             status: TaskStatus::Active,
             repo_url,
             repo_path,
-            branch: None,
+            source_repo_path,
+            branch,
             container_name: format!("{}-{task_id}", self.config.container_prefix),
             workspace_count: self.config.default_workspace_count,
             browser_profile: None,
@@ -280,6 +285,9 @@ impl TaskService {
                 task.id, task.container_name
             );
         }
+        if let Err(err) = crate::task_cleanup::detach_task_checkout(&self.config, &task) {
+            eprintln!("lae: archive task {}: detach checkout: {err}", task.id);
+        }
         crate::task_cleanup::purge_task_windows(&mut state, task_id);
 
         if let Some(entry) = state.tasks.get_mut(task_id) {
@@ -316,6 +324,9 @@ impl TaskService {
                 task.id, task.container_name
             );
         }
+        if let Err(err) = crate::task_cleanup::remove_task_checkout(&self.config, &task) {
+            eprintln!("lae: delete task {}: remove checkout: {err}", task.id);
+        }
         if let Err(err) = crate::task_cleanup::remove_task_data_dir(&self.config, &task) {
             eprintln!("lae: delete task {}: remove data dir: {err}", task.id);
         }
@@ -344,6 +355,34 @@ impl TaskService {
             .filter(|t| t.status == TaskStatus::Archived)
             .cloned()
             .collect())
+    }
+
+    pub fn open_terminal(&self, task_id: Option<&str>, host: bool) -> Result<()> {
+        let mut state = self.load_state()?;
+        if host {
+            return crate::terminal::launch_host_terminal(None);
+        }
+
+        if let Some(tid) = task_id {
+            let task = state
+                .tasks
+                .get(tid)
+                .cloned()
+                .ok_or_else(|| LaeError::Other(format!("Unknown task: {tid}")))?;
+            return crate::terminal::launch_task_terminal(&task);
+        }
+
+        crate::context_sync::sync_from_active_workspace(&mut state);
+
+        if state.context_mode == ContextMode::Task {
+            if let Some(tid) = state.current_task_id.as_deref() {
+                if let Some(task) = state.tasks.get(tid) {
+                    return crate::terminal::launch_task_terminal(task);
+                }
+            }
+        }
+
+        crate::terminal::launch_host_terminal(None)
     }
 
     pub fn switch_task(&self, task_id: &str) -> Result<Task> {
@@ -461,6 +500,7 @@ mod tests {
                 false,
                 crate::task_repo::TaskRepoSource::Scratch,
                 None,
+                crate::task_repo::TaskRepoOptions::default(),
             )
             .unwrap();
         assert!(task.id.starts_with('t'));
@@ -487,6 +527,7 @@ mod tests {
                 true,
                 crate::task_repo::TaskRepoSource::Scratch,
                 None,
+                crate::task_repo::TaskRepoOptions::default(),
             )
             .unwrap();
         let state = svc.load_state().unwrap();
@@ -504,6 +545,7 @@ mod tests {
                 true,
                 crate::task_repo::TaskRepoSource::Scratch,
                 None,
+                crate::task_repo::TaskRepoOptions::default(),
             )
             .unwrap();
         svc.archive_task(&task.id).unwrap();
@@ -525,6 +567,7 @@ mod tests {
                 false,
                 crate::task_repo::TaskRepoSource::Scratch,
                 None,
+                crate::task_repo::TaskRepoOptions::default(),
             )
             .unwrap();
         let task_home = dir.path().join("tasks").join(&task.id);
@@ -546,6 +589,7 @@ mod tests {
                 true,
                 crate::task_repo::TaskRepoSource::Scratch,
                 None,
+                crate::task_repo::TaskRepoOptions::default(),
             )
             .unwrap();
         svc.delete_task(&task.id).unwrap();
@@ -556,10 +600,11 @@ mod tests {
     }
 
     #[test]
-    fn create_task_with_path_uses_checkout_not_scratch() {
+    fn create_task_with_path_creates_linked_worktree() {
         let dir = tempdir().unwrap();
         let checkout = dir.path().join("checkout");
-        std::fs::create_dir_all(checkout.join(".git")).unwrap();
+        crate::vcs::init_scratch_repo(&checkout).unwrap();
+        run_git_commit(&checkout);
         let svc = test_service(dir.path());
         let task = svc
             .create_task(
@@ -567,12 +612,60 @@ mod tests {
                 false,
                 crate::task_repo::TaskRepoSource::Path(checkout.clone()),
                 None,
+                crate::task_repo::TaskRepoOptions::default(),
             )
             .unwrap();
         assert_eq!(task.name, "My Feature");
         assert!(task.id.starts_with('t'));
+        let expected_repo = dir
+            .path()
+            .join("tasks")
+            .join(&task.id)
+            .join("workspace")
+            .join("checkout");
+        assert_eq!(task.repo_path, expected_repo);
+        assert!(expected_repo.join(".git").is_file());
+        assert_eq!(
+            crate::vcs::detect_vcs_root(Some(&expected_repo)).as_deref(),
+            Some(expected_repo.as_path())
+        );
+    }
+
+    #[test]
+    fn create_task_with_path_without_worktree_uses_main_repo() {
+        let dir = tempdir().unwrap();
+        let checkout = dir.path().join("checkout");
+        crate::vcs::init_scratch_repo(&checkout).unwrap();
+        run_git_commit(&checkout);
+        let svc = test_service(dir.path());
+        let task = svc
+            .create_task(
+                "Direct",
+                false,
+                crate::task_repo::TaskRepoSource::Path(checkout.clone()),
+                None,
+                crate::task_repo::TaskRepoOptions {
+                    create_worktree: false,
+                },
+            )
+            .unwrap();
         assert_eq!(task.repo_path, checkout);
-        let scratch = dir.path().join("tasks").join(&task.id).join("repo");
-        assert!(!scratch.exists() || !scratch.is_dir());
+        assert_eq!(task.source_repo_path.as_deref(), Some(checkout.as_path()));
+    }
+
+    fn run_git_commit(repo: &std::path::Path) {
+        let path = repo.to_str().unwrap();
+        std::process::Command::new("git")
+            .args(["-C", path, "config", "user.email", "lae@test"])
+            .status()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["-C", path, "config", "user.name", "lae"])
+            .status()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["-C", path, "commit", "--allow-empty", "-m", "init"])
+            .status()
+            .unwrap();
     }
 }

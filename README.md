@@ -91,7 +91,7 @@ lae task tui                         # run TUI in the current terminal
 lae task tui-launch                  # open TUI in your terminal emulator ([terminal].command)
 lae task new my-feature              # uses git/jj repo from cwd (or scratch if none)
 lae task new other --no-switch       # create without switching
-lae task new notes --scratch         # isolated repo under ~/lae-tasks/<id>/repo
+lae task new notes --scratch         # isolated repo under ~/lae-tasks/<id>/workspace/scratch
 lae task new fix --repo-path /path/to/checkout
 lae repo root                        # print detected git/jj root for cwd
 lae task list
@@ -99,7 +99,7 @@ lae task switch my-feature
 lae task archive my-feature
 ```
 
-Task homes are created under `~/lae-tasks/<id>/` for notes and agent metadata. Repo settings live in each checkout at `.lae/repo.toml`; `~/.config/lae/repo-bookmarks.txt` only lists paths.
+Task homes are created under `~/lae-tasks/<id>/` for notes and agent metadata. Linked git/jj checkouts live under `~/lae-tasks/<id>/workspace/<repo-folder-name>` (scratch tasks use `workspace/scratch`). Repo settings live in each checkout at `.lae/repo.toml`; `~/.config/lae/repo-bookmarks.txt` only lists paths.
 
 ```bash
 lae repo add                         # register cwd (writes .lae/repo.toml in the checkout)

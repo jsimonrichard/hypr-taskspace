@@ -4,7 +4,10 @@ use serde_json::{json, Value};
 
 use crate::error::{LaeError, Result};
 use crate::repos::normalize_repo_path;
-use crate::vcs::detect_vcs_root;
+use crate::task_paths::{linked_checkout_path, scratch_checkout_path};
+use crate::vcs::{
+    create_linked_checkout, detect_vcs_root, init_scratch_repo, vcs_kind_at, VcsKind,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TaskRepoSource {
@@ -16,34 +19,111 @@ pub enum TaskRepoSource {
     Path(PathBuf),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TaskRepoSetup {
+    Scratch,
+    /// Isolated git worktree or jj workspace under the task home.
+    Linked {
+        source_root: PathBuf,
+        kind: VcsKind,
+    },
+    /// Use the registered checkout directly (no worktree/workspace).
+    Direct {
+        source_root: PathBuf,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TaskRepoOptions {
+    pub create_worktree: bool,
+}
+
+impl Default for TaskRepoOptions {
+    fn default() -> Self {
+        Self {
+            create_worktree: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedTaskRepo {
+    pub checkout_path: PathBuf,
+    pub setup: TaskRepoSetup,
+}
+
 impl TaskRepoSource {
     pub fn resolve(
         &self,
         task_home: &Path,
         cwd: Option<&Path>,
-    ) -> Result<(PathBuf, bool)> {
-        let (path, create_dir) = match self {
-            Self::Scratch => (task_home.join("repo"), true),
+        options: &TaskRepoOptions,
+    ) -> Result<ResolvedTaskRepo> {
+        let setup = match self {
+            Self::Scratch => TaskRepoSetup::Scratch,
             Self::Auto => {
                 if let Some(root) = detect_vcs_root(cwd) {
-                    (root, false)
+                    if options.create_worktree {
+                        let kind = vcs_kind_at(&root).ok_or_else(|| {
+                            LaeError::Other(format!(
+                                "Detected repo has no supported VCS: {}",
+                                root.display()
+                            ))
+                        })?;
+                        TaskRepoSetup::Linked {
+                            source_root: root,
+                            kind,
+                        }
+                    } else {
+                        TaskRepoSetup::Direct { source_root: root }
+                    }
                 } else {
-                    (task_home.join("repo"), true)
+                    TaskRepoSetup::Scratch
                 }
             }
             Self::Path(path) => {
                 let path = normalize_repo_path(path);
-                let root = detect_vcs_root(Some(&path)).unwrap_or(path);
+                let root = detect_vcs_root(Some(&path)).unwrap_or(path.clone());
                 if !root.is_dir() {
                     return Err(LaeError::Other(format!(
                         "Repo path does not exist: {}",
                         root.display()
                     )));
                 }
-                (root, false)
+                if options.create_worktree {
+                    let kind = vcs_kind_at(&root).ok_or_else(|| {
+                        LaeError::Other(format!(
+                            "Not a git or jj repo: {}",
+                            root.display()
+                        ))
+                    })?;
+                    TaskRepoSetup::Linked {
+                        source_root: root,
+                        kind,
+                    }
+                } else {
+                    let kind = vcs_kind_at(&root);
+                    if kind.is_none() {
+                        return Err(LaeError::Other(format!(
+                            "Not a git or jj repo: {}",
+                            root.display()
+                        )));
+                    }
+                    TaskRepoSetup::Direct { source_root: root }
+                }
             }
         };
-        Ok((path, create_dir))
+        let checkout_path = match &setup {
+            TaskRepoSetup::Scratch => scratch_checkout_path(task_home),
+            TaskRepoSetup::Linked { source_root, .. } => {
+                linked_checkout_path(task_home, source_root)
+            }
+            TaskRepoSetup::Direct { source_root } => source_root.clone(),
+        };
+        Ok(ResolvedTaskRepo {
+            checkout_path,
+            setup,
+        })
     }
 
     pub fn to_daemon_params(&self, cwd: Option<&Path>) -> Value {
@@ -98,6 +178,18 @@ impl TaskRepoSource {
     }
 }
 
+/// Create the on-disk checkout for a task (scratch git repo or linked worktree/workspace).
+pub fn provision_task_checkout(resolved: &ResolvedTaskRepo, task_id: &str) -> Result<()> {
+    match &resolved.setup {
+        TaskRepoSetup::Scratch => init_scratch_repo(&resolved.checkout_path),
+        TaskRepoSetup::Direct { .. } => Ok(()),
+        TaskRepoSetup::Linked {
+            source_root,
+            kind,
+        } => create_linked_checkout(source_root, &resolved.checkout_path, task_id, *kind),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -119,5 +211,51 @@ mod tests {
         let params = TaskRepoSource::Auto.to_daemon_params(Some(&cwd));
         assert_eq!(params["repo"], "auto");
         assert_eq!(params["cwd"], "/tmp/work");
+    }
+
+    #[test]
+    fn resolve_auto_uses_linked_checkout_under_task_home() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("project");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        let task_home = dir.path().join("tasks").join("tabc");
+        let resolved = TaskRepoSource::Auto
+            .resolve(&task_home, Some(&repo), &TaskRepoOptions::default())
+            .unwrap();
+        assert_eq!(
+            resolved.checkout_path,
+            task_home.join("workspace").join("project")
+        );
+        assert_eq!(
+            resolved.setup,
+            TaskRepoSetup::Linked {
+                source_root: repo,
+                kind: VcsKind::Git,
+            }
+        );
+    }
+
+    #[test]
+    fn resolve_auto_without_worktree_uses_main_repo() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("project");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        let task_home = dir.path().join("tasks").join("tabc");
+        let resolved = TaskRepoSource::Auto
+            .resolve(
+                &task_home,
+                Some(&repo),
+                &TaskRepoOptions {
+                    create_worktree: false,
+                },
+            )
+            .unwrap();
+        assert_eq!(resolved.checkout_path, repo);
+        assert_eq!(
+            resolved.setup,
+            TaskRepoSetup::Direct {
+                source_root: repo,
+            }
+        );
     }
 }

@@ -48,6 +48,9 @@ pub struct Task {
     pub status: TaskStatus,
     pub repo_url: Option<String>,
     pub repo_path: PathBuf,
+    /// Registered checkout the task was created from (git/jj source root).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_repo_path: Option<PathBuf>,
     pub branch: Option<String>,
     pub container_name: String,
     pub workspace_count: u32,

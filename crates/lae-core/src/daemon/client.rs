@@ -234,10 +234,20 @@ impl DaemonClient {
         Ok(())
     }
 
-    pub fn create_task(&self, name: &str, switch: bool, repo: crate::task_repo::TaskRepoSource) -> Result<Task> {
+    pub fn create_task(
+        &self,
+        name: &str,
+        switch: bool,
+        repo: crate::task_repo::TaskRepoSource,
+        repo_options: crate::task_repo::TaskRepoOptions,
+    ) -> Result<Task> {
         ensure_daemon()?;
         let cwd = std::env::current_dir().ok();
-        let mut body = json!({ "name": name, "switch": switch });
+        let mut body = json!({
+            "name": name,
+            "switch": switch,
+            "create_worktree": repo_options.create_worktree,
+        });
         if let Value::Object(mut repo_params) = repo.to_daemon_params(cwd.as_deref()) {
             body.as_object_mut().unwrap().append(&mut repo_params);
         }
@@ -259,6 +269,18 @@ impl DaemonClient {
     pub fn delete_task(&self, task_id: &str) -> Result<()> {
         ensure_daemon()?;
         daemon_request("delete_task", json!({ "task_id": task_id })).map(|_| ())
+    }
+
+    pub fn open_terminal(&self, task_id: Option<&str>, host: bool) -> Result<()> {
+        if is_daemon_running() {
+            let mut body = json!({ "host": host });
+            if let Some(task_id) = task_id {
+                body["task_id"] = json!(task_id);
+            }
+            daemon_request("open_terminal", body).map(|_| ())
+        } else {
+            self.direct.open_terminal(task_id, host)
+        }
     }
 
     pub fn preview_task_teardown(

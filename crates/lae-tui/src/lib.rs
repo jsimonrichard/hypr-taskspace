@@ -2,6 +2,7 @@ mod app;
 mod daemon_check;
 mod grep_dir_picker;
 mod modal;
+mod new_task_form;
 mod ui;
 
 use std::io::{self, stdout, ErrorKind, Stdout};

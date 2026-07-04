@@ -157,6 +157,7 @@ mod tests {
                 status: TaskStatus::Active,
                 repo_url: None,
                 repo_path: "/tmp".into(),
+                source_repo_path: None,
                 branch: None,
                 container_name: "lae-auth-fix".into(),
                 workspace_count: 3,

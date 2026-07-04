@@ -117,6 +117,10 @@ impl Registry {
                 [],
             )?;
         }
+        let task_cols = table_columns(conn, "tasks")?;
+        if !task_cols.iter().any(|c| c == "source_repo_path") {
+            conn.execute("ALTER TABLE tasks ADD COLUMN source_repo_path TEXT", [])?;
+        }
         Ok(())
     }
 
@@ -320,13 +324,18 @@ fn task_from_row(row: &rusqlite::Row<'_>) -> Result<Task> {
             .get::<_, Option<String>>(11)?
             .map(PathBuf::from),
         ports,
+        source_repo_path: row
+            .get::<_, Option<String>>(13)
+            .ok()
+            .flatten()
+            .map(PathBuf::from),
     })
 }
 
 fn upsert_task(conn: &Connection, task: &Task) -> Result<()> {
     let ports = serde_json::to_string(&task.ports).map_err(|e| LaeError::Other(e.to_string()))?;
     conn.execute(
-        "INSERT OR REPLACE INTO tasks (id, name, status, repo_url, repo_path, branch, container_name, desktop_count, browser_profile, created_at, last_active_at, agent_notes_path, ports) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+        "INSERT OR REPLACE INTO tasks (id, name, status, repo_url, repo_path, branch, container_name, desktop_count, browser_profile, created_at, last_active_at, agent_notes_path, ports, source_repo_path) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         params![
             task.id,
             task.name,
@@ -341,6 +350,7 @@ fn upsert_task(conn: &Connection, task: &Task) -> Result<()> {
             task.last_active_at.to_rfc3339(),
             task.agent_notes_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
             ports,
+            task.source_repo_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
         ],
     )?;
     Ok(())

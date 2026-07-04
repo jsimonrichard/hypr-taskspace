@@ -14,6 +14,7 @@ pub mod models;
 pub mod registry;
 pub mod repos;
 pub mod service;
+pub mod task_paths;
 pub mod task_repo;
 pub mod vcs;
 pub mod state_notify;
@@ -46,8 +47,14 @@ pub use repos::{
     repo_config_path, repo_display_path, save_repo_config, unregister_repo, RegisteredRepo,
     unique_repo_id,
 };
-pub use task_repo::{TaskRepoSource};
-pub use vcs::{detect_vcs_root, repo_label};
+pub use task_paths::{
+    is_managed_task_checkout, linked_checkout_path, scratch_checkout_path, task_workspace_dir,
+    SCRATCH_DIR_NAME,
+};
+pub use task_repo::{
+    provision_task_checkout, ResolvedTaskRepo, TaskRepoOptions, TaskRepoSetup, TaskRepoSource,
+};
+pub use vcs::{current_branch, detect_vcs_root, repo_label, vcs_kind_at, VcsKind};
 pub use registry::Registry;
 pub use service::{MenuTask, TaskService};
 pub use state_notify::{
@@ -59,7 +66,7 @@ pub use workspace_nav::{
     workspace_go, workspace_goto_name, workspace_next, workspace_prev,
 };
 pub use binary::resolve_lae_binary;
-pub use terminal::launch_task_tui;
+pub use terminal::{launch_host_terminal, launch_task_terminal, launch_task_tui};
 pub use context_sync::sync_from_workspace_name;
 pub use taskspaces::visible_default_workspace_count;
 pub use trace::{

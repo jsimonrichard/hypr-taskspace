@@ -8,6 +8,7 @@ use lae_core::{
 };
 use crate::grep_dir_picker::{GrepDirPicker, PickerAction};
 use crate::modal::{arrow_nav_delta, ModalButtonAction, ModalButtonBar};
+use crate::new_task_form::{cycle_form_focus, initial_form_focus, NewTaskFormFocus};
 use crate::ui;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,8 +53,9 @@ pub enum Screen {
         name: String,
         repo: TaskRepoSource,
         repo_label: String,
+        create_worktree: bool,
         buttons: ModalButtonBar,
-        actions_focused: bool,
+        focus: NewTaskFormFocus,
     },
     ConfirmDeleteRepo {
         repo_path: PathBuf,
@@ -161,7 +163,11 @@ impl App {
             active_tasks
                 .iter()
                 .chain(archived_tasks.iter())
-                .map(|t| t.repo_path.as_path()),
+                .map(|t| {
+                    t.source_repo_path
+                        .as_deref()
+                        .unwrap_or(t.repo_path.as_path())
+                }),
         );
         self.refresh_repos(task_paths)?;
 
@@ -188,7 +194,13 @@ impl App {
         for repo in &self.repos {
             let mut repo_tasks: Vec<&Task> = active_tasks
                 .iter()
-                .filter(|t| paths_match(&t.repo_path, &repo_display_path(repo)))
+                .filter(|t| {
+                    let key = t
+                        .source_repo_path
+                        .as_deref()
+                        .unwrap_or(t.repo_path.as_path());
+                    paths_match(key, &repo_display_path(repo))
+                })
                 .collect();
             repo_tasks.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
 
@@ -524,90 +536,120 @@ impl App {
         let Some(choice) = choices.get(sel).cloned() else {
             return Ok(());
         };
+        let create_worktree = choice.repo.is_some();
         let (repo, repo_label_text) = match choice.repo {
             None => (
                 TaskRepoSource::Scratch,
                 "Scratch workspace".into(),
             ),
             Some(path) => (
-                TaskRepoSource::Path(path.clone()),
+                TaskRepoSource::Path(path),
                 choice.label,
             ),
         };
+        let focus = initial_form_focus(&repo);
         self.screen = Screen::NewTaskName {
             name: String::new(),
             repo,
             repo_label: repo_label_text,
+            create_worktree,
             buttons: ModalButtonBar::cancel_create(),
-            actions_focused: false,
+            focus,
         };
         Ok(())
     }
 
+    fn move_new_task_form_focus(&mut self, delta: i32) {
+        let Screen::NewTaskName {
+            repo,
+            focus,
+            buttons,
+            ..
+        } = &mut self.screen
+        else {
+            return;
+        };
+        *focus = cycle_form_focus(*focus, repo, delta);
+        if *focus == NewTaskFormFocus::Buttons {
+            buttons.enter_bar();
+        }
+    }
+
     fn handle_new_task_name_key(&mut self, key: KeyEvent) -> Result<()> {
-        if let Screen::NewTaskName {
-            actions_focused, ..
-        } = &self.screen
-        {
-            if *actions_focused {
+        let Screen::NewTaskName { focus, .. } = &self.screen else {
+            return Ok(());
+        };
+        let current_focus = *focus;
+
+        if key.code == KeyCode::Esc {
+            self.screen = Screen::Main;
+            return Ok(());
+        }
+
+        if matches!(
+            key.code,
+            KeyCode::Tab | KeyCode::BackTab | KeyCode::Up | KeyCode::Down
+        ) {
+            let delta = match key.code {
+                KeyCode::Tab | KeyCode::Down => 1,
+                KeyCode::BackTab | KeyCode::Up => -1,
+                _ => unreachable!(),
+            };
+            self.move_new_task_form_focus(delta);
+            return Ok(());
+        }
+
+        match current_focus {
+            NewTaskFormFocus::Worktree => match key.code {
+                KeyCode::Char(' ') => {
+                    if let Screen::NewTaskName { create_worktree, .. } = &mut self.screen {
+                        *create_worktree = !*create_worktree;
+                    }
+                }
+                KeyCode::Enter => self.move_new_task_form_focus(1),
+                _ => {}
+            },
+            NewTaskFormFocus::Name => match key.code {
+                KeyCode::Enter => self.submit_new_task_name()?,
+                KeyCode::Backspace => {
+                    if let Screen::NewTaskName { name, .. } = &mut self.screen {
+                        name.pop();
+                    }
+                }
+                KeyCode::Char(ch) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    if let Screen::NewTaskName { name, .. } = &mut self.screen {
+                        name.push(ch);
+                    }
+                }
+                _ => {}
+            },
+            NewTaskFormFocus::Buttons => {
                 if let Some(delta) = arrow_nav_delta(key) {
                     if let Screen::NewTaskName { buttons, .. } = &mut self.screen {
                         buttons.navigate(delta);
                     }
                     return Ok(());
                 }
-            }
-        }
-
-        if let Screen::NewTaskName {
-            buttons,
-            actions_focused,
-            ..
-        } = &mut self.screen
-        {
-            if *actions_focused {
-                let action = buttons.handle_key(key);
-                match action {
-                    Some(ModalButtonAction::Cancel) => self.screen = Screen::Main,
-                    Some(ModalButtonAction::Confirm) => self.submit_new_task_name()?,
-                    None => {}
-                }
-                return Ok(());
-            }
-        }
-
-        match key.code {
-            KeyCode::Esc => self.screen = Screen::Main,
-            KeyCode::Tab => {
-                if let Screen::NewTaskName {
-                    actions_focused,
-                    buttons,
-                    ..
-                } = &mut self.screen
-                {
-                    *actions_focused = true;
-                    buttons.enter_bar();
+                if let Screen::NewTaskName { buttons, .. } = &mut self.screen {
+                    match buttons.handle_key(key) {
+                        Some(ModalButtonAction::Cancel) => self.screen = Screen::Main,
+                        Some(ModalButtonAction::Confirm) => self.submit_new_task_name()?,
+                        None => {}
+                    }
                 }
             }
-            KeyCode::Enter => self.submit_new_task_name()?,
-            KeyCode::Backspace => {
-                if let Screen::NewTaskName { name, .. } = &mut self.screen {
-                    name.pop();
-                }
-            }
-            KeyCode::Char(ch) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                if let Screen::NewTaskName { name, .. } = &mut self.screen {
-                    name.push(ch);
-                }
-            }
-            _ => {}
         }
         Ok(())
     }
 
     fn submit_new_task_name(&mut self) -> Result<()> {
-        let (name, repo) = match &self.screen {
-            Screen::NewTaskName { name, repo, .. } => (name.trim().to_string(), repo.clone()),
+        let (name, repo, create_worktree) = match &self.screen {
+            Screen::NewTaskName {
+                name,
+                repo,
+                create_worktree,
+                ..
+            } => (name.trim().to_string(), repo.clone(), *create_worktree),
             _ => return Ok(()),
         };
         if name.is_empty() {
@@ -615,7 +657,8 @@ impl App {
             self.screen = Screen::Main;
             return Ok(());
         }
-        match self.client.create_task(&name, true, repo) {
+        let repo_options = lae_core::TaskRepoOptions { create_worktree };
+        match self.client.create_task(&name, true, repo, repo_options) {
             Ok(_task) => {
                 self.should_quit = true;
             }

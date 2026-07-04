@@ -8,6 +8,10 @@ use crate::distrobox;
 use crate::error::{LaeError, Result};
 use crate::hyprland::{self, HyprWindow};
 use crate::models::{SessionState, Task};
+use crate::task_paths::is_managed_task_checkout;
+use crate::vcs::{
+    detach_linked_checkout, jj_workspace_name_for_task, remove_linked_checkout,
+};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TaskTeardownPreview {
@@ -94,6 +98,24 @@ pub fn purge_task_session_keys(state: &mut SessionState, task_id: &str) {
         state.current_task_id = None;
         state.context_mode = crate::models::ContextMode::Default;
     }
+}
+
+pub fn detach_task_checkout(config: &LaeConfig, task: &Task) -> Result<()> {
+    if !is_managed_task_checkout(&task.repo_path, &config.tasks_base_dir, &task.id) {
+        return Ok(());
+    }
+    let source = task.source_repo_path.as_deref();
+    let name = jj_workspace_name_for_task(&task.id);
+    detach_linked_checkout(&task.repo_path, source, Some(&name))
+}
+
+pub fn remove_task_checkout(config: &LaeConfig, task: &Task) -> Result<()> {
+    if !is_managed_task_checkout(&task.repo_path, &config.tasks_base_dir, &task.id) {
+        return Ok(());
+    }
+    let source = task.source_repo_path.as_deref();
+    let name = jj_workspace_name_for_task(&task.id);
+    remove_linked_checkout(&task.repo_path, source, Some(&name))
 }
 
 pub fn remove_task_data_dir(config: &LaeConfig, task: &Task) -> Result<()> {

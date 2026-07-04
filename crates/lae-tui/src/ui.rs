@@ -7,6 +7,7 @@ use ratatui::Frame;
 use crate::app::{App, ListEntry, Panel, Screen, TaskRow};
 use crate::grep_dir_picker;
 use crate::modal::{draw_button_bar, ModalButtonBar};
+use crate::new_task_form::{worktree_field_visible, NewTaskFormFocus};
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
     match &mut app.screen {
@@ -322,26 +323,90 @@ fn draw_new_task_name(frame: &mut Frame, area: Rect, app: &App) {
     let Screen::NewTaskName {
         name,
         repo_label,
+        repo,
+        create_worktree,
         buttons,
-        actions_focused,
-        ..
+        focus,
     } = &app.screen
     else {
         return;
     };
 
-    let popup = centered_rect(70, 26, area);
-    let body = format!("Repo: {repo_label}\n\nName: {name}_");
-    draw_modal_dialog(
+    let popup = centered_rect(70, 32, area);
+    frame.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .title(" New task ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Green));
+
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    let chunks = Layout::vertical([
+        Constraint::Min(1),
+        Constraint::Length(1),
+    ])
+    .split(inner);
+
+    let mut lines = vec![
+        Line::from(vec![
+            Span::styled("Repo  ", Style::default().fg(Color::DarkGray)),
+            Span::raw(repo_label.as_str()),
+        ]),
+        Line::from(""),
+    ];
+
+    let name_focused = *focus == NewTaskFormFocus::Name;
+    lines.push(Line::from(vec![
+        Span::raw(if name_focused { "▸ " } else { "  " }),
+        Span::styled("Name  ", Style::default().fg(Color::DarkGray)),
+        Span::styled(format!("{name}_"), field_style(name_focused)),
+    ]));
+    lines.push(Line::from(""));
+
+    if worktree_field_visible(repo) {
+        let focused = *focus == NewTaskFormFocus::Worktree;
+        let marker = if focused { "▸ " } else { "  " };
+        let toggle = if *create_worktree { "[x]" } else { "[ ]" };
+        let label = if *create_worktree {
+            "Create git worktree / jj workspace under task home"
+        } else {
+            "Use main repo directly"
+        };
+        lines.push(Line::from(vec![
+            Span::raw(marker),
+            Span::styled(
+                format!("{toggle} {label}"),
+                field_style(focused),
+            ),
+            Span::styled("  Space", Style::default().fg(Color::DarkGray)),
+        ]));
+        lines.push(Line::from(""));
+    }
+
+    lines.push(Line::from(Span::styled(
+        "Tab / ↑↓ move focus",
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), chunks[0]);
+    draw_button_bar(
         frame,
-        area,
-        popup,
-        "New task",
-        Color::Green,
-        &body,
+        chunks[1],
         buttons,
-        *actions_focused,
+        *focus == NewTaskFormFocus::Buttons,
     );
+}
+
+fn field_style(focused: bool) -> Style {
+    if focused {
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::Gray)
+    }
 }
 
 fn draw_confirm_delete_repo(frame: &mut Frame, area: Rect, app: &App) {

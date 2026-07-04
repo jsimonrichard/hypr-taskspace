@@ -143,6 +143,11 @@ enum TaskCommands {
         scratch: bool,
         #[arg(long, help = "Use a specific checkout path instead of detecting git/jj from cwd")]
         repo_path: Option<std::path::PathBuf>,
+        #[arg(
+            long,
+            help = "Use the main repo checkout directly instead of creating a git worktree / jj workspace"
+        )]
+        no_worktree: bool,
     },
     List {
         #[arg(long)]
@@ -167,6 +172,13 @@ enum TaskCommands {
     /// Open the task manager TUI in a terminal window (used by SUPER+Tab)
     #[command(name = "tui-launch")]
     TuiLaunch,
+    /// Open a terminal in the current context (task checkout or ~)
+    Terminal {
+        #[arg(value_name = "NAME_OR_ID")]
+        name_or_id: Option<String>,
+        #[arg(long, help = "Open a plain host terminal (not scoped to a task)")]
+        host: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -319,7 +331,8 @@ fn run() -> Result<()> {
                 no_switch,
                 scratch,
                 repo_path,
-            } => cmd_task_new(&name, !no_switch, scratch, repo_path.as_deref()),
+                no_worktree,
+            } => cmd_task_new(&name, !no_switch, scratch, repo_path.as_deref(), no_worktree),
             TaskCommands::List { json, archived } => cmd_task_list(json, archived),
             TaskCommands::Switch { name_or_id } => cmd_task_switch(&name_or_id),
             TaskCommands::Current => cmd_task_current(),
@@ -327,6 +340,9 @@ fn run() -> Result<()> {
             TaskCommands::Delete { name_or_id } => cmd_task_delete(&name_or_id),
             TaskCommands::Menu | TaskCommands::TuiLaunch => cmd_task_tui_launch(),
             TaskCommands::Tui => cmd_task_tui(),
+            TaskCommands::Terminal { name_or_id, host } => {
+                cmd_task_terminal(name_or_id.as_deref(), host)
+            }
         },
         Commands::Repo { command } => match command {
             RepoCommands::Add { dir } => cmd_repo_add(dir.as_deref()),
@@ -658,6 +674,7 @@ fn cmd_task_new(
     switch: bool,
     scratch: bool,
     repo_path: Option<&std::path::Path>,
+    no_worktree: bool,
 ) -> Result<()> {
     if scratch && repo_path.is_some() {
         return Err(LaeError::Other(
@@ -670,7 +687,10 @@ fn cmd_task_new(
         (false, None) => TaskRepoSource::Auto,
         (true, Some(_)) => unreachable!(),
     };
-    let task = client()?.create_task(name, switch, repo)?;
+    let repo_options = lae_core::TaskRepoOptions {
+        create_worktree: !no_worktree,
+    };
+    let task = client()?.create_task(name, switch, repo, repo_options)?;
     println!(
         "Created task {} → workspaces {}-1..{}-{}",
         task.id,
@@ -863,6 +883,17 @@ fn cmd_task_current() -> Result<()> {
         println!("(none)");
     }
     Ok(())
+}
+
+fn cmd_task_terminal(name_or_id: Option<&str>, host: bool) -> Result<()> {
+    let task_id = if host {
+        None
+    } else if let Some(name) = name_or_id {
+        Some(client()?.resolve_task(name)?.id)
+    } else {
+        None
+    };
+    client()?.open_terminal(task_id.as_deref(), host)
 }
 
 fn cmd_task_tui() -> Result<()> {

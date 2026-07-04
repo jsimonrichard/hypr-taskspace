@@ -1,11 +1,12 @@
-//! Launch the task manager TUI inside the user's terminal emulator.
+//! Launch terminals — task manager TUI and task-scoped host shells.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::config::{load_config, LaeConfig};
 use crate::error::{LaeError, Result};
 use crate::binary::{command_v_login, resolve_lae_binary};
+use crate::models::Task;
 
 const TERMINAL_FALLBACKS: &[&str] = &[
     "xdg-terminal-exec",
@@ -25,7 +26,27 @@ pub fn launch_task_tui() -> Result<()> {
     let cfg = load_config()?;
     let lae = resolve_lae_binary(&cfg);
     let term = resolve_terminal_command(&cfg)?;
-    spawn_terminal(&term, &lae, &["task", "tui"])
+    spawn_terminal_command(&term, &lae, &["task", "tui"], None, TUI_WINDOW_TITLE, TUI_WINDOW_CLASS)
+}
+
+/// Open a host terminal in the task's linked checkout (no container isolation).
+pub fn launch_task_terminal(task: &Task) -> Result<()> {
+    let cfg = load_config()?;
+    crate::vcs::ensure_checkout_ready(&task.repo_path)?;
+    let term = resolve_terminal_command(&cfg)?;
+    let title = format!("[{}] terminal", task.id);
+    spawn_host_shell(&term, &task.repo_path, &title)
+}
+
+pub fn launch_host_terminal(cwd: Option<PathBuf>) -> Result<()> {
+    let cfg = load_config()?;
+    let term = resolve_terminal_command(&cfg)?;
+    let cwd = cwd.or_else(|| std::env::var_os("HOME").map(PathBuf::from));
+    spawn_host_shell(
+        &term,
+        cwd.as_deref().unwrap_or(Path::new(".")),
+        "terminal",
+    )
 }
 
 fn resolve_terminal_command(cfg: &LaeConfig) -> Result<String> {
@@ -58,65 +79,118 @@ fn resolve_terminal_command(cfg: &LaeConfig) -> Result<String> {
     ))
 }
 
-fn spawn_terminal(term: &str, lae: &Path, args: &[&str]) -> Result<()> {
-    let base = Path::new(term)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or(term);
+fn spawn_host_shell(term: &str, cwd: &Path, title: &str) -> Result<()> {
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".into());
+    let base = terminal_base_name(term);
+    let mut cmd = Command::new(term);
 
+    match base {
+        "xdg-terminal-exec" => {
+            cmd.args([
+                &format!("--title={title}"),
+                &format!("--dir={}", cwd.display()),
+            ]);
+        }
+        "kitty" => {
+            cmd.args([
+                &format!("--title={title}"),
+                &format!("--directory={}", cwd.display()),
+            ]);
+        }
+        "alacritty" => {
+            cmd.args([
+                "-t",
+                title,
+                "--working-directory",
+                &cwd.display().to_string(),
+            ]);
+        }
+        "ghostty" => {
+            cmd.args([
+                &format!("--title={title}"),
+                &format!("--working-directory={}", cwd.display()),
+            ]);
+        }
+        "foot" => {
+            cmd.args(["-T", title, "-D", &cwd.display().to_string()]);
+        }
+        "wezterm" | "kgx" | "xfce4-terminal" => {
+            cmd.args(["--title", title, "--working-directory", &cwd.display().to_string()]);
+        }
+        _ => {
+            cmd.args(["--working-directory", &cwd.display().to_string()]);
+        }
+    }
+
+    cmd.arg(&shell);
+    cmd.spawn().map_err(|e| {
+        LaeError::Other(format!("failed to launch terminal `{term}`: {e}"))
+    })?;
+    Ok(())
+}
+
+fn spawn_terminal_command(
+    term: &str,
+    program: &Path,
+    args: &[&str],
+    cwd: Option<&Path>,
+    title: &str,
+    class: &str,
+) -> Result<()> {
+    let base = terminal_base_name(term);
     let mut cmd = Command::new(term);
     match base {
         "xdg-terminal-exec" => {
             cmd.args([
-                &format!("--app-id={TUI_WINDOW_CLASS}"),
-                &format!("--title={TUI_WINDOW_TITLE}"),
-                "--",
+                &format!("--app-id={class}"),
+                &format!("--title={title}"),
             ]);
-            cmd.arg(lae);
+            if let Some(cwd) = cwd {
+                cmd.arg(format!("--dir={}", cwd.display()));
+            }
+            cmd.args(["--"]);
+            cmd.arg(program);
             cmd.args(args);
         }
         "kitty" => {
             cmd.args([
-                &format!("--class={TUI_WINDOW_CLASS}"),
-                &format!("--title={TUI_WINDOW_TITLE}"),
+                &format!("--class={class}"),
+                &format!("--title={title}"),
                 "--",
             ]);
-            cmd.arg(lae);
+            if let Some(cwd) = cwd {
+                cmd.args([&format!("--directory={}", cwd.display())]);
+            }
+            cmd.arg(program);
             cmd.args(args);
         }
         "alacritty" => {
-            cmd.args([
-                "--class",
-                TUI_WINDOW_CLASS,
-                "-t",
-                TUI_WINDOW_TITLE,
-                "-e",
-            ]);
-            cmd.arg(lae);
+            cmd.args(["--class", class, "-t", title, "-e"]);
+            cmd.arg(program);
             cmd.args(args);
         }
         "ghostty" => {
             cmd.args([
-                &format!("--class={TUI_WINDOW_CLASS}"),
-                &format!("--title={TUI_WINDOW_TITLE}"),
+                &format!("--class={class}"),
+                &format!("--title={title}"),
                 "-e",
             ]);
-            cmd.arg(lae);
+            cmd.arg(program);
             cmd.args(args);
         }
         "foot" => {
-            cmd.args(["-a", TUI_WINDOW_CLASS, "-T", TUI_WINDOW_TITLE, "-e"]);
-            cmd.arg(lae);
+            cmd.args(["-a", class, "-T", title, "-e"]);
+            cmd.arg(program);
             cmd.args(args);
         }
         "wezterm" | "kgx" | "xfce4-terminal" => {
-            cmd.args(["--class", TUI_WINDOW_CLASS, "-e"]);
-            cmd.arg(lae);
+            cmd.args(["--class", class, "-e"]);
+            cmd.arg(program);
             cmd.args(args);
         }
         _ => {
             cmd.args(["-e"]);
-            cmd.arg(lae);
+            cmd.arg(program);
             cmd.args(args);
         }
     }
@@ -125,6 +199,13 @@ fn spawn_terminal(term: &str, lae: &Path, args: &[&str]) -> Result<()> {
         LaeError::Other(format!("failed to launch terminal `{term}`: {e}"))
     })?;
     Ok(())
+}
+
+fn terminal_base_name(term: &str) -> &str {
+    Path::new(term)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(term)
 }
 
 #[cfg(test)]
