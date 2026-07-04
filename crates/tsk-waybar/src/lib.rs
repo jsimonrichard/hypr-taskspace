@@ -18,7 +18,7 @@ use tsk_core::{
     },
     is_global_workspace_name, read_state_rev, sync_from_workspace_name, trace_enabled, trace_event,
     visible_default_workspace_count, launch_task_tui, workspace_display_label,
-    workspace_goto_name, ContextMode, Registry, SessionState, StateChangeKind, StateEventListener,
+    workspace_goto_name, workspace_tooltip_label, ContextMode, Registry, SessionState, StateChangeKind, StateEventListener,
     WaybarModuleJson, ACTIVE_WORKSPACE_ICON,
 };
 use serde::Deserialize;
@@ -314,7 +314,8 @@ impl Runtime {
             workspace_display_label(workspace_name)
         };
         entry.label.set_text(&text);
-        entry.button.set_tooltip_text(Some(workspace_name));
+        let tooltip = workspace_tooltip_label(state, workspace_name);
+        entry.button.set_tooltip_text(Some(&tooltip));
 
         let ctx = entry.button.style_context();
         for class in BUTTON_CLASSES {

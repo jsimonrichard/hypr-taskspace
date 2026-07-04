@@ -452,10 +452,22 @@ impl TaskService {
 
     pub fn resolve_task(&self, name_or_id: &str) -> Result<Task> {
         let state = self.load_state()?;
-        self.registry
-            .get_task(&state, name_or_id)
-            .cloned()
-            .ok_or_else(|| crate::error::TskError::Other(format!("Unknown task: {name_or_id}")))
+        match self.registry.lookup_task(&state, name_or_id) {
+            crate::task_ids::TaskLookup::Found(task) => Ok(task.clone()),
+            crate::task_ids::TaskLookup::NotFound => {
+                Err(crate::error::TskError::Other(format!("Unknown task: {name_or_id}")))
+            }
+            crate::task_ids::TaskLookup::AmbiguousPrefix(ids) => {
+                let hints: Vec<String> = ids
+                    .iter()
+                    .map(|id| crate::task_ids::short_task_id(&state, id))
+                    .collect();
+                Err(crate::error::TskError::Other(format!(
+                    "Ambiguous task prefix '{name_or_id}': matches {}",
+                    hints.join(", ")
+                )))
+            }
+        }
     }
 
     pub fn list_active_tasks(&self) -> Result<Vec<Task>> {

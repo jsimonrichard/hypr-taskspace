@@ -8,6 +8,7 @@ use crate::error::Result;
 use crate::hyprland;
 use crate::models::SessionState;
 use crate::repos::task_source_repo_path;
+use crate::task_ids::{format_workspaces_tooltip, short_task_id, workspace_tooltip_label};
 use crate::taskspaces::visible_default_workspace_count;
 use crate::vcs::repo_label;
 use crate::workspaces::allowed_workspace_names;
@@ -91,11 +92,11 @@ fn build_all_modules_with_active_name(
 ) -> WaybarModulesCache {
     let data = build_waybar_data_with(state, active_name, occupied);
     let mut modules = HashMap::new();
-    modules.insert("task".into(), task_module(&data));
+    modules.insert("task".into(), task_module(&data, state));
     for index in 1..=WAYBAR_MODULE_COUNT {
         modules.insert(
             workspace_module_key(index),
-            workspace_module(&data, index),
+            workspace_module(&data, index, state),
         );
     }
     modules
@@ -178,18 +179,20 @@ fn occupied_names(allowed: &HashSet<String>) -> HashSet<String> {
     occupied
 }
 
-fn task_module(data: &WaybarData) -> WaybarModuleJson {
+fn task_module(data: &WaybarData, state: &SessionState) -> WaybarModuleJson {
     if let Some(task_id) = &data.task_id {
         let name = data.task_name.as_deref().unwrap_or(task_id);
+        let short_id = short_task_id(state, task_id);
         let text = if let Some(repo) = &data.repo_name {
             format!("󱓝 {repo}: {name}")
         } else {
             format!("󱓝 {name}")
         };
+        let workspaces = format_workspaces_tooltip(&data.workspaces, state);
         let tooltip = if let Some(repo) = &data.repo_name {
-            format!("Task: {name} ({repo})\nWorkspaces: {}", data.workspaces.join(", "))
+            format!("Task: {name} · {short_id} ({repo})\nWorkspaces: {workspaces}")
         } else {
-            format!("Task: {name}\nWorkspaces: {}", data.workspaces.join(", "))
+            format!("Task: {name} · {short_id}\nWorkspaces: {workspaces}")
         };
         return WaybarModuleJson {
             text,
@@ -200,14 +203,14 @@ fn task_module(data: &WaybarData) -> WaybarModuleJson {
     WaybarModuleJson {
         text: "󰣇 default".into(),
         tooltip: Some(format!(
-            "Default taskspace workspaces: {}",
-            data.workspaces.join(", ")
+            "Default taskspace\nWorkspaces: {}",
+            format_workspaces_tooltip(&data.workspaces, state)
         )),
         class: Some("default".into()),
     }
 }
 
-fn workspace_module(data: &WaybarData, index: usize) -> WaybarModuleJson {
+fn workspace_module(data: &WaybarData, index: usize, state: &SessionState) -> WaybarModuleJson {
     if index < 1 || index > WAYBAR_MODULE_COUNT {
         return hidden_module();
     }
@@ -247,7 +250,7 @@ fn workspace_module(data: &WaybarData, index: usize) -> WaybarModuleJson {
         } else {
             workspace_label(index)
         },
-        tooltip: Some(workspace_name),
+        tooltip: Some(workspace_tooltip_label(Some(state), &workspace_name)),
         class: Some(if classes.is_empty() {
             "idle".into()
         } else {

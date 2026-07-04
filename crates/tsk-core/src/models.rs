@@ -126,13 +126,21 @@ impl SessionState {
 
 /// Opaque task identifier (not derived from the display name).
 pub fn generate_task_id() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let pid = std::process::id() as u128;
-    format!("t{:x}", nanos ^ (pid << 32))
+    let mut bytes = [0u8; 4];
+    if std::fs::File::open("/dev/urandom")
+        .and_then(|mut f| std::io::Read::read_exact(&mut f, &mut bytes))
+        .is_err()
+    {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let pid = std::process::id() as u128;
+        let mixed = nanos ^ (pid << 32);
+        bytes.copy_from_slice(&mixed.to_le_bytes()[..4]);
+    }
+    format!("t{}", bytes.iter().map(|b| format!("{b:02x}")).collect::<String>())
 }
 
 pub fn slugify(name: &str) -> String {
@@ -162,6 +170,7 @@ mod tests {
     fn generate_task_id_is_opaque() {
         let id = generate_task_id();
         assert!(id.starts_with('t'));
+        assert_eq!(id.len(), 9);
         assert_ne!(id, slugify("Some Name"));
     }
 }

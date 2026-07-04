@@ -9,6 +9,7 @@ use crate::error::{TskError, Result};
 use crate::models::{
     ContextMode, generate_task_id, SessionState, Task, TaskStatus, WindowRecord,
 };
+use crate::task_ids::{lookup_task, TaskLookup};
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS session (
@@ -260,14 +261,18 @@ impl Registry {
     }
 
     pub fn get_task<'a>(&self, state: &'a SessionState, name_or_id: &str) -> Option<&'a Task> {
-        if let Some(task) = state.tasks.get(name_or_id) {
-            return Some(task);
+        match lookup_task(state, name_or_id) {
+            TaskLookup::Found(task) => Some(task),
+            TaskLookup::NotFound | TaskLookup::AmbiguousPrefix(_) => None,
         }
-        let lower = name_or_id.to_lowercase();
-        state
-            .tasks
-            .values()
-            .find(|t| t.name.to_lowercase() == lower)
+    }
+
+    pub fn lookup_task<'a>(
+        &self,
+        state: &'a SessionState,
+        name_or_id: &str,
+    ) -> TaskLookup<'a> {
+        lookup_task(state, name_or_id)
     }
 
     pub fn touch_task(&self, task: &mut Task) {
