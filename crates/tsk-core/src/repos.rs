@@ -33,6 +33,12 @@ pub struct RepoConfig {
     pub url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vcs: Option<VcsKind>,
+    /// Script path relative to the checkout root, run when a task is created from this repo.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_start: Option<String>,
+    /// Optional Hyprland monitor name to focus before running `on_start`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_start_monitor: Option<String>,
 }
 
 /// Runtime view of a registered checkout (path and id come from `state.db`).
@@ -89,6 +95,10 @@ struct RepoConfigFile {
     url: Option<String>,
     #[serde(default)]
     vcs: Option<VcsKind>,
+    #[serde(default)]
+    on_start: Option<String>,
+    #[serde(default)]
+    on_start_monitor: Option<String>,
     #[serde(default, rename = "id")]
     _legacy_id: Option<String>,
     #[serde(default, rename = "path")]
@@ -110,6 +120,8 @@ pub fn load_repo_config(vcs_root: &Path) -> Result<Option<RepoConfig>> {
         name: file.name,
         url: file.url,
         vcs: file.vcs,
+        on_start: file.on_start,
+        on_start_monitor: file.on_start_monitor,
     };
     Ok(normalize_repo_config(vcs_root, config))
 }
@@ -377,12 +389,16 @@ mod tests {
             name: Some("My App".into()),
             url: Some("https://example.com/app.git".into()),
             vcs: Some(VcsKind::Git),
+            on_start: Some(".tsk/on-start.sh".into()),
+            on_start_monitor: Some("eDP-1".into()),
         };
         save_repo_config(&checkout, &config).unwrap();
         let loaded = load_repo_config(&checkout).unwrap().unwrap();
         assert_eq!(loaded.name.as_deref(), Some("My App"));
         assert_eq!(loaded.url.as_deref(), Some("https://example.com/app.git"));
         assert_eq!(loaded.vcs, Some(VcsKind::Git));
+        assert_eq!(loaded.on_start.as_deref(), Some(".tsk/on-start.sh"));
+        assert_eq!(loaded.on_start_monitor.as_deref(), Some("eDP-1"));
     }
 
     #[test]

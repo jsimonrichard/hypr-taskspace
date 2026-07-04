@@ -1,13 +1,87 @@
 //! Taskspace-scoped Hyprland workspace navigation.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::hypr_log;
 use crate::hyprland::{self, Monitor};
 use crate::models::{ContextMode, SessionState};
 use crate::workspaces::{
-    allowed_workspace_names, default_taskspace_workspace_names, task_workspace_names,
+    allowed_workspace_names, default_taskspace_workspace_name, default_taskspace_workspace_names,
+    task_workspace_names,
 };
+
+/// Monitor that should receive a new task's primary workspace during on_start.
+///
+/// Respects monitors currently showing (or last assigned to) global workspaces.
+pub fn preferred_on_start_monitor(
+    state: &SessionState,
+    task_id: &str,
+    override_monitor: Option<&str>,
+) -> Option<String> {
+    let monitors = if hyprland::available() {
+        sort_monitors_by_layout(list_monitors_with_retry())
+    } else {
+        Vec::new()
+    };
+    preferred_on_start_monitor_from_layout(state, task_id, override_monitor, &monitors)
+}
+
+fn preferred_on_start_monitor_from_layout(
+    state: &SessionState,
+    task_id: &str,
+    override_monitor: Option<&str>,
+    monitors: &[Monitor],
+) -> Option<String> {
+    if let Some(name) = override_monitor.map(str::trim).filter(|n| !n.is_empty()) {
+        return Some(name.to_string());
+    }
+
+    if monitors.is_empty() {
+        return hyprland::focused_monitor_name();
+    }
+
+    let reserved = global_workspace_monitors(state, monitors);
+    if let Some(monitor) = monitors
+        .iter()
+        .find(|m| !reserved.contains(&m.name))
+        .map(|m| m.name.clone())
+    {
+        return Some(monitor);
+    }
+
+    let dest_key = format!("task:{task_id}");
+    let primary_slot = crate::workspaces::primary_task_workspace_slot(
+        state.default_workspace_count,
+        &state.global_workspace_slots,
+    ) as i32;
+    let max_slots = state.default_workspace_count as usize;
+    for (index, monitor) in monitors.iter().enumerate() {
+        let slot = resolve_monitor_slot(state, &dest_key, &monitor.name, index, max_slots);
+        if slot == primary_slot {
+            return Some(monitor.name.clone());
+        }
+    }
+
+    hyprland::focused_monitor_name()
+}
+
+fn global_workspace_monitors(state: &SessionState, monitors: &[Monitor]) -> HashSet<String> {
+    let mut reserved = HashSet::new();
+    for slot in &state.global_workspace_slots {
+        let global_name = default_taskspace_workspace_name(*slot);
+        if let Some(monitor) = monitors.iter().find(|m| m.workspace_name == global_name) {
+            reserved.insert(monitor.name.clone());
+        }
+        if let Some(map) = state.last_monitor_workspace.get("default") {
+            for (monitor, saved_slot) in map {
+                if *saved_slot == *slot as i32 {
+                    reserved.insert(monitor.clone());
+                }
+            }
+        }
+    }
+    reserved
+}
 
 pub fn workspace_name_for_relative(state: &SessionState, relative: i32) -> Option<String> {
     relative_to_name(state, relative)
@@ -567,6 +641,52 @@ mod tests {
     use std::collections::HashMap;
 
     #[test]
+    fn preferred_on_start_monitor_skips_global_workspace_monitor() {
+        let state = SessionState {
+            default_workspace_count: 10,
+            global_workspace_slots: vec![1],
+            last_monitor_workspace: HashMap::from([(
+                "default".into(),
+                HashMap::from([("eDP-1".into(), 1), ("DP-2".into(), 2)]),
+            )]),
+            ..Default::default()
+        };
+        let monitors = vec![
+            Monitor {
+                name: "eDP-1".into(),
+                workspace_name: "1".into(),
+                focused: true,
+                x: 0,
+                y: 0,
+            },
+            Monitor {
+                name: "DP-2".into(),
+                workspace_name: "2".into(),
+                focused: false,
+                x: 1920,
+                y: 0,
+            },
+        ];
+        assert_eq!(
+            global_workspace_monitors(&state, &monitors),
+            HashSet::from(["eDP-1".into()])
+        );
+        assert_eq!(
+            preferred_on_start_monitor_from_layout(&state, "tnew", None, &monitors),
+            Some("DP-2".into())
+        );
+    }
+
+    #[test]
+    fn preferred_on_start_monitor_honors_override() {
+        let state = SessionState::default();
+        assert_eq!(
+            preferred_on_start_monitor_from_layout(&state, "tnew", Some("HDMI-A-1"), &[]),
+            Some("HDMI-A-1".into())
+        );
+    }
+
+    #[test]
     fn workspace_go_syncs_default_taskspace_for_global_slot() {
         use crate::models::{ContextMode, Task, TaskStatus};
 
@@ -596,8 +716,9 @@ mod tests {
                 ports: vec![],
             },
         );
-        let name = workspace_go(&mut state, 1);
+        let name = workspace_name_for_relative(&state, 1);
         assert_eq!(name.as_deref(), Some("1"));
+        crate::context_sync::sync_from_workspace_name(&mut state, "1");
         assert_eq!(state.context_mode, ContextMode::Task);
         assert_eq!(state.current_task_id.as_deref(), Some("auth-fix"));
     }
@@ -633,11 +754,11 @@ mod tests {
             },
         );
         assert_eq!(
-            move_window_to_relative(&state, 1).as_deref(),
+            workspace_name_for_relative(&state, 1).as_deref(),
             Some("1")
         );
         assert_eq!(
-            move_window_to_relative(&state, 2).as_deref(),
+            workspace_name_for_relative(&state, 2).as_deref(),
             Some("auth-fix-2")
         );
     }

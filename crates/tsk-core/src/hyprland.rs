@@ -66,6 +66,17 @@ pub fn available() -> bool {
     which::which("hyprctl").is_ok() && has_instance()
 }
 
+/// Whether hyprctl dispatches may mutate the live compositor (disabled under `cfg(test)`).
+pub fn mutations_enabled() -> bool {
+    if cfg!(test) {
+        return false;
+    }
+    !matches!(
+        std::env::var("TSK_DISABLE_HYPRLAND").as_deref(),
+        Ok("1") | Ok("true") | Ok("TRUE")
+    )
+}
+
 fn has_instance() -> bool {
     std::env::var("HYPRLAND_INSTANCE_SIGNATURE").is_ok()
         && std::env::var("XDG_RUNTIME_DIR").is_ok()
@@ -128,7 +139,7 @@ pub fn dispatch(args: &[&str]) {
 
 /// Fire-and-forget — provisioning only; not used for interactive workspace switches.
 pub fn dispatch_async(args: &[&str]) {
-    if !available() {
+    if !available() || !mutations_enabled() {
         return;
     }
     let detail = args.join(" ");
@@ -144,7 +155,7 @@ pub fn dispatch_async(args: &[&str]) {
 }
 
 pub fn dispatch_sync(args: &[&str]) {
-    if !available() {
+    if !available() || !mutations_enabled() {
         return;
     }
     with_hypr_ipc(|| {

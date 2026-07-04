@@ -19,6 +19,7 @@ pub mod task_repo;
 pub mod vcs;
 pub mod state_notify;
 pub mod task_cleanup;
+pub mod task_on_start;
 pub mod taskspaces;
 pub mod terminal;
 pub mod trace;
@@ -79,7 +80,7 @@ pub use trace::{
 pub use hypr_log::{clear_log as clear_hypr_log, hypr_log_path, tail_raw as tail_hypr_log};
 pub use workspaces::{
     allowed_workspace_names, bar_active_workspace_name, bar_occupied_names, bar_workspace_names,
-    is_global_workspace_name, workspace_display_label,
+    is_global_workspace_name, primary_task_workspace, workspace_display_label,
 };
 pub use waybar::{
     build_all_modules, build_all_modules_for_active_name, fetch_occupied_indices,

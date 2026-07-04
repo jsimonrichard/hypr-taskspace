@@ -270,9 +270,26 @@ impl TaskService {
 
         if switch {
             self.commit_state(&state, Some(StateChangeKind::Full))?;
-            self.switch_task(&task_id)
+            let task = self.switch_task(&task_id)?;
+            if let Err(err) = crate::task_on_start::run_on_start_after_create(
+                &task,
+                &resolved.setup,
+                self.config.hyprland_enabled,
+                &state,
+            ) {
+                eprintln!("tsk: on_start hook: {err}");
+            }
+            Ok(task)
         } else {
             self.commit_state(&state, Some(StateChangeKind::Full))?;
+            if let Err(err) = crate::task_on_start::run_on_start_after_create(
+                &task,
+                &resolved.setup,
+                self.config.hyprland_enabled,
+                &state,
+            ) {
+                eprintln!("tsk: on_start hook: {err}");
+            }
             Ok(task)
         }
     }
@@ -502,6 +519,7 @@ mod tests {
     fn test_service(dir: &std::path::Path) -> TaskService {
         let mut config = TskConfig::default();
         config.tasks_base_dir = dir.join("tasks");
+        config.hyprland_enabled = false;
         let db = dir.join("state.db");
         let registry = Registry::new(Some(db), config.clone()).unwrap();
         TaskService { registry, config }

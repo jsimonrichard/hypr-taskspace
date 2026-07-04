@@ -38,6 +38,28 @@ pub fn task_workspace_names(task_id: &str, count: u32) -> Vec<String> {
     (1..=count).map(|n| task_workspace_name(task_id, n)).collect()
 }
 
+/// First task-specific workspace in a task taskspace (skips global slots like SUPER+1 → `"1"`).
+pub fn primary_task_workspace(
+    task_id: &str,
+    default_workspace_count: u32,
+    global_workspace_slots: &[u32],
+) -> String {
+    task_workspace_name(task_id, primary_task_workspace_slot(default_workspace_count, global_workspace_slots))
+}
+
+/// 1-based slot index for the first non-global workspace in a task taskspace.
+pub fn primary_task_workspace_slot(
+    default_workspace_count: u32,
+    global_workspace_slots: &[u32],
+) -> u32 {
+    for slot in 1..=default_workspace_count {
+        if !is_global_workspace_slot(slot, global_workspace_slots) {
+            return slot;
+        }
+    }
+    1
+}
+
 /// Task taskspace slots — same count as default (`SUPER+1..0` keybinds).
 pub fn task_taskspace_workspace_names(state: &SessionState, task_id: &str) -> Vec<String> {
     (1..=state.default_workspace_count)
@@ -162,6 +184,21 @@ pub fn bar_occupied_names(_state: &SessionState, bar_names: &[String]) -> HashSe
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn primary_task_workspace_skips_global_slots() {
+        assert_eq!(
+            primary_task_workspace("auth-fix", 10, &[1]),
+            "auth-fix-2"
+        );
+        assert_eq!(primary_task_workspace("auth-fix", 10, &[]), "auth-fix-1");
+        assert_eq!(
+            primary_task_workspace("auth-fix", 10, &[1, 2]),
+            "auth-fix-3"
+        );
+        assert_eq!(primary_task_workspace_slot(10, &[1]), 2);
+        assert_eq!(primary_task_workspace_slot(10, &[]), 1);
+    }
 
     #[test]
     fn workspace_display_label_from_names() {

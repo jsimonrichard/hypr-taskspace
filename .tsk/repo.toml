@@ -1,0 +1,3 @@
+on_start = ".tsk/on-start.sh"
+# Optional: Hyprland monitor to focus before on_start (see `hyprctl monitors`).
+# on_start_monitor = "eDP-1"

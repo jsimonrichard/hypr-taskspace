@@ -933,11 +933,13 @@ fn cmd_task_switch(name_or_id: &str) -> Result<()> {
     let svc = client()?;
     let task = svc.resolve_task(name_or_id)?;
     let switched = svc.switch_task(&task.id)?;
-    println!(
-        "Switched to task:{} → {}",
-        switched.id,
-        switched.main_workspace()
+    let state = svc.load_state()?;
+    let workspace = tsk_core::primary_task_workspace(
+        &switched.id,
+        state.default_workspace_count,
+        &state.global_workspace_slots,
     );
+    println!("Switched to task:{} → {workspace}", switched.id);
     Ok(())
 }
 
