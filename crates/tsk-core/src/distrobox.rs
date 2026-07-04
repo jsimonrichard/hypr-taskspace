@@ -1,4 +1,4 @@
-//! Distrobox container helpers — stop/remove only; create remains in Python for now.
+//! Distrobox container helpers — stop/remove only.
 
 use std::process::Command;
 

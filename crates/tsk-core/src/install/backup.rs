@@ -10,7 +10,7 @@ pub fn backup_timestamp() -> String {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    // UTC-ish timestamp compatible with Python backup dirs
+    // UTC-ish timestamp for install backup dirs
     chrono::DateTime::from_timestamp(secs as i64, 0)
         .map(|dt| dt.format("%Y-%m-%dT%H%M%S").to_string())
         .unwrap_or_else(|| format!("{secs}"))

@@ -2,7 +2,6 @@
 
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 
 use serde_json::Value;
 
@@ -125,17 +124,6 @@ pub fn run_doctor_checks(cfg: &TskConfig) -> Result<Vec<DoctorCheck>> {
             .unwrap_or(socket2.reason),
     });
 
-    let legacy_daemon = legacy_python_daemon_running();
-    checks.push(DoctorCheck {
-        label: "No legacy Python tsk daemon".into(),
-        passed: !legacy_daemon,
-        detail: if legacy_daemon {
-            "run: pkill -f 'tsk.cli.daemon' — stale daemon overwrites Rust CLI state".into()
-        } else {
-            "ok".into()
-        },
-    });
-
     let daemon_running = is_daemon_running();
     checks.push(DoctorCheck {
         label: "TSK daemon running".into(),
@@ -210,11 +198,4 @@ fn bind_is_omarchy_workspace_digit(bind: &Value) -> bool {
             .get("dispatcher")
             .and_then(|v| v.as_str())
             .is_some_and(|d| d == "workspace")
-}
-
-fn legacy_python_daemon_running() -> bool {
-    Command::new("pgrep")
-        .args(["-f", "tsk.cli.daemon"])
-        .output()
-        .is_ok_and(|o| o.status.success())
 }

@@ -265,7 +265,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn workspace_labels_match_python() {
+    fn workspace_labels_use_digit_and_zero_for_ten() {
         assert_eq!(workspace_label(1), "1");
         assert_eq!(workspace_label(10), "0");
     }

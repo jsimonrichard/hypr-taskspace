@@ -1,6 +1,6 @@
 # Python POC Plan: Local Agentic Coding Environment Management
 
-> **Implementation status (2026):** The **Rust CLI** in `crates/` is the supported control plane. See [README.md](../README.md). Hyprland keybinds use `~/.local/share/tsk/bin/tsk`; task management uses the **ratatui TUI** (`tsk task tui-launch`). Waybar uses the Rust **CFFI module** (`cffi/tsk`) with Hyprland socket2 for instant updates. The Python package in `src/tsk/` remains for deferred features (daemon IPC, Distrobox terminals, git clone on `task new`, window routing). Command names: prefer **`taskspace`** / **`workspace`**; **`context`** / **`desktop`** are legacy aliases in the Rust CLI.
+> **Implementation status (2026):** The **Rust CLI** in `crates/` is the control plane. See [README.md](../README.md). Hyprland keybinds use `~/.local/share/tsk/bin/tsk`; task management uses the **ratatui TUI** (`tsk task tui-launch`). Waybar uses the Rust **CFFI module** (`cffi/tsk`) with Hyprland socket2 for instant updates. Deferred: Distrobox create/enter, remote git clone on `task new`, window routing.
 
 This plan expands on [ai-convo-notes.md](./ai-convo-notes.md) into an implementable proof-of-concept. The POC validates the core abstraction:
 

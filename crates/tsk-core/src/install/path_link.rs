@@ -80,18 +80,11 @@ pub fn path_tsk_is_rust(cfg: &TskConfig) -> (bool, String) {
         return (true, found.display().to_string());
     }
 
-    let detail = if is_python_script(&found) {
-        format!(
-            "{} is the legacy Python CLI — run: pip uninstall hypr-taskspace, then `tsk install hypr`",
-            found.display()
-        )
-    } else {
-        format!(
-            "PATH tsk is {} (expected {})",
-            found.display(),
-            expected.display()
-        )
-    };
+    let detail = format!(
+        "PATH tsk is {} (expected {})",
+        found.display(),
+        expected.display()
+    );
     (false, detail)
 }
 
@@ -111,24 +104,4 @@ fn path_points_at_rust_bin(link: &Path, rust_bin: &Path) -> Result<bool> {
 
 fn normalize_path(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
-}
-
-fn is_python_script(path: &Path) -> bool {
-    let lossy = path.to_string_lossy();
-    if lossy.contains("/python")
-        || lossy.contains("site-packages")
-        || lossy.contains(".local/share/mise/installs/python")
-    {
-        return true;
-    }
-    let Ok(mut file) = fs::File::open(path) else {
-        return false;
-    };
-    use std::io::Read;
-    let mut head = [0u8; 128];
-    let Ok(n) = file.read(&mut head) else {
-        return false;
-    };
-    let prefix = String::from_utf8_lossy(&head[..n]);
-    prefix.starts_with("#!") && prefix.contains("python")
 }
