@@ -3,6 +3,7 @@
 pub mod config;
 pub mod context_sync;
 pub mod daemon;
+pub mod dev_session;
 pub mod distrobox;
 pub mod error;
 pub mod host;
@@ -17,6 +18,7 @@ pub mod service;
 pub mod task_paths;
 pub mod task_repo;
 pub mod vcs;
+pub mod share;
 pub mod state_notify;
 pub mod task_cleanup;
 pub mod task_on_start;
@@ -24,6 +26,7 @@ pub mod taskspaces;
 pub mod terminal;
 pub mod trace;
 pub mod binary;
+pub mod version;
 pub mod waybar;
 pub mod workspace_nav;
 pub mod workspace_slots;
@@ -31,7 +34,11 @@ pub mod window_registry;
 pub mod workspaces;
 pub mod xdg;
 
-pub use config::{ensure_config, load_config, TskConfig};
+pub use config::{ensure_config, load_config, load_config_at, load_dev_config, load_prod_config, TskConfig};
+pub use dev_session::{
+    dev_session_active, dev_session_binary, dev_session_marker_path, start_dev_session,
+    stop_dev_session,
+};
 pub use daemon::{
     daemon_pid_path, daemon_request, daemon_socket_path, ensure_daemon, is_daemon_running,
     ping_daemon,
@@ -39,11 +46,14 @@ pub use daemon::{
 };
 pub use error::{TskError, Result};
 pub use install::{
-    install_hypr, install_hypr_status, install_systemd, install_systemd_status, install_waybar,
-    install_waybar_status, is_systemd_unit_installed, render_service_unit, run_doctor_checks,
-    systemd_restart, systemd_start, systemd_stop, systemctl_is_active, systemctl_is_enabled,
-    uninstall_hypr, uninstall_systemd, uninstall_waybar, DoctorCheck, InstallHyprOptions,
-    InstallSystemdOptions, InstallWaybarOptions,
+    install_bins, install_hypr, install_hypr_status, install_systemd, install_systemd_status,
+    install_waybar, install_waybar_status, is_systemd_unit_installed, render_service_unit,
+    run_doctor_checks, systemd_restart, systemd_start, systemd_stop, systemctl_is_active,
+    systemctl_is_enabled, uninstall_hypr, uninstall_systemd, uninstall_waybar, InstallBinsOptions,
+    DoctorCheck, InstallHyprOptions, InstallProfile, InstallSystemdOptions, InstallWaybarOptions,
+    dev_config_path, dev_share_dir, install_metadata_dir, install_omarchy_prod, is_dev_config,
+    profile_for_config,
+    OmarchyInstallOptions,
 };
 pub use models::{ContextMode, SessionState, Task, TaskStatus};
 pub use repos::{
@@ -72,8 +82,20 @@ pub use workspace_nav::{
     clear_navigation_memory, clear_runtime_slot_cache, focus_last_workspace, set_taskspace,
     workspace_go, workspace_goto_name, workspace_next, workspace_prev,
 };
-pub use binary::resolve_tsk_binary;
+pub use share::{
+    default_prod_share_dir, effective_share_dir, is_system_share, packaged_systemd_unit_installed,
+    packaged_systemd_unit_path, system_share_available, system_share_dir, uses_packaged_share,
+    uses_system_share, SYSTEM_SHARE_DIR,
+};
+pub use binary::{
+    command_v_login, maybe_reexec_dev_session, path_tsk_binary, path_tsk_is_usable,
+    peel_tsk_wrapper, resolve_tsk_binary, resolve_tsk_command, resolve_tsk_spawn_binary,
+    waybar_module_path,
+};
 pub use terminal::{launch_host_terminal, launch_task_terminal, launch_task_tui};
+pub use version::{
+    build_version_info, format_version_long, format_version_short, version_info, VersionInfo,
+};
 pub use context_sync::sync_from_workspace_name;
 pub use taskspaces::visible_default_workspace_count;
 pub use trace::{

@@ -2,13 +2,13 @@
 
 Task-centric Hyprland control plane. Each task gets its own **taskspace** with named **workspaces** (`auth-fix-1`, `auth-fix-2`, …). The **default** taskspace uses plain Hyprland workspace names **`1`–`10`** for everyday host work.
 
-Hyprland keybinds call `~/.local/share/tsk/bin/tsk`, built and installed by `tsk install hypr`. The **tsk daemon** runs as a user systemd service (installed by `tsk install all` or `tsk install systemd`) and starts automatically with Hyprland.
+Hyprland keybinds call `tsk` on your **PATH**. Runtime state (`state.db`, daemon socket) lives in **`~/.local/share/tsk/`**. Templates and the Waybar module live under a **share tree** — either **`/usr/share/tsk/`** (pacman) or **`~/.local/share/tsk/`** (cargo/from source).
 
 ## Prerequisites
 
 - Hyprland (Omarchy or similar)
-- **Rust toolchain** (stable) — [rustup](https://rustup.rs/)
 - `hyprctl` on PATH
+- **Rust toolchain** (stable) — only for building from source or development ([rustup](https://rustup.rs/))
 
 Optional:
 
@@ -18,58 +18,152 @@ Optional:
 
 ## Install
 
-### 1. Build and install integrations
+`tsk install` only automates **Omarchy** config patching (Hypr + Waybar with backups). Everything else — binaries, share files, systemd — comes from **packaging** or **repo scripts**.
+
+| What | Pacman | Cargo / from source |
+|------|--------|---------------------|
+| CLI (`tsk`) | `/usr/bin/tsk` | `~/.cargo/bin/tsk` |
+| Share templates + Waybar `.so` | `/usr/share/tsk/` | `~/.local/share/tsk/` via script |
+| Runtime data | `~/.local/share/tsk/` | same |
+| systemd unit | `/usr/lib/systemd/user/tskd.service` | script or copy from `share/systemd/` |
+| Hypr/Waybar wiring | Manual (or `tsk install omarchy`) | Manual (or omarchy) |
+
+Full details: **[docs/install.md](docs/install.md)** · Arch packaging: **[docs/packaging.md](docs/packaging.md)**
+
+### 1. Arch Linux (pacman)
+
+Best for a stable system install — no extra scripts for share assets.
+
+```bash
+cd packaging/arch && makepkg -si
+systemctl --user enable --now tskd.service
+```
+
+Then wire Hyprland and Waybar yourself (paths under `/usr/share/tsk/`). Example Hypr line:
+
+```ini
+source = /usr/share/tsk/hypr/bindings.conf
+```
+
+Copy or merge snippets from `/usr/share/tsk/waybar/`. See **[docs/packaging.md](docs/packaging.md)**.
+
+Suggested config (`~/.config/tsk/config.toml`):
+
+```toml
+[data]
+dir = "~/.local/share/tsk"
+
+[install.hypr]
+share_dir = "/usr/share/tsk"
+source_line = "/usr/share/tsk/hypr/bindings.conf"
+```
+
+Or copy `/usr/share/tsk/config.toml.example`.
+
+### 2. Cargo / from source
+
+For contributors or distros without a package yet.
+
+```bash
+cargo install --path crates/tsk-cli
+scripts/install-user-share.sh    # templates + libtsk_waybar.so → ~/.local/share/tsk/
+scripts/install-systemd.sh       # enable tskd.service
+```
+
+Then wire Hyprland and Waybar (paths under `~/.local/share/tsk/`). See **[docs/install.md](docs/install.md)**.
+
+After pulling repo changes:
+
+```bash
+scripts/install-user-share.sh
+```
+
+### 3. Omarchy (automated Hypr + Waybar)
+
+Patches `hyprland.conf` and Waybar config with backups — on top of pacman or script install.
+
+```bash
+# share assets must exist first (pacman or scripts/install-user-share.sh)
+tsk install omarchy
+scripts/install-systemd.sh
+tsk doctor
+```
+
+Dry-run: `tsk install omarchy --dry-run`
+
+### 4. Verify
+
+```bash
+tsk doctor
+tsk integration status
+systemctl --user status tskd.service
+```
+
+### Migrating / cleanup
+
+If you previously copied everything into `~/.local/share/tsk/` and switch to pacman:
+
+```bash
+scripts/cleanup-legacy-install.sh    # removes duplicate templates; keeps state.db
+```
+
+---
+
+## Development
+
+Work on tsk from the repo without touching prod share assets or systemd (while the dev session runs).
+
+| | Prod | Dev |
+|---|------|-----|
+| Share templates | `/usr/share/tsk` or `~/.local/share/tsk` | `~/.local/share/tsk-dev/` |
+| Config | `~/.config/tsk/config.toml` | `~/.config/tsk-dev/config.toml` |
+| CLI | `tsk` on PATH | release build **replaces** PATH `tsk` during dev session |
+| Daemon | `tskd.service` (systemd) | foreground — `scripts/dev.sh daemon` |
+| Session DB | `~/.local/share/tsk/state.db` | symlink → prod (default) |
+| Task checkouts | `~/tsk-tasks/` | same |
+
+### One-command dev session
 
 From the repo root:
 
 ```bash
-cd ~/Desktop/hypr-taskspace
-TSK_WORKSPACE=$PWD cargo run -p tsk-cli --release -- install all --dry-run   # optional preview
-TSK_WORKSPACE=$PWD cargo run -p tsk-cli --release -- install all
+scripts/dev.sh          # same as scripts/dev.sh enter
 ```
 
-This builds the `tsk` binary and Waybar CFFI module, copies Hyprland templates to `~/.local/share/tsk/`, patches Waybar config, and reloads Hyprland and Waybar.
+This will:
 
-After install, the CLI used by keybinds lives at:
+1. Link dev `state.db` → prod (so existing tasks/windows stay visible)
+2. Build `target/release/tsk` and swap it onto PATH (restored on exit)
+3. Run `tsk dev install all` (dev share tree, Hyprland + Waybar integration)
+4. Stop prod `tskd.service` if active, run the **dev daemon** in the foreground
 
-```text
-~/.local/share/tsk/bin/tsk
-```
+Ctrl+C or `scripts/dev.sh leave` **fully disables dev mode**: uninstalls dev Hyprland/Waybar integration, restores the prod binary on PATH, and restarts prod systemd if it was running.
 
-Add that directory to your shell PATH if you want to run `tsk` outside Hyprland exec contexts. **`tsk install hypr` also symlinks `~/.local/bin/tsk` → the installed binary** — put `~/.local/bin` early on PATH:
+Use **`TSK_DEV_ISOLATED=1`** for a separate dev `state.db` (CI/e2e).
+
+### Dev subcommands
 
 ```bash
-export PATH="$HOME/.local/bin:$HOME/.local/share/tsk/bin:$PATH"
+scripts/dev.sh enter              # install all + start dev daemon
+scripts/dev.sh leave              # uninstall dev integration + restore prod
+scripts/dev.sh install all        # Hypr + Waybar integration only
+scripts/dev.sh install share      # rebuild + swap PATH tsk + dev share assets
+scripts/dev.sh daemon             # start dev daemon (links prod state.db)
+scripts/dev.sh status             # tsk dev status
+scripts/dev.sh uninstall            # same as leave (integration only)
 ```
 
-Verify:
+Equivalent CLI (from repo, with `TSK_WORKSPACE=$PWD`):
 
 ```bash
-~/.local/share/tsk/bin/tsk --help
-~/.local/share/tsk/bin/tsk status
-tsk doctor
-tsk install status
-tsk daemon status    # or: systemctl --user status tskd.service
+cargo run -p tsk-cli --release -- dev install all
+cargo run -p tsk-cli --release -- dev install share
+cargo run -p tsk-cli --release -- dev uninstall all
 ```
 
-On first run, tsk creates `~/.config/tsk/config.toml` and `~/.local/share/tsk/state.db`.
+Only one of prod or dev Hypr `source = … bindings.conf` lines should be active — comment the other out and `hyprctl reload` when switching.
 
-### 2. Check installation
-
-```bash
-tsk doctor
-tsk install status
-```
-
-| Artifact | Location |
-|----------|----------|
-| CLI + Waybar module | `~/.local/share/tsk/bin/tsk`, `~/.local/bin/tsk` (symlink), `~/.local/share/tsk/lib/libtsk_waybar.so` |
-| Hyprland keybinds + Omarchy unbinds | `~/.local/share/tsk/hypr/bindings.conf`, `unbind-omarchy.conf` |
-| Workspace keybind helper (hyprctl + state sync) | `~/.local/share/tsk/bin/tsk-workspace-switch` |
-| Task manager launcher | `~/.local/share/tsk/bin/tsk-task-tui` |
-| Config backup | `~/.local/share/tsk/install/hypr/backups/<timestamp>/` |
-
-Waybar uses a native **CFFI module** (`cffi/tsk`) for instant taskspace/workspace indicators.
+See **[docs/dev.md](docs/dev.md)** for prod ↔ dev switching, e2e, and caveats about shared `state.db`.
 
 ---
 
@@ -110,14 +204,14 @@ Open the **task manager** (Waybar task label, **SUPER+Tab**, or `tsk task tui-la
 tsk taskspace default        # SUPER+H
 ```
 
-### Keybindings (after `tsk install hypr`)
+### Keybindings (after Hyprland integration)
 
 | Action | Binding |
 |--------|---------|
 | Task manager (TUI) | Click task name in Waybar, **SUPER+Tab**, or `tsk task tui-launch` |
 | Workspace 1–9 / 10 within current taskspace | **SUPER+1..9**, **SUPER+0** (= workspace 10) — `hyprctl dispatch` via `tsk-workspace-switch`, then async state sync |
 | Default / host taskspace | **SUPER+H** or TUI → **host** |
-| Host terminal | **SUPER+Return** (your existing Omarchy bind — unchanged) |
+| Task-aware terminal | **SUPER+Return** (override/remove in `bindings.conf` if you prefer your existing bind) |
 
 SUPER+Space remains your normal system app launcher.
 
@@ -135,21 +229,24 @@ State lives in `~/.local/share/tsk/state.db`. The daemon is the recommended sing
 The Waybar CFFI module subscribes to Hyprland workspace events **and** the state-events socket; `update()` also polls `state.rev` if both are missed.
 
 ```bash
-tsk install systemd              # user unit at ~/.config/systemd/user/tskd.service
-systemctl --user status tskd.service
-tsk doctor                       # warns if daemon is not running
+systemctl --user status tskd.service   # prod
+tsk doctor
 ```
-
-The Hyprland install sources `~/.local/share/tsk/hypr/daemon-systemd.conf`, which imports the Hyprland session environment and starts the unit on login.
 
 ### CLI reference
 
 ```text
 tsk status | doctor | windows [--task ID]
 
+tsk install omarchy              # Omarchy only: auto-patch Hypr + Waybar
+tsk integration status
 tsk daemon start|stop|restart|status|run
-tsk install all|hypr|waybar|systemd|status
-tsk uninstall hypr|waybar|systemd
+
+scripts/install-user-share.sh  # cargo/source: share templates + Waybar .so
+scripts/install-systemd.sh     # enable tskd.service
+scripts/dev.sh …               # development — see above
+
+tsk dev install|uninstall|status   # dev integration (share, hypr, waybar)
 
 tsk taskspace default|current
 tsk workspace go|remember|dispatch|next|prev|goto
@@ -159,41 +256,6 @@ tsk repo add|list|remove|root
 tsk waybar status|module
 tsk reset layout
 tsk debug trace|hyprland-socket|hypr log
-```
-
----
-
-## Update after pulling changes
-
-```bash
-TSK_WORKSPACE=$PWD cargo run -p tsk-cli --release -- install all
-```
-
-Re-run when `share/` templates, Rust code, or Waybar integration changes.
-
----
-
-## Uninstall
-
-Run in order. Integration uninstallers **restore your backed-up config files**; they do not delete task data unless you remove it manually.
-
-```bash
-tsk uninstall waybar    # restores ~/.config/waybar/config.jsonc from backup
-tsk uninstall hypr      # restores ~/.config/hypr/hyprland.conf from backup
-```
-
-To keep tsk-owned files under `~/.local/share/tsk/hypr/` for inspection:
-
-```bash
-tsk uninstall hypr --keep-files
-```
-
-Optional: remove task data and state (not done by uninstall):
-
-```bash
-rm -rf ~/.local/share/tsk/state.db
-rm -rf ~/tsk-tasks/
-rm -rf ~/.config/tsk/
 ```
 
 ---
@@ -211,17 +273,15 @@ sqlite3 ~/.local/share/tsk/state.db "SELECT context_mode, current_task_id FROM s
 **Task manager does not open**
 
 ```bash
-~/.local/share/tsk/bin/tsk-task-tui   # should launch the TUI in a terminal
+tsk-task-tui                     # or /usr/share/tsk/bin/tsk-task-tui (pacman)
 tsk doctor
 ```
 
-After `install hypr`, run `hyprctl reload` so **SUPER+Tab** picks up the new bind.
+Run `hyprctl reload` after adding the Hyprland source line so **SUPER+Tab** picks up the new bind.
 
 **Waybar taskspace indicator stuck or laggy**
 
-```bash
-TSK_WORKSPACE=$PWD cargo run -p tsk-cli --release -- install waybar
-```
+Check the CFFI `module_path` in Waybar config — pacman: `/usr/share/tsk/lib/libtsk_waybar.so`; cargo install: `~/.local/share/tsk/lib/libtsk_waybar.so`. Ensure `tskd.service` is running.
 
 **Check overall health**
 

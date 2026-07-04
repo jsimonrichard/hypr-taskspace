@@ -21,7 +21,10 @@ pub struct TaskService {
 
 impl TaskService {
     pub fn with_defaults() -> Result<Self> {
-        let config = crate::config::load_config()?;
+        Self::with_config(crate::config::load_config()?)
+    }
+
+    pub fn with_config(config: TskConfig) -> Result<Self> {
         let registry = Registry::new(None, config.clone())?;
         Ok(Self { registry, config })
     }

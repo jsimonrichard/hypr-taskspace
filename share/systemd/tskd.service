@@ -6,7 +6,8 @@ ConditionEnvironment=WAYLAND_DISPLAY
 
 [Service]
 Type=simple
-ExecStart=@TSK_BIN@ daemon run
+ExecStart=@TSK_CMD@ daemon run
+Environment=PATH=%E/.local/bin:/usr/local/bin:/usr/bin:/bin
 Restart=on-failure
 RestartSec=2
 TimeoutStopSec=10

@@ -9,7 +9,6 @@ use crate::error::{TskError, Result};
 use crate::models::{
     ContextMode, generate_task_id, SessionState, Task, TaskStatus, WindowRecord,
 };
-use crate::xdg::tsk_state_db;
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS session (
@@ -61,7 +60,7 @@ pub struct Registry {
 
 impl Registry {
     pub fn new(db_path: Option<PathBuf>, config: TskConfig) -> Result<Self> {
-        let db_path = db_path.unwrap_or_else(tsk_state_db);
+        let db_path = db_path.unwrap_or_else(|| config.state_db_path());
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent).map_err(|source| TskError::Write {
                 path: parent.to_path_buf(),

@@ -2,23 +2,29 @@ use clap::{Parser, Subcommand};
 
 use tsk_core::{
     allowed_workspace_names, analyze_recent_latency, build_all_modules, clear_log, daemon_socket_path,
-    diagnose_socket2, enable_for_process, format_report, hypr_log_path, hyprland, install_hypr,
-    install_hypr_status, install_systemd, install_systemd_status, install_waybar,
-    install_waybar_status, is_daemon_running, is_systemd_unit_installed, launch_task_tui, load_config,
-    ping_daemon, run_doctor_checks, stop_daemon, systemd_restart, systemd_start, systemd_stop,
-    systemctl_is_active, tail_hypr_log, tail_raw, trace_path, uninstall_hypr, uninstall_systemd,
-    uninstall_waybar, workspace_module_key, DaemonClient, DaemonServer, InstallHyprOptions,
-    InstallSystemdOptions, InstallWaybarOptions, TskError, Registry, Result, TaskService, TaskStatus,
-    TaskRepoSource, detect_vcs_root, find_repo, find_repo_by_path,
-    load_repos, register_repo, repo_label, ensure_repo_removable, unregister_repo,
-    clear_hypr_log,
+    format_version_long, install_bins, diagnose_socket2, enable_for_process, format_report, hypr_log_path,
+    hyprland, install_hypr,
+    install_hypr_status, install_omarchy_prod, install_systemd_status, install_waybar,
+    install_waybar_status, is_dev_config, is_daemon_running, is_systemd_unit_installed, launch_task_tui,
+    load_config, load_dev_config, maybe_reexec_dev_session, ping_daemon, profile_for_config,
+    run_doctor_checks, stop_daemon,
+    systemd_restart, systemd_start, systemd_stop, systemctl_is_active, tail_hypr_log, tail_raw,
+    trace_path, uninstall_hypr, uninstall_waybar, version_info, workspace_module_key, DaemonClient,
+    DaemonServer, InstallBinsOptions, InstallHyprOptions, InstallProfile,
+    InstallWaybarOptions, OmarchyInstallOptions, TskError, Registry, Result, TaskService, TaskStatus,
+    TaskRepoSource, detect_vcs_root, find_repo, find_repo_by_path, load_repos, register_repo, repo_label,
+    ensure_repo_removable, unregister_repo, clear_hypr_log,
 };
 
 #[derive(Parser)]
-#[command(name = "tsk", about = "Hypr Taskspace")]
+#[command(name = "tsk", about = "Hypr Taskspace", disable_version_flag = true)]
 struct Cli {
+    /// Print version, binary path, and active config profile (dev or prod).
+    #[arg(short = 'V', long, global = true)]
+    version: bool,
+
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
@@ -32,13 +38,20 @@ enum Commands {
         #[command(subcommand)]
         command: Option<WindowsCommands>,
     },
+    /// Omarchy Hyprland & Waybar integration (see docs/install.md)
     Install {
         #[command(subcommand)]
-        command: InstallCommands,
+        command: ProdInstallCommands,
     },
-    Uninstall {
+    /// Development / e2e integration (separate install tree under ~/.local/share/tsk-dev)
+    Dev {
         #[command(subcommand)]
-        command: UninstallCommands,
+        command: DevCommands,
+    },
+    /// Show integration status for the active config profile
+    Integration {
+        #[command(subcommand)]
+        command: IntegrationCommands,
     },
     #[command(subcommand)]
     Taskspace(TaskspaceCommands),
@@ -90,8 +103,46 @@ enum WindowsCommands {
 }
 
 #[derive(Subcommand)]
-enum InstallCommands {
-    /// Install Hyprland + Waybar integrations
+enum ProdInstallCommands {
+    /// Omarchy Hyprland & Waybar integration preset (prod)
+    Omarchy {
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        workspace: Option<std::path::PathBuf>,
+    },
+}
+
+#[derive(Subcommand)]
+enum DevCommands {
+    Install {
+        #[command(subcommand)]
+        command: Option<DevInstallCommands>,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        workspace: Option<std::path::PathBuf>,
+    },
+    Uninstall {
+        #[command(subcommand)]
+        command: DevUninstallCommands,
+    },
+    Status,
+}
+
+#[derive(Subcommand)]
+enum DevInstallCommands {
+    /// Install share templates + Waybar module only (no Hypr/Waybar config edits)
+    Share {
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        workspace: Option<std::path::PathBuf>,
+        /// Install to prod paths (~/.local/share/tsk); used by scripts/install-user-share.sh
+        #[arg(long, hide = true)]
+        prod: bool,
+    },
+    /// Install binaries + Hyprland + Waybar integration (no systemd)
     All {
         #[arg(long)]
         dry_run: bool,
@@ -110,26 +161,21 @@ enum InstallCommands {
         #[arg(long)]
         workspace: Option<std::path::PathBuf>,
     },
-    /// Install user systemd unit for the tsk daemon
-    Systemd {
-        #[arg(long)]
-        dry_run: bool,
-        #[arg(long, help = "Skip `systemctl --user enable`")]
-        no_enable: bool,
-        #[arg(long, help = "Skip `systemctl --user start` after install")]
-        no_start: bool,
-    },
-    Status,
 }
 
 #[derive(Subcommand)]
-enum UninstallCommands {
+enum DevUninstallCommands {
+    All,
     Hypr {
         #[arg(long)]
         keep_files: bool,
     },
     Waybar,
-    Systemd,
+}
+
+#[derive(Subcommand)]
+enum IntegrationCommands {
+    Status,
 }
 
 #[derive(Subcommand)]
@@ -323,7 +369,17 @@ fn main() {
 }
 
 fn run() -> Result<()> {
-    match Cli::parse().command {
+    maybe_reexec_dev_session()?;
+    let cli = Cli::parse();
+    if cli.version {
+        return cmd_version();
+    }
+    let Some(command) = cli.command else {
+        return Err(TskError::Other(
+            "subcommand required — try `tsk --help`".into(),
+        ));
+    };
+    match command {
         Commands::Status => cmd_status(),
         Commands::Doctor => cmd_doctor(),
         Commands::Windows { task, command } => match command {
@@ -334,29 +390,51 @@ fn run() -> Result<()> {
             Some(WindowsCommands::Restore { dry_run }) => cmd_windows_restore(dry_run),
         },
         Commands::Install { command } => match command {
-            InstallCommands::All {
-                dry_run,
-                workspace,
-            } => cmd_install_all(dry_run, workspace),
-            InstallCommands::Hypr {
-                dry_run,
-                workspace,
-            } => cmd_install_hypr(dry_run, workspace),
-            InstallCommands::Waybar {
-                dry_run,
-                workspace,
-            } => cmd_install_waybar(dry_run, workspace),
-            InstallCommands::Systemd {
-                dry_run,
-                no_enable,
-                no_start,
-            } => cmd_install_systemd(dry_run, no_enable, no_start),
-            InstallCommands::Status => cmd_install_status(),
+            ProdInstallCommands::Omarchy { dry_run, workspace } => {
+                cmd_install_omarchy(dry_run, workspace)
+            }
         },
-        Commands::Uninstall { command } => match command {
-            UninstallCommands::Hypr { keep_files } => cmd_uninstall_hypr(keep_files),
-            UninstallCommands::Waybar => cmd_uninstall_waybar(),
-            UninstallCommands::Systemd => cmd_uninstall_systemd(),
+        Commands::Dev { command } => match command {
+            DevCommands::Install {
+                command,
+                dry_run,
+                workspace,
+            } => match command {
+                Some(DevInstallCommands::Share {
+                    dry_run: share_dry,
+                    workspace: share_ws,
+                    prod,
+                }) => cmd_install_share(
+                    share_dry || dry_run,
+                    share_ws.or(workspace),
+                    if prod {
+                        InstallProfile::Prod
+                    } else {
+                        InstallProfile::Dev
+                    },
+                ),
+                Some(DevInstallCommands::All { dry_run, workspace }) => {
+                    cmd_dev_install_all(dry_run, workspace)
+                }
+                Some(DevInstallCommands::Hypr { dry_run, workspace }) => {
+                    cmd_dev_install_hypr(dry_run, workspace)
+                }
+                Some(DevInstallCommands::Waybar { dry_run, workspace }) => {
+                    cmd_dev_install_waybar(dry_run, workspace)
+                }
+                None => Err(TskError::Other(
+                    "dev install requires a subcommand (share, all, hypr, waybar)".into(),
+                )),
+            },
+            DevCommands::Uninstall { command } => match command {
+                DevUninstallCommands::All => cmd_dev_uninstall_all(),
+                DevUninstallCommands::Hypr { keep_files } => cmd_dev_uninstall_hypr(keep_files),
+                DevUninstallCommands::Waybar => cmd_dev_uninstall_waybar(),
+            },
+            DevCommands::Status => cmd_integration_status(load_dev_config()?),
+        },
+        Commands::Integration { command } => match command {
+            IntegrationCommands::Status => cmd_integration_status(load_config()?),
         },
         Commands::Taskspace(command) => match command {
             TaskspaceCommands::Default => cmd_taskspace_default(),
@@ -436,6 +514,12 @@ fn run() -> Result<()> {
 
 fn client() -> Result<DaemonClient> {
     DaemonClient::with_defaults()
+}
+
+fn cmd_version() -> Result<()> {
+    let info = version_info(env!("CARGO_PKG_VERSION"))?;
+    println!("{}", format_version_long(&info));
+    Ok(())
 }
 
 fn cmd_status() -> Result<()> {
@@ -576,23 +660,92 @@ fn cmd_windows_restore(dry_run: bool) -> Result<()> {
     Ok(())
 }
 
-fn cmd_install_all(dry_run: bool, workspace: Option<std::path::PathBuf>) -> Result<()> {
-    cmd_install_hypr(dry_run, workspace.clone())?;
-    if !dry_run {
-        println!();
-    }
-    cmd_install_waybar(dry_run, workspace.clone())?;
-    if !dry_run {
-        println!();
-    }
-    cmd_install_systemd(dry_run, false, false)
+fn bundled_waybar_cdylib() -> Option<std::path::PathBuf> {
+    option_env!("TSK_WAYBAR_CDYLIB_SOURCE").map(std::path::PathBuf::from)
 }
 
-fn cmd_install_hypr(dry_run: bool, workspace: Option<std::path::PathBuf>) -> Result<()> {
+fn cmd_install_share(
+    dry_run: bool,
+    workspace: Option<std::path::PathBuf>,
+    profile: InstallProfile,
+) -> Result<()> {
+    cmd_install_bins(dry_run, workspace, profile)
+}
+
+fn cmd_install_bins(
+    dry_run: bool,
+    workspace: Option<std::path::PathBuf>,
+    profile: InstallProfile,
+) -> Result<()> {
+    let cfg = match profile {
+        InstallProfile::Prod => load_config()?,
+        InstallProfile::Dev => load_dev_config()?,
+    };
+    let actions = install_bins(
+        &cfg,
+        &InstallBinsOptions {
+            dry_run,
+            workspace_root: workspace,
+            profile: Some(profile),
+            omarchy_integration: false,
+            skip_waybar: false,
+            bundled_waybar_source: bundled_waybar_cdylib(),
+        },
+    )?;
+    if dry_run {
+        for line in actions {
+            println!("{line}");
+        }
+    } else {
+        for line in actions {
+            println!("{line}");
+        }
+    }
+    Ok(())
+}
+
+fn cmd_install_omarchy(dry_run: bool, workspace: Option<std::path::PathBuf>) -> Result<()> {
     let cfg = load_config()?;
+    let actions = install_omarchy_prod(
+        &cfg,
+        &OmarchyInstallOptions {
+            dry_run,
+            workspace_root: workspace,
+        },
+    )?;
+    if dry_run {
+        for line in actions {
+            println!("{line}");
+        }
+        return Ok(());
+    }
+    if !actions.is_empty() {
+        println!("Applied: {}.", actions.join(", "));
+    }
+    println!();
+    println!("Omarchy prod integration installed to {}.", cfg.install_hypr_share_dir.display());
+    println!("  Hyprland: source line + Omarchy unbinds");
+    println!("  Waybar: cffi/tsk module, styles, restart");
+    println!("Next: scripts/install-systemd.sh  (or systemctl --user enable --now tskd.service when using the pacman package)");
+    Ok(())
+}
+
+fn cmd_dev_install_all(dry_run: bool, workspace: Option<std::path::PathBuf>) -> Result<()> {
+    cmd_dev_install_hypr(dry_run, workspace.clone())?;
+    if !dry_run {
+        println!();
+    }
+    cmd_dev_install_waybar(dry_run, workspace)
+}
+
+fn cmd_dev_install_hypr(dry_run: bool, workspace: Option<std::path::PathBuf>) -> Result<()> {
+    let cfg = load_dev_config()?;
     let options = InstallHyprOptions {
         dry_run,
         workspace_root: workspace,
+        profile: Some(InstallProfile::Dev),
+        omarchy_integration: true,
+        skip_bins_install: false,
     };
     let actions = install_hypr(&cfg, &options)?;
     if dry_run {
@@ -600,29 +753,28 @@ fn cmd_install_hypr(dry_run: bool, workspace: Option<std::path::PathBuf>) -> Res
             println!("{line}");
         }
     } else {
-        println!("Installed Hyprland integration.");
+        println!("Installed dev Hyprland integration.");
         if !actions.is_empty() {
             println!("Applied: {}.", actions.join(", "));
         }
-        let (path_ok, path_detail) = tsk_core::install::path_link::path_tsk_is_rust(&cfg);
         println!(
-            "CLI: {} (symlink: {})",
-            cfg.install_hypr_share_dir.join("bin/tsk").display(),
-            tsk_core::xdg::user_bin_dir().join("tsk").display()
+            "CLI: use `tsk` on PATH ({}); share helpers in {}",
+            tsk_core::path_tsk_is_usable(&cfg).1,
+            cfg.install_hypr_share_dir.join("bin").display()
         );
-        if !path_ok {
-            eprintln!("Note: {path_detail}");
-        }
-        reset_navigation_layout_after_install()?;
+        println!("Start the dev daemon manually: scripts/dev.sh daemon");
+        TaskService::with_config(cfg)?.reset_navigation_layout()?;
+        println!("Reset workspace layout memory (per-monitor mappings cleared).");
     }
     Ok(())
 }
 
-fn cmd_install_waybar(dry_run: bool, workspace: Option<std::path::PathBuf>) -> Result<()> {
-    let cfg = load_config()?;
+fn cmd_dev_install_waybar(dry_run: bool, workspace: Option<std::path::PathBuf>) -> Result<()> {
+    let cfg = load_dev_config()?;
     let options = InstallWaybarOptions {
         dry_run,
         workspace_root: workspace,
+        skip_module_build: false,
     };
     let actions = install_waybar(&cfg, &options)?;
     if dry_run {
@@ -630,7 +782,7 @@ fn cmd_install_waybar(dry_run: bool, workspace: Option<std::path::PathBuf>) -> R
             println!("{line}");
         }
     } else {
-        println!("Installed Waybar integration.");
+        println!("Installed dev Waybar integration.");
         if !actions.is_empty() {
             println!("Applied: {}.", actions.join(", "));
         }
@@ -638,31 +790,28 @@ fn cmd_install_waybar(dry_run: bool, workspace: Option<std::path::PathBuf>) -> R
     Ok(())
 }
 
-fn cmd_install_systemd(dry_run: bool, no_enable: bool, no_start: bool) -> Result<()> {
-    let cfg = load_config()?;
-    let options = InstallSystemdOptions {
-        dry_run,
-        enable: !no_enable,
-        start: !no_start,
-    };
-    let actions = install_systemd(&cfg, &options)?;
-    if dry_run {
-        for line in actions {
-            println!("{line}");
-        }
-    } else {
-        println!("Installed systemd user service.");
-        if !actions.is_empty() {
-            println!("Applied: {}.", actions.join(", "));
-        }
-        println!("The daemon starts with Hyprland and can be managed with `systemctl --user {SERVICE}` or `tsk daemon` commands.", SERVICE = "tskd.service");
+fn cmd_dev_uninstall_all() -> Result<()> {
+    cmd_dev_uninstall_waybar()?;
+    cmd_dev_uninstall_hypr(false)
+}
+
+fn cmd_dev_uninstall_hypr(keep_files: bool) -> Result<()> {
+    let cfg = load_dev_config()?;
+    let actions = uninstall_hypr(&cfg, keep_files)?;
+    println!("Uninstalled dev Hyprland integration.");
+    if !actions.is_empty() {
+        println!("Applied: {}.", actions.join(", "));
     }
     Ok(())
 }
 
-fn reset_navigation_layout_after_install() -> Result<()> {
-    TaskService::with_defaults()?.reset_navigation_layout()?;
-    println!("Reset workspace layout memory (per-monitor mappings cleared).");
+fn cmd_dev_uninstall_waybar() -> Result<()> {
+    let cfg = load_dev_config()?;
+    let actions = uninstall_waybar(&cfg)?;
+    println!("Uninstalled dev Waybar integration.");
+    if !actions.is_empty() {
+        println!("Applied: {}.", actions.join(", "));
+    }
     Ok(())
 }
 
@@ -672,8 +821,18 @@ fn cmd_reset_layout() -> Result<()> {
     Ok(())
 }
 
-fn cmd_install_status() -> Result<()> {
-    let cfg = load_config()?;
+fn cmd_integration_status(cfg: tsk_core::TskConfig) -> Result<()> {
+    let profile = profile_for_config(&cfg);
+    let session_active = tsk_core::dev_session_active();
+    println!("Profile: {profile:?} ({})", cfg.install_hypr_share_dir.display());
+    if session_active {
+        println!("Session: active (dev enter running)");
+        if let Some(bin) = tsk_core::dev_session_binary() {
+            println!("  binary: {}", bin.display());
+        }
+    } else {
+        println!("Session: inactive");
+    }
     let h = install_hypr_status(&cfg)?;
     let w = install_waybar_status(&cfg)?;
     if h.get("installed").and_then(|v| v.as_bool()).unwrap_or(false) {
@@ -689,49 +848,21 @@ fn cmd_install_status() -> Result<()> {
     } else {
         println!("Waybar integration: not installed");
     }
-    let s = install_systemd_status(&cfg)?;
-    if s.get("installed").and_then(|v| v.as_bool()).unwrap_or(false) {
-        println!("Systemd daemon service: installed");
-        if let Some(p) = s.get("unit_path").and_then(|v| v.as_str()) {
-            println!("  unit: {p}");
+    if profile.install_systemd() {
+        let s = install_systemd_status(&cfg)?;
+        if s.get("installed").and_then(|v| v.as_bool()).unwrap_or(false) {
+            println!("Systemd daemon service: installed");
+            if let Some(p) = s.get("unit_path").and_then(|v| v.as_str()) {
+                println!("  unit: {p}");
+            }
+            let enabled = s.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
+            let active = s.get("active").and_then(|v| v.as_bool()).unwrap_or(false);
+            println!("  enabled: {enabled}, active: {active}");
+        } else {
+            println!("Systemd daemon service: not installed");
         }
-        let enabled = s.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
-        let active = s.get("active").and_then(|v| v.as_bool()).unwrap_or(false);
-        println!("  enabled: {enabled}, active: {active}");
     } else {
-        println!("Systemd daemon service: not installed");
-    }
-    Ok(())
-}
-
-fn cmd_uninstall_hypr(keep_files: bool) -> Result<()> {
-    let cfg = load_config()?;
-    let actions = uninstall_hypr(&cfg, keep_files)?;
-    println!("Uninstalled Hyprland integration.");
-    if !actions.is_empty() {
-        println!("Applied: {}.", actions.join(", "));
-    }
-    Ok(())
-}
-
-fn cmd_uninstall_waybar() -> Result<()> {
-    let cfg = load_config()?;
-    let actions = uninstall_waybar(&cfg)?;
-    println!("Uninstalled Waybar integration.");
-    if !actions.is_empty() {
-        println!("Applied: {}.", actions.join(", "));
-    }
-    Ok(())
-}
-
-fn cmd_uninstall_systemd() -> Result<()> {
-    let cfg = load_config()?;
-    let actions = uninstall_systemd(&cfg)?;
-    if actions.is_empty() {
-        println!("Systemd daemon service: not installed.");
-    } else {
-        println!("Uninstalled systemd daemon service.");
-        println!("Applied: {}.", actions.join(", "));
+        println!("Systemd daemon service: skipped (dev profile — run `scripts/dev.sh daemon`)");
     }
     Ok(())
 }
@@ -1164,12 +1295,17 @@ fn cmd_debug_hypr_log_path() -> Result<()> {
     Ok(())
 }
 
+fn daemon_uses_systemd() -> Result<bool> {
+    let cfg = load_config()?;
+    Ok(!is_dev_config(&cfg) && is_systemd_unit_installed())
+}
+
 fn cmd_daemon_start() -> Result<()> {
     if is_daemon_running() {
         println!("Daemon already running.");
         return Ok(());
     }
-    if is_systemd_unit_installed() {
+    if daemon_uses_systemd()? {
         systemd_start()?;
         wait_for_daemon("started")?;
         return Ok(());
@@ -1180,7 +1316,7 @@ fn cmd_daemon_start() -> Result<()> {
 }
 
 fn cmd_daemon_restart() -> Result<()> {
-    if is_systemd_unit_installed() {
+    if daemon_uses_systemd()? {
         let was_running = is_daemon_running();
         systemd_restart()?;
         wait_for_daemon(if was_running { "restarted" } else { "started" })?;
@@ -1272,7 +1408,7 @@ fn cmd_daemon_run() -> Result<()> {
 }
 
 fn cmd_daemon_stop() -> Result<()> {
-    if is_systemd_unit_installed() {
+    if daemon_uses_systemd()? {
         systemd_stop()?;
         println!("Daemon stopped.");
         return Ok(());

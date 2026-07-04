@@ -1,6 +1,5 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use serde_json::{json, Map, Value};
 
@@ -9,19 +8,24 @@ use crate::error::{TskError, Result};
 use crate::install::backup::{self, backup_timestamp};
 use crate::install::jsonc::{dump_jsonc, parse_jsonc};
 use crate::install::manifest::{self, Manifest};
+use crate::install::profile::{install_metadata_dir, profile_for_config, InstallProfile};
 use crate::install::reload;
-use crate::xdg::{config_home, ensure_parent, expand, tsk_data_dir};
+use crate::share::{effective_share_dir, uses_packaged_share};
+use crate::xdg::{config_home, ensure_parent, expand};
 
 pub const CFFI_MODULE: &str = "cffi/tsk";
 const HYPR_WORKSPACES_MODULE: &str = "hyprland/workspaces";
 const TSK_TASK_MODULE: &str = "custom/tsk-task";
 const STYLE_MARKER: &str = "/* tsk-waybar */";
-const LIB_NAME: &str = "libtsk_waybar.so";
+
+use crate::binary::waybar_module_path;
 
 #[derive(Debug, Clone)]
 pub struct InstallWaybarOptions {
     pub dry_run: bool,
     pub workspace_root: Option<PathBuf>,
+    /// Skip `cargo build` for the CFFI module (caller already installed it).
+    pub skip_module_build: bool,
 }
 
 impl Default for InstallWaybarOptions {
@@ -29,6 +33,7 @@ impl Default for InstallWaybarOptions {
         Self {
             dry_run: false,
             workspace_root: None,
+            skip_module_build: false,
         }
     }
 }
@@ -46,7 +51,9 @@ pub fn default_waybar_config() -> PathBuf {
 }
 
 pub fn install_waybar_status(cfg: &TskConfig) -> Result<Value> {
-    let manifest = manifest::load_manifest(&cfg.install_hypr_share_dir, "waybar")?;
+    let profile = profile_for_config(cfg);
+    let metadata_dir = install_metadata_dir(cfg, profile);
+    let manifest = manifest::load_manifest(&metadata_dir, "waybar")?;
     let config_path = default_waybar_config();
     let mut has_cffi = false;
     if config_path.is_file() {
@@ -69,12 +76,13 @@ pub fn install_waybar_status(cfg: &TskConfig) -> Result<Value> {
 }
 
 pub fn plan_install(cfg: &TskConfig) -> Result<InstallWaybarPlan> {
+    let profile = profile_for_config(cfg);
+    let metadata_dir = install_metadata_dir(cfg, profile);
     let config_path = default_waybar_config();
-    let backup_dir = cfg
-        .install_hypr_share_dir
+    let backup_dir = metadata_dir
         .join("install/waybar/backups")
         .join(backup_timestamp());
-    let module_path = cfg.install_hypr_share_dir.join("lib").join(LIB_NAME);
+    let module_path = waybar_module_path(cfg);
     let modules_left_before = if config_path.is_file() {
         let data = parse_jsonc(&fs::read_to_string(&config_path).map_err(|source| {
             TskError::Read {
@@ -97,12 +105,25 @@ pub fn plan_install(cfg: &TskConfig) -> Result<InstallWaybarPlan> {
 pub fn install_waybar(cfg: &TskConfig, options: &InstallWaybarOptions) -> Result<Vec<String>> {
     let plan = plan_install(cfg)?;
     if options.dry_run {
-        return Ok(vec![format!("would patch {}", plan.config_path.display())]);
+        let mut lines = vec![format!("would patch {}", plan.config_path.display())];
+        let style_path = plan.config_path.parent().unwrap().join("style.css");
+        if style_path.is_file() {
+            lines.push(format!("would patch {}", style_path.display()));
+        }
+        lines.push("would restart Waybar".into());
+        return Ok(lines);
     }
 
     copy_share_templates(cfg)?;
-    let built = build_and_install_module(cfg, options.workspace_root.as_deref())?;
-    eprintln!("installed Waybar module: {}", built.display());
+    if !options.skip_module_build && !uses_packaged_share(cfg) {
+        let built = crate::install::bins::build_and_install_waybar_module(
+            cfg,
+            options.workspace_root.as_deref(),
+        )?;
+        eprintln!("installed Waybar module: {}", built.display());
+    } else if uses_packaged_share(cfg) {
+        crate::install::bins::verify_system_share_for_waybar(cfg)?;
+    }
 
     if !plan.config_path.is_file() {
         return Err(TskError::Other(format!(
@@ -118,12 +139,14 @@ pub fn install_waybar(cfg: &TskConfig, options: &InstallWaybarOptions) -> Result
     })?;
     let data = parse_jsonc(&raw)?;
 
+    // Always snapshot before patching (dev may re-patch an already tsk-integrated config).
+    backup::backup_file(&plan.config_path, &plan.backup_dir)?;
+    if style_path.is_file() {
+        backup::backup_file(&style_path, &plan.backup_dir)?;
+    }
     if !config_has_tsk(&data) {
-        backup::backup_file(&plan.config_path, &plan.backup_dir)?;
-        if style_path.is_file() {
-            backup::backup_file(&style_path, &plan.backup_dir)?;
-        }
-        ensure_pristine_backup(cfg, &plan.config_path, &style_path)?;
+        let metadata_dir = install_metadata_dir(cfg, profile_for_config(cfg));
+        ensure_pristine_backup(&metadata_dir, &plan.config_path, &style_path)?;
     }
 
     patch_config(&plan.config_path, &plan.module_path)?;
@@ -142,18 +165,27 @@ pub fn install_waybar(cfg: &TskConfig, options: &InstallWaybarOptions) -> Result
             {"type": "install_cffi_module", "with": CFFI_MODULE},
         ]
     })];
-    manifest::save_manifest(&cfg.install_hypr_share_dir, &m)?;
+    manifest::save_manifest(&install_metadata_dir(cfg, profile_for_config(cfg)), &m)?;
 
     Ok(reload::apply_after_waybar())
 }
 
 pub fn uninstall_waybar(cfg: &TskConfig) -> Result<Vec<String>> {
+    let profile = profile_for_config(cfg);
+    let metadata_dir = install_metadata_dir(cfg, profile);
     let config_path = default_waybar_config();
-    let m = manifest::load_manifest(&cfg.install_hypr_share_dir, "waybar")?;
 
-    seed_pristine_from_oldest_backup(cfg)?;
+    if profile == InstallProfile::Dev && try_restore_prod_waybar(&config_path)? {
+        manifest::remove_manifest(&metadata_dir, "waybar")?;
+        remove_legacy_dev_manifest(cfg, "waybar")?;
+        return Ok(reload::apply_after_waybar());
+    }
 
-    let restored = restore_from_pristine(cfg, &config_path)?;
+    let m = manifest::load_manifest(&metadata_dir, "waybar")?;
+
+    seed_pristine_from_oldest_backup(cfg, &metadata_dir)?;
+
+    let restored = restore_from_pristine(cfg, &config_path, &metadata_dir)?;
     if !restored {
         if let Some(ref manifest) = m {
             let backup_root = PathBuf::from(&manifest.backup_dir);
@@ -182,7 +214,10 @@ pub fn uninstall_waybar(cfg: &TskConfig) -> Result<Vec<String>> {
         unpatch_style(parent)?;
     }
 
-    manifest::remove_manifest(&cfg.install_hypr_share_dir, "waybar")?;
+    manifest::remove_manifest(&metadata_dir, "waybar")?;
+    if profile == InstallProfile::Dev {
+        remove_legacy_dev_manifest(cfg, "waybar")?;
+    }
 
     if m.is_none() && !restored {
         let has_tsk = config_path
@@ -205,8 +240,12 @@ pub fn uninstall_waybar(cfg: &TskConfig) -> Result<Vec<String>> {
 }
 
 fn copy_share_templates(cfg: &TskConfig) -> Result<()> {
-    let share_src = repo_share()?;
+    if uses_packaged_share(cfg) {
+        return Ok(());
+    }
+    let share_src = crate::install::bins::find_share_root(None)?.join("waybar");
     let share_dest = cfg.install_hypr_share_dir.join("waybar");
+    let share_str = cfg.install_hypr_share_dir.to_string_lossy();
     ensure_parent(&share_dest.join("_"))?;
     fs::create_dir_all(&share_dest).map_err(|source| TskError::Write {
         path: share_dest.clone(),
@@ -223,108 +262,17 @@ fn copy_share_templates(cfg: &TskConfig) -> Result<()> {
         let path = entry.path();
         if path.is_file() {
             let dest = share_dest.join(path.file_name().unwrap());
-            fs::copy(&path, &dest).map_err(|source| TskError::Write { path: dest, source })?;
+            let raw = fs::read_to_string(&path).map_err(|source| TskError::Read {
+                path: path.clone(),
+                source,
+            })?;
+            let body = raw.replace("@TSK_SHARE@", &share_str);
+            fs::write(&dest, body).map_err(|source| TskError::Write { path: dest, source })?;
         }
     }
     Ok(())
 }
 
-fn build_and_install_module(cfg: &TskConfig, workspace_root: Option<&Path>) -> Result<PathBuf> {
-    let lib_dir = cfg.install_hypr_share_dir.join("lib");
-    let dest = lib_dir.join(LIB_NAME);
-    ensure_parent(&dest)?;
-    fs::create_dir_all(&lib_dir).map_err(|source| TskError::Write {
-        path: lib_dir.clone(),
-        source,
-    })?;
-
-    let workspace = workspace_root
-        .map(Path::to_path_buf)
-        .or_else(find_workspace_root)
-        .ok_or_else(|| {
-            TskError::Other(
-                "could not find Cargo workspace — set TSK_WORKSPACE or run from the repo"
-                    .into(),
-            )
-        })?;
-
-    let target_dir = workspace.join("target");
-    let release_so = target_dir.join("release").join(LIB_NAME);
-    eprintln!("building tsk-waybar (release)...");
-    let status = Command::new("cargo")
-        .args([
-            "build",
-            "-p",
-            "tsk-waybar",
-            "--release",
-            "--target-dir",
-        ])
-        .arg(&target_dir)
-        .current_dir(&workspace)
-        .status()
-        .map_err(|e| TskError::Other(format!("failed to run cargo: {e}")))?;
-    if !status.success() {
-        return Err(TskError::Other("cargo build -p tsk-waybar failed".into()));
-    }
-
-    if !release_so.is_file() {
-        return Err(TskError::Other(format!(
-            "built module not found at {}",
-            release_so.display()
-        )));
-    }
-
-    fs::copy(&release_so, &dest).map_err(|source| TskError::Write {
-        path: dest.clone(),
-        source,
-    })?;
-    Ok(dest)
-}
-
-fn find_workspace_root() -> Option<PathBuf> {
-    if let Ok(env) = std::env::var("TSK_WORKSPACE") {
-        let path = PathBuf::from(env);
-        if path.join("Cargo.toml").is_file() {
-            return Some(path);
-        }
-    }
-    let mut dir = std::env::current_dir().ok()?;
-    loop {
-        let cargo = dir.join("Cargo.toml");
-        if cargo.is_file() {
-            let text = fs::read_to_string(&cargo).ok()?;
-            if text.contains("tsk-waybar") {
-                return Some(dir);
-            }
-        }
-        if !dir.pop() {
-            break;
-        }
-    }
-    None
-}
-
-fn repo_share() -> Result<PathBuf> {
-    if let Ok(env) = std::env::var("TSK_WORKSPACE") {
-        let share = PathBuf::from(env).join("share/waybar");
-        if share.is_dir() {
-            return Ok(share);
-        }
-    }
-    if let Ok(dir) = std::env::current_dir() {
-        let share = dir.join("share/waybar");
-        if share.is_dir() {
-            return Ok(share);
-        }
-    }
-    let fallback = tsk_data_dir().join("waybar");
-    if fallback.is_dir() {
-        return Ok(fallback);
-    }
-    Err(TskError::Other(
-        "share/waybar templates not found — set TSK_WORKSPACE".into(),
-    ))
-}
 
 fn patch_config(config_path: &Path, module_path: &Path) -> Result<()> {
     let raw = fs::read_to_string(config_path).map_err(|source| TskError::Read {
@@ -419,7 +367,7 @@ fn unpatch_config(config_path: &Path) -> Result<bool> {
 
 fn patch_style(config_dir: &Path, cfg: &TskConfig) -> Result<()> {
     let style_path = config_dir.join("style.css");
-    let snippet_path = cfg.install_hypr_share_dir.join("waybar/tsk-style.css");
+    let snippet_path = effective_share_dir(cfg).join("waybar/tsk-style.css");
     if !snippet_path.is_file() || !style_path.is_file() {
         return Ok(());
     }
@@ -459,13 +407,16 @@ fn unpatch_style(config_dir: &Path) -> Result<bool> {
     Ok(true)
 }
 
-fn pristine_backup_dir(cfg: &TskConfig) -> PathBuf {
-    cfg.install_hypr_share_dir
-        .join("install/waybar/backups/pristine")
+fn pristine_backup_dir(metadata_dir: &Path) -> PathBuf {
+    metadata_dir.join("install/waybar/backups/pristine")
 }
 
-fn ensure_pristine_backup(cfg: &TskConfig, config_path: &Path, style_path: &Path) -> Result<()> {
-    let pristine = pristine_backup_dir(cfg);
+fn ensure_pristine_backup(
+    metadata_dir: &Path,
+    config_path: &Path,
+    style_path: &Path,
+) -> Result<()> {
+    let pristine = pristine_backup_dir(metadata_dir);
     if pristine.join("config.jsonc").is_file() {
         return Ok(());
     }
@@ -477,14 +428,12 @@ fn ensure_pristine_backup(cfg: &TskConfig, config_path: &Path, style_path: &Path
     Ok(())
 }
 
-fn seed_pristine_from_oldest_backup(cfg: &TskConfig) -> Result<bool> {
-    let pristine = pristine_backup_dir(cfg);
+fn seed_pristine_from_oldest_backup(_cfg: &TskConfig, metadata_dir: &Path) -> Result<bool> {
+    let pristine = pristine_backup_dir(metadata_dir);
     if pristine.join("config.jsonc").is_file() {
         return Ok(false);
     }
-    let backups_root = cfg
-        .install_hypr_share_dir
-        .join("install/waybar/backups");
+    let backups_root = metadata_dir.join("install/waybar/backups");
     if !backups_root.is_dir() {
         return Ok(false);
     }
@@ -527,8 +476,12 @@ fn seed_pristine_from_oldest_backup(cfg: &TskConfig) -> Result<bool> {
     Ok(false)
 }
 
-fn restore_from_pristine(cfg: &TskConfig, config_path: &Path) -> Result<bool> {
-    let pristine = pristine_backup_dir(cfg);
+fn restore_from_pristine(
+    _cfg: &TskConfig,
+    config_path: &Path,
+    metadata_dir: &Path,
+) -> Result<bool> {
+    let pristine = pristine_backup_dir(metadata_dir);
     let config_backup = pristine.join("config.jsonc");
     if !config_backup.is_file() {
         return Ok(false);
@@ -540,6 +493,56 @@ fn restore_from_pristine(cfg: &TskConfig, config_path: &Path) -> Result<bool> {
         backup::restore_file(&style_backup, &style_path)?;
     }
     Ok(true)
+}
+
+/// After dev Waybar uninstall, re-apply prod integration when prod was installed first.
+fn try_restore_prod_waybar(config_path: &Path) -> Result<bool> {
+    let prod_cfg = crate::config::load_prod_config()?;
+    let prod_lib = if crate::share::system_share_available() {
+        crate::share::system_waybar_module_path()
+    } else {
+        waybar_module_path(&prod_cfg)
+    };
+    if !crate::binary::is_usable_cdylib(&prod_lib) {
+        return Ok(false);
+    }
+
+    let prod_metadata = install_metadata_dir(&prod_cfg, InstallProfile::Prod);
+    let prod_manifest = manifest::load_manifest(&prod_metadata, "waybar")?;
+    let prod_pristine = pristine_backup_dir(&prod_metadata).join("config.jsonc");
+    if prod_manifest.is_none() && !prod_pristine.is_file() {
+        return Ok(false);
+    }
+
+    if restore_from_pristine(&prod_cfg, config_path, &prod_metadata)? {
+        // Restored pre-tsk baseline; patch prod module below.
+    } else if let Some(ref m) = prod_manifest {
+        let backup_root = PathBuf::from(&m.backup_dir);
+        let src = backup_root.join("config.jsonc");
+        if src.is_file() {
+            backup::restore_file(&src, config_path)?;
+        }
+        let style_src = backup_root.join("style.css");
+        let style_path = config_path.parent().unwrap().join("style.css");
+        if style_src.is_file() {
+            backup::restore_file(&style_src, &style_path)?;
+        }
+    }
+
+    patch_config(config_path, &prod_lib)?;
+    if let Some(parent) = config_path.parent() {
+        let _ = patch_style(parent, &prod_cfg);
+    }
+    Ok(true)
+}
+
+fn remove_legacy_dev_manifest(cfg: &TskConfig, integration: &str) -> Result<()> {
+    if let Some(m) = manifest::load_manifest(&cfg.data_dir, integration)? {
+        if m.module_kind.as_deref() == Some("dev") {
+            manifest::remove_manifest(&cfg.data_dir, integration)?;
+        }
+    }
+    Ok(())
 }
 
 fn modules_left(data: &Value) -> Vec<String> {

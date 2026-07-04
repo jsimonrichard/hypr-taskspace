@@ -1,5 +1,5 @@
 {
   "cffi/tsk": {
-    "module_path": "~/.local/share/tsk/lib/libtsk_waybar.so"
+    "module_path": "@TSK_SHARE@/lib/libtsk_waybar.so"
   }
 }

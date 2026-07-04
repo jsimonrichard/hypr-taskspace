@@ -11,8 +11,11 @@ use crate::error::Result;
 use crate::is_daemon_running;
 use crate::hyprland;
 use crate::hyprland_events::diagnose_socket2;
-use crate::install::{install_hypr_status, install_systemd_status, install_waybar_status, manifest};
+use crate::install::{
+    install_hypr_status, install_systemd_status, install_waybar_status, manifest,
+};
 use crate::install::waybar::CFFI_MODULE;
+use crate::share::{effective_share_dir, uses_packaged_share};
 
 #[derive(Debug, Clone)]
 pub struct DoctorCheck {
@@ -26,17 +29,14 @@ pub fn run_doctor_checks(cfg: &TskConfig) -> Result<Vec<DoctorCheck>> {
     let hypr = install_hypr_status(cfg)?;
     let waybar = install_waybar_status(cfg)?;
 
+    let share = effective_share_dir(cfg);
     checks.push(DoctorCheck {
         label: "Hyprland bindings installed".into(),
         passed: hypr
             .get("bindings_exist")
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
-        detail: cfg
-            .install_hypr_share_dir
-            .join("hypr/bindings.conf")
-            .display()
-            .to_string(),
+        detail: share.join("hypr/bindings.conf").display().to_string(),
     });
 
     checks.push(DoctorCheck {
@@ -45,11 +45,7 @@ pub fn run_doctor_checks(cfg: &TskConfig) -> Result<Vec<DoctorCheck>> {
             .get("tui_helper_exist")
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
-        detail: cfg
-            .install_hypr_share_dir
-            .join("bin/tsk-task-tui")
-            .display()
-            .to_string(),
+        detail: share.join("bin/tsk-task-tui").display().to_string(),
     });
 
     checks.push(DoctorCheck {
@@ -68,16 +64,9 @@ pub fn run_doctor_checks(cfg: &TskConfig) -> Result<Vec<DoctorCheck>> {
         detail: backup_msg,
     });
 
-    let tsk_bin = cfg.install_hypr_share_dir.join("bin/tsk");
+    let (path_ok, path_detail) = crate::binary::path_tsk_is_usable(cfg);
     checks.push(DoctorCheck {
-        label: "Rust CLI installed".into(),
-        passed: tsk_bin.is_file(),
-        detail: tsk_bin.display().to_string(),
-    });
-
-    let (path_ok, path_detail) = crate::install::path_link::path_tsk_is_rust(cfg);
-    checks.push(DoctorCheck {
-        label: "PATH tsk is Rust CLI".into(),
+        label: "tsk on PATH".into(),
         passed: path_ok,
         detail: path_detail,
     });
@@ -96,16 +85,41 @@ pub fn run_doctor_checks(cfg: &TskConfig) -> Result<Vec<DoctorCheck>> {
     });
 
     checks.push(DoctorCheck {
+        label: "Runtime data directory".into(),
+        passed: true,
+        detail: cfg.data_dir.display().to_string(),
+    });
+
+    if uses_packaged_share(cfg) {
+        checks.push(DoctorCheck {
+            label: "System share (package)".into(),
+            passed: share.join("hypr/bindings.conf").is_file(),
+            detail: share.display().to_string(),
+        });
+    }
+
+    let module_path = share.join("lib/libtsk_waybar.so");
+    let module_ok = crate::binary::is_usable_cdylib(&module_path);
+    checks.push(DoctorCheck {
         label: format!("Waybar module ({CFFI_MODULE}) installed"),
         passed: waybar
             .get("installed")
             .and_then(|v| v.as_bool())
-            .unwrap_or(false),
-        detail: cfg
-            .install_hypr_share_dir
-            .join("lib/libtsk_waybar.so")
-            .display()
-            .to_string(),
+            .unwrap_or(false)
+            && module_ok,
+        detail: if module_ok {
+            module_path.display().to_string()
+        } else if module_path.is_file() {
+            format!(
+                "{} (empty or corrupt — run: scripts/install-user-share.sh or reinstall the package)",
+                module_path.display()
+            )
+        } else {
+            format!(
+                "{} (missing — run: scripts/install-user-share.sh or reinstall the package)",
+                module_path.display()
+            )
+        },
     });
 
     checks.push(DoctorCheck {
@@ -139,9 +153,9 @@ pub fn run_doctor_checks(cfg: &TskConfig) -> Result<Vec<DoctorCheck>> {
                 .map(|p| p.display().to_string())
                 .unwrap_or_else(|_| "ok".into())
         } else if systemd_installed {
-            "run: systemctl --user start tskd.service (or log into Hyprland)".into()
+            "run: systemctl --user start tskd.service (or log into your graphical session)".into()
         } else {
-            "run: tsk install systemd (recommended) or tsk daemon start".into()
+            "run: scripts/install-systemd.sh (recommended) or tsk daemon start".into()
         },
     });
 
@@ -173,7 +187,7 @@ pub fn run_doctor_checks(cfg: &TskConfig) -> Result<Vec<DoctorCheck>> {
                     .unwrap_or("")
             )
         } else {
-            "run: tsk install systemd".into()
+            "run: scripts/install-systemd.sh".into()
         },
     });
 
@@ -192,7 +206,7 @@ pub fn run_doctor_checks(cfg: &TskConfig) -> Result<Vec<DoctorCheck>> {
 }
 
 fn install_backup_status(cfg: &TskConfig) -> (bool, String) {
-    let Ok(Some(m)) = manifest::load_manifest(&cfg.install_hypr_share_dir, "hypr") else {
+    let Ok(Some(m)) = manifest::load_manifest(&cfg.data_dir, "hypr") else {
         return (false, "no manifest".into());
     };
     let backup_dir = Path::new(&m.backup_dir);

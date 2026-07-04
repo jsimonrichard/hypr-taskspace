@@ -1,16 +1,61 @@
+use std::fs;
 use std::path::PathBuf;
 
 use serde::Deserialize;
 
 use crate::error::{TskError, Result};
 use crate::host::default_distrobox_image;
-use crate::xdg::{ensure_parent, expand, tsk_config_path, resolve_daemon_socket_path};
+use crate::install::profile::is_dev_share_dir;
+use crate::share::default_prod_share_dir;
+use crate::xdg::{ensure_parent, expand, tsk_config_path, tsk_data_dir, resolve_daemon_socket_path};
 
 pub fn default_daemon_socket_config_value() -> String {
     "~/.local/share/tsk/daemon.sock".into()
 }
 
+pub fn default_dev_config_contents() -> String {
+    format!(
+        r#"[default]
+workspace_count = 10
+
+[tasks]
+base_dir = "~/tsk-tasks"
+workspaces_per_task = 10
+max_tasks = 9
+
+[distrobox]
+image = "{image}"
+container_prefix = "tsk-dev"
+
+[terminal]
+command = "xdg-terminal-exec"
+title_flag = "--title"
+
+[hyprland]
+enabled = true
+auto_move_tagged_windows = true
+switch_task_on_window_focus = false
+
+[daemon]
+socket = "~/.local/share/tsk-dev/daemon.sock"
+
+[data]
+dir = "~/.local/share/tsk"
+
+[install.hypr]
+config_path = "~/.config/hypr/hyprland.conf"
+share_dir = "~/.local/share/tsk-dev"
+source_line = "~/.local/share/tsk-dev/hypr/bindings.conf"
+"#,
+        image = default_distrobox_image(),
+    )
+}
+
 pub fn default_config_contents() -> String {
+    let share = default_prod_share_dir();
+    let share_str = share.to_string_lossy();
+    let bindings = share.join("hypr/bindings.conf");
+    let source_line = bindings.to_string_lossy();
     format!(
         r#"[default]
 workspace_count = 10
@@ -38,15 +83,20 @@ switch_task_on_window_focus = false
 [daemon]
 socket = "{socket}"
 
+[data]
+dir = "~/.local/share/tsk"
+
 [install.hypr]
 config_path = "~/.config/hypr/hyprland.conf"
-share_dir = "~/.local/share/tsk"
-source_line = "~/.local/share/tsk/hypr/bindings.conf"
+share_dir = "{share_str}"
+source_line = "{source_line}"
 require_sourced_last = true
 allow_user_file_comments = false
 "#,
         image = default_distrobox_image(),
         socket = default_daemon_socket_config_value(),
+        share_str = share_str,
+        source_line = source_line,
     )
 }
 
@@ -62,6 +112,9 @@ pub struct TskConfig {
     pub container_prefix: String,
     pub hyprland_enabled: bool,
     pub daemon_socket: String,
+    /// User-writable runtime data (`state.db`, install manifests/backups).
+    pub data_dir: PathBuf,
+    /// Read-only integration templates (Hypr/Waybar helpers); `/usr/share/tsk` when packaged.
     pub install_hypr_share_dir: PathBuf,
     pub install_hypr_config_path: PathBuf,
     pub install_hypr_source_line: String,
@@ -80,9 +133,11 @@ impl Default for TskConfig {
             container_prefix: "tsk".into(),
             hyprland_enabled: true,
             daemon_socket: default_daemon_socket_config_value(),
-            install_hypr_share_dir: expand("~/.local/share/tsk"),
+            data_dir: tsk_data_dir(),
+            install_hypr_share_dir: default_prod_share_dir(),
             install_hypr_config_path: expand("~/.config/hypr/hyprland.conf"),
-            install_hypr_source_line: expand("~/.local/share/tsk/hypr/bindings.conf")
+            install_hypr_source_line: default_prod_share_dir()
+                .join("hypr/bindings.conf")
                 .to_string_lossy()
                 .into_owned(),
             terminal_command: "xdg-terminal-exec".into(),
@@ -94,6 +149,149 @@ impl TskConfig {
     pub fn daemon_socket_path(&self) -> PathBuf {
         resolve_daemon_socket_path(&self.daemon_socket)
     }
+
+    pub fn state_db_path(&self) -> PathBuf {
+        self.data_dir.join("state.db")
+    }
+
+    pub fn install_meta_dir(&self) -> PathBuf {
+        self.data_dir.join("install")
+    }
+}
+
+pub fn ensure_dev_config() -> Result<PathBuf> {
+    let path = dev_config_path();
+    ensure_parent(&path)?;
+    if !path.is_file() {
+        let contents = seed_dev_config_contents()?;
+        fs::write(&path, contents).map_err(|source| TskError::Write {
+            path: path.clone(),
+            source,
+        })?;
+    }
+    Ok(path)
+}
+
+pub fn dev_config_path() -> PathBuf {
+    expand("~/.config/tsk-dev/config.toml")
+}
+
+/// First-time dev config: copy prod settings when available, with dev paths overridden.
+fn seed_dev_config_contents() -> Result<String> {
+    let prod_path = tsk_config_path();
+    if prod_path.is_file() {
+        let raw = fs::read_to_string(&prod_path).map_err(|source| TskError::Read {
+            path: prod_path,
+            source,
+        })?;
+        dev_config_from_prod(&raw)
+    } else {
+        Ok(default_dev_config_contents())
+    }
+}
+
+fn dev_config_from_prod(prod_contents: &str) -> Result<String> {
+    let mut root: toml::Table = toml::from_str(prod_contents)
+        .map_err(|e| TskError::Config(format!("prod config: {e}")))?;
+
+    set_nested_str(
+        &mut root,
+        &["data", "dir"],
+        "~/.local/share/tsk",
+    );
+    set_nested_str(
+        &mut root,
+        &["install", "hypr", "share_dir"],
+        "~/.local/share/tsk-dev",
+    );
+    set_nested_str(
+        &mut root,
+        &["install", "hypr", "source_line"],
+        "~/.local/share/tsk-dev/hypr/bindings.conf",
+    );
+    set_nested_str(
+        &mut root,
+        &["daemon", "socket"],
+        "~/.local/share/tsk-dev/daemon.sock",
+    );
+    set_nested_str(&mut root, &["distrobox", "container_prefix"], "tsk-dev");
+
+    toml::to_string_pretty(&toml::Value::Table(root))
+        .map_err(|e| TskError::Config(format!("dev config: {e}")))
+}
+
+fn set_nested_str(root: &mut toml::Table, path: &[&str], value: &str) {
+    if path.is_empty() {
+        return;
+    }
+    if path.len() == 1 {
+        root.insert(path[0].into(), toml::Value::String(value.into()));
+        return;
+    }
+    let entry = root
+        .entry(path[0])
+        .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+    let Some(table) = entry.as_table_mut() else {
+        *entry = toml::Value::Table(toml::Table::new());
+        let table = entry.as_table_mut().expect("table");
+        set_nested_str(table, &path[1..], value);
+        return;
+    };
+    set_nested_str(table, &path[1..], value);
+}
+
+pub fn load_dev_config() -> Result<TskConfig> {
+    let path = ensure_dev_config()?;
+    let raw = std::fs::read_to_string(&path).map_err(|source| TskError::Read {
+        path: path.clone(),
+        source,
+    })?;
+    let parsed: RawConfig =
+        toml::from_str(&raw).map_err(|e| TskError::Config(e.to_string()))?;
+    let mut cfg = parse_config(parsed);
+    let needs_repair = dev_config_needs_repair(&raw);
+    apply_dev_config_overrides(&mut cfg);
+    if needs_repair {
+        let repaired = dev_config_from_prod(&raw)?;
+        match std::fs::write(&path, &repaired) {
+            Ok(()) => eprintln!(
+                "repaired stale dev config (install.hypr paths → ~/.local/share/tsk-dev): {}",
+                path.display()
+            ),
+            Err(source) => eprintln!(
+                "note: dev config has stale install paths (using ~/.local/share/tsk-dev in-memory; could not write {}: {source})",
+                path.display()
+            ),
+        }
+    }
+    Ok(cfg)
+}
+
+fn apply_dev_config_overrides(cfg: &mut TskConfig) {
+    use crate::install::profile::dev_share_dir;
+
+    let share = dev_share_dir();
+    cfg.install_hypr_share_dir = share.clone();
+    cfg.install_hypr_source_line = share
+        .join("hypr/bindings.conf")
+        .to_string_lossy()
+        .into_owned();
+    if !cfg.daemon_socket.contains("tsk-dev") {
+        cfg.daemon_socket = "~/.local/share/tsk-dev/daemon.sock".into();
+    }
+    if cfg.container_prefix != "tsk-dev" {
+        cfg.container_prefix = "tsk-dev".into();
+    }
+}
+
+fn dev_config_needs_repair(raw: &str) -> bool {
+    let Ok(parsed) = toml::from_str::<RawConfig>(raw) else {
+        return false;
+    };
+    let cfg = parse_config(parsed);
+    !is_dev_share_dir(&cfg.install_hypr_share_dir)
+        || !cfg.daemon_socket.contains("tsk-dev")
+        || cfg.container_prefix != "tsk-dev"
 }
 
 #[derive(Debug, Deserialize)]
@@ -111,7 +309,14 @@ struct RawConfig {
     #[serde(default)]
     terminal: RawTerminal,
     #[serde(default)]
+    data: RawData,
+    #[serde(default)]
     install: RawInstall,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawData {
+    dir: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -174,14 +379,30 @@ pub fn ensure_config() -> Result<PathBuf> {
 }
 
 pub fn load_config() -> Result<TskConfig> {
-    let path = ensure_config()?;
-    let raw = std::fs::read_to_string(&path).map_err(|source| TskError::Read {
-        path: path.clone(),
+    if crate::dev_session::dev_session_active() {
+        return load_dev_config();
+    }
+    load_config_at(&ensure_config()?)
+}
+
+pub fn load_config_at(path: &std::path::Path) -> Result<TskConfig> {
+    let raw = std::fs::read_to_string(path).map_err(|source| TskError::Read {
+        path: path.to_path_buf(),
         source,
     })?;
     let parsed: RawConfig =
         toml::from_str(&raw).map_err(|e| TskError::Config(e.to_string()))?;
     Ok(parse_config(parsed))
+}
+
+/// Prod config file — ignores `TSK_CONFIG` / dev auto-detection.
+pub fn load_prod_config() -> Result<TskConfig> {
+    let path = expand("~/.config/tsk/config.toml");
+    if path.is_file() {
+        load_config_at(&path)
+    } else {
+        Ok(TskConfig::default())
+    }
 }
 
 fn parse_config(raw: RawConfig) -> TskConfig {
@@ -215,14 +436,25 @@ fn parse_config(raw: RawConfig) -> TskConfig {
     if let Some(socket) = raw.daemon.socket {
         cfg.daemon_socket = socket;
     }
+    if let Some(dir) = raw.data.dir {
+        cfg.data_dir = expand(dir);
+    }
     if let Some(share) = raw.install.hypr.share_dir {
         cfg.install_hypr_share_dir = expand(share);
+    } else {
+        cfg.install_hypr_share_dir = default_prod_share_dir();
     }
     if let Some(path) = raw.install.hypr.config_path {
         cfg.install_hypr_config_path = expand(path);
     }
     if let Some(line) = raw.install.hypr.source_line {
         cfg.install_hypr_source_line = expand(line).to_string_lossy().into_owned();
+    } else {
+        cfg.install_hypr_source_line = cfg
+            .install_hypr_share_dir
+            .join("hypr/bindings.conf")
+            .to_string_lossy()
+            .into_owned();
     }
     if let Some(cmd) = raw.terminal.command {
         cfg.terminal_command = cmd;
@@ -278,11 +510,107 @@ global_workspaces = [10, 1, 1, 99, 3]
     }
 
     #[test]
+    fn state_db_lives_in_data_dir_not_share_dir() {
+        let mut cfg = TskConfig::default();
+        cfg.data_dir = expand("~/.local/share/tsk");
+        cfg.install_hypr_share_dir = PathBuf::from("/usr/share/tsk");
+        assert_eq!(cfg.state_db_path(), expand("~/.local/share/tsk/state.db"));
+    }
+
+    #[test]
     fn daemon_socket_path_resolves_from_config() {
         let mut cfg = TskConfig::default();
         cfg.daemon_socket = "~/.local/share/tsk/daemon.sock".into();
         assert!(cfg
             .daemon_socket_path()
             .ends_with(".local/share/tsk/daemon.sock"));
+    }
+
+    #[test]
+    fn dev_config_from_prod_overrides_packaged_share_paths() {
+        let prod = r#"
+[install.hypr]
+share_dir = "/usr/share/tsk"
+source_line = "/usr/share/tsk/hypr/bindings.conf"
+[daemon]
+socket = "~/.local/share/tsk/daemon.sock"
+[distrobox]
+container_prefix = "tsk"
+"#;
+        let dev = dev_config_from_prod(prod).expect("dev config");
+        assert!(dev.contains("share_dir = \"~/.local/share/tsk-dev\""));
+        assert!(dev.contains("source_line = \"~/.local/share/tsk-dev/hypr/bindings.conf\""));
+        assert!(dev.contains("socket = \"~/.local/share/tsk-dev/daemon.sock\""));
+        assert!(dev.contains("container_prefix = \"tsk-dev\""));
+    }
+
+    #[test]
+    fn apply_dev_config_overrides_fixes_stale_share_dir() {
+        let stale = r#"
+[install.hypr]
+share_dir = "/usr/share/tsk"
+source_line = "/usr/share/tsk/hypr/bindings.conf"
+[daemon]
+socket = "~/.local/share/tsk/daemon.sock"
+[distrobox]
+container_prefix = "tsk"
+"#;
+        let mut cfg = parse_config(toml::from_str(stale).unwrap());
+        apply_dev_config_overrides(&mut cfg);
+        assert_eq!(cfg.install_hypr_share_dir, expand("~/.local/share/tsk-dev"));
+        assert!(cfg.install_hypr_source_line.contains("tsk-dev"));
+        assert_eq!(cfg.daemon_socket, "~/.local/share/tsk-dev/daemon.sock");
+        assert_eq!(cfg.container_prefix, "tsk-dev");
+    }
+
+    #[test]
+    fn dev_config_needs_repair_when_share_dir_is_prod() {
+        let stale = r#"
+[install.hypr]
+share_dir = "/usr/share/tsk"
+[daemon]
+socket = "~/.local/share/tsk/daemon.sock"
+[distrobox]
+container_prefix = "tsk"
+"#;
+        assert!(dev_config_needs_repair(stale));
+    }
+
+    #[test]
+    fn dev_config_from_prod_preserves_global_workspaces_and_overrides_paths() {
+        let prod = r#"
+[default]
+workspace_count = 10
+global_workspaces = [1, 10]
+
+[tasks]
+base_dir = "~/tsk-tasks"
+
+[distrobox]
+container_prefix = "tsk"
+
+[daemon]
+socket = "~/.local/share/tsk/daemon.sock"
+
+[data]
+dir = "~/.local/share/tsk"
+
+[install.hypr]
+share_dir = "~/.local/share/tsk"
+source_line = "~/.local/share/tsk/hypr/bindings.conf"
+require_sourced_last = true
+"#;
+        let dev = dev_config_from_prod(prod).expect("dev config");
+        let cfg = parse_config(toml::from_str(&dev).unwrap());
+        assert_eq!(cfg.global_workspace_slots, vec![1, 10]);
+        assert_eq!(cfg.tasks_base_dir, expand("~/tsk-tasks"));
+        assert_eq!(cfg.container_prefix, "tsk-dev");
+        assert_eq!(cfg.data_dir, expand("~/.local/share/tsk"));
+        assert_eq!(cfg.daemon_socket, "~/.local/share/tsk-dev/daemon.sock");
+        assert_eq!(
+            cfg.install_hypr_share_dir,
+            expand("~/.local/share/tsk-dev")
+        );
+        assert!(dev.contains("require_sourced_last = true"));
     }
 }

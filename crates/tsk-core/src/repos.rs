@@ -14,7 +14,7 @@ use crate::error::{TskError, Result};
 use crate::models::Task;
 use crate::task_paths::scratch_checkout_path;
 use crate::vcs::{detect_vcs_root, repo_label, VcsKind};
-use crate::xdg::{ensure_parent, expand, tsk_config_dir, tsk_state_db};
+use crate::xdg::{ensure_parent, expand, tsk_config_dir};
 
 const REPOS_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS repos (
@@ -160,7 +160,7 @@ pub fn save_repo_config(vcs_root: &Path, config: &RepoConfig) -> Result<()> {
 }
 
 fn repos_db_conn() -> Result<Connection> {
-    let path = tsk_state_db();
+    let path = crate::config::load_config()?.state_db_path();
     ensure_parent(&path)?;
     let conn = Connection::open(&path).map_err(TskError::from)?;
     conn.execute_batch(REPOS_SCHEMA)?;
@@ -373,9 +373,11 @@ mod tests {
 
     fn with_temp_db<F: FnOnce()>(f: F) {
         let dir = tempfile::tempdir().unwrap();
-        std::env::set_var("XDG_DATA_HOME", dir.path());
-        std::env::set_var("XDG_CONFIG_HOME", dir.path());
+        std::env::set_var("HOME", dir.path());
+        std::env::set_var("XDG_DATA_HOME", dir.path().join("share"));
+        std::env::set_var("XDG_CONFIG_HOME", dir.path().join("config"));
         f();
+        std::env::remove_var("HOME");
         std::env::remove_var("XDG_DATA_HOME");
         std::env::remove_var("XDG_CONFIG_HOME");
     }

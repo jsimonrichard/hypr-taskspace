@@ -5,7 +5,7 @@ use std::process::Command;
 
 use crate::config::{load_config, TskConfig};
 use crate::error::{TskError, Result};
-use crate::binary::{command_v_login, resolve_tsk_binary};
+use crate::binary::{resolve_tsk_spawn_binary, command_v_login};
 use crate::models::Task;
 
 const TERMINAL_FALLBACKS: &[&str] = &[
@@ -24,7 +24,7 @@ pub const TUI_WINDOW_CLASS: &str = "org.tsk.task-tui";
 
 pub fn launch_task_tui() -> Result<()> {
     let cfg = load_config()?;
-    let tsk = resolve_tsk_binary(&cfg);
+    let tsk = resolve_tsk_spawn_binary(&cfg);
     let term = resolve_terminal_command(&cfg)?;
     spawn_terminal_command(&term, &tsk, &["task", "tui"], None, TUI_WINDOW_TITLE, TUI_WINDOW_CLASS)
 }
@@ -139,6 +139,11 @@ fn spawn_terminal_command(
 ) -> Result<()> {
     let base = terminal_base_name(term);
     let mut cmd = Command::new(term);
+    if let Ok(config) = std::env::var("TSK_CONFIG") {
+        cmd.env("TSK_CONFIG", config);
+    }
+    // Avoid passing the Hyprland wrapper path through to the spawned TUI process.
+    cmd.env_remove("TSK");
     match base {
         "xdg-terminal-exec" => {
             cmd.args([

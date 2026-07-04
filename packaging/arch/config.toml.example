@@ -1,0 +1,29 @@
+# Example config for pacman installs. Copy to ~/.config/tsk/config.toml or merge sections.
+
+[default]
+workspace_count = 10
+
+[tasks]
+base_dir = "~/tsk-tasks"
+workspaces_per_task = 10
+max_tasks = 9
+
+[daemon]
+socket = "~/.local/share/tsk/daemon.sock"
+
+[data]
+dir = "~/.local/share/tsk"
+
+[install.hypr]
+config_path = "~/.config/hypr/hyprland.conf"
+share_dir = "/usr/share/tsk"
+source_line = "/usr/share/tsk/hypr/bindings.conf"
+
+[hyprland]
+enabled = true
+auto_move_tagged_windows = true
+switch_task_on_window_focus = false
+
+[terminal]
+command = "xdg-terminal-exec"
+title_flag = "--title"

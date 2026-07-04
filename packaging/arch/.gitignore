@@ -1,0 +1,11 @@
+# makepkg outputs
+*.pkg.tar.zst
+*.pkg.tar.zst.sig
+pkg/
+src/
+
+# cargo (CARGO_TARGET_DIR in PKGBUILD)
+target/
+
+# generated for AUR submissions (see docs/packaging.md)
+.SRCINFO

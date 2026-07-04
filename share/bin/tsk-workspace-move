@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Hyprland workspace move helper — lives beside the installed share templates.
+set -euo pipefail
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+export HOME="${HOME:-$(getent passwd "$(id -u)" | cut -d: -f6)}"
+TSK="$(command -v tsk)"
+slot="$1"
+"$TSK" workspace move "$slot"

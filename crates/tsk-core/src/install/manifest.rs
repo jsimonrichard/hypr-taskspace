@@ -39,12 +39,12 @@ impl Manifest {
     }
 }
 
-pub fn manifest_path(share_dir: &Path, integration: &str) -> PathBuf {
-    share_dir.join("install").join(integration).join("manifest.json")
+pub fn manifest_path(data_dir: &Path, integration: &str) -> PathBuf {
+    data_dir.join("install").join(integration).join("manifest.json")
 }
 
-pub fn load_manifest(share_dir: &Path, integration: &str) -> Result<Option<Manifest>> {
-    let path = manifest_path(share_dir, integration);
+pub fn load_manifest(data_dir: &Path, integration: &str) -> Result<Option<Manifest>> {
+    let path = manifest_path(data_dir, integration);
     if !path.is_file() {
         return Ok(None);
     }
@@ -57,8 +57,8 @@ pub fn load_manifest(share_dir: &Path, integration: &str) -> Result<Option<Manif
     ))
 }
 
-pub fn save_manifest(share_dir: &Path, manifest: &Manifest) -> Result<PathBuf> {
-    let path = manifest_path(share_dir, &manifest.integration);
+pub fn save_manifest(data_dir: &Path, manifest: &Manifest) -> Result<PathBuf> {
+    let path = manifest_path(data_dir, &manifest.integration);
     ensure_parent(&path)?;
     fs::write(
         &path,
@@ -75,8 +75,8 @@ pub fn save_manifest(share_dir: &Path, manifest: &Manifest) -> Result<PathBuf> {
     Ok(path)
 }
 
-pub fn remove_manifest(share_dir: &Path, integration: &str) -> Result<()> {
-    let path = manifest_path(share_dir, integration);
+pub fn remove_manifest(data_dir: &Path, integration: &str) -> Result<()> {
+    let path = manifest_path(data_dir, integration);
     if path.is_file() {
         fs::remove_file(&path).map_err(|source| TskError::Write { path, source })?;
     }

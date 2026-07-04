@@ -32,6 +32,18 @@ pub fn tsk_config_dir() -> PathBuf {
 }
 
 pub fn tsk_config_path() -> PathBuf {
+    if crate::dev_session::dev_session_active() {
+        if let Ok(path) = env::var("TSK_CONFIG") {
+            return expand(path);
+        }
+        return crate::install::profile::dev_config_path();
+    }
+    if let Ok(exe) = env::current_exe() {
+        let exe = exe.to_string_lossy();
+        if exe.contains("/tsk-dev/") {
+            return expand("~/.config/tsk-dev/config.toml");
+        }
+    }
     tsk_config_dir().join("config.toml")
 }
 
@@ -75,4 +87,22 @@ pub fn ensure_parent(path: &Path) -> Result<()> {
         })?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tsk_config_path_ignores_tsk_config_env_without_active_session() {
+        crate::dev_session::stop_dev_session().ok();
+        std::env::set_var("TSK_CONFIG", "/home/u/.config/tsk-dev/config.toml");
+        let path = tsk_config_path();
+        assert!(
+            !path.to_string_lossy().contains("tsk-dev"),
+            "expected prod config path, got {}",
+            path.display()
+        );
+        std::env::remove_var("TSK_CONFIG");
+    }
 }
