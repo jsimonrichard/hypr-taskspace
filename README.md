@@ -1,4 +1,4 @@
-# hypr-taskspace — Hypr Taskspace
+# Hypr Taskspace
 
 Task-centric Hyprland control plane. Each task gets its own **taskspace** with named **workspaces** (`auth-fix-1`, `auth-fix-2`, …). The **default** taskspace uses plain Hyprland workspace names **`1`–`10`** for everyday host work.
 
