@@ -234,11 +234,12 @@ impl DaemonClient {
         Ok(())
     }
 
-    pub fn create_task(&self, name: &str, switch: bool, repo_id: Option<&str>) -> Result<Task> {
+    pub fn create_task(&self, name: &str, switch: bool, repo: crate::task_repo::TaskRepoSource) -> Result<Task> {
         ensure_daemon()?;
+        let cwd = std::env::current_dir().ok();
         let mut body = json!({ "name": name, "switch": switch });
-        if let Some(id) = repo_id {
-            body["repo_id"] = json!(id);
+        if let Value::Object(mut repo_params) = repo.to_daemon_params(cwd.as_deref()) {
+            body.as_object_mut().unwrap().append(&mut repo_params);
         }
         let v = daemon_request("create_task", body)?;
         serde_json::from_value(v).map_err(|e| LaeError::Other(e.to_string()))

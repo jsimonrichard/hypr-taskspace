@@ -1,12 +1,13 @@
 mod app;
 mod daemon_check;
+mod grep_dir_picker;
 mod modal;
 mod ui;
 
 use std::io::{self, stdout, ErrorKind, Stdout};
 use std::time::{Duration, Instant};
 
-use crossterm::event::{self, Event, KeyEventKind};
+use crossterm::event::{self, Event, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
@@ -22,7 +23,16 @@ struct TerminalGuard;
 impl TerminalGuard {
     fn enter() -> io::Result<(Self, Terminal<CrosstermBackend<Stdout>>)> {
         enable_raw_mode()?;
-        execute!(stdout(), EnterAlternateScreen, crossterm::cursor::Hide)?;
+        // DISAMBIGUATE_ESCAPE_CODES helps Ctrl+Enter report with a CONTROL modifier.
+        // Do not enable REPORT_ALL_KEYS_AS_ESCAPE_CODES — it breaks Shift (keys arrive as
+        // physical codes + SHIFT modifier instead of shifted characters).
+        let kb_flags = KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES;
+        execute!(
+            stdout(),
+            EnterAlternateScreen,
+            crossterm::cursor::Hide,
+            PushKeyboardEnhancementFlags(kb_flags),
+        )?;
         let backend = CrosstermBackend::new(stdout());
         let terminal = Terminal::new(backend)?;
         Ok((Self, terminal))
@@ -32,7 +42,12 @@ impl TerminalGuard {
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
-        let _ = execute!(stdout(), LeaveAlternateScreen, crossterm::cursor::Show);
+        let _ = execute!(
+            stdout(),
+            LeaveAlternateScreen,
+            crossterm::cursor::Show,
+            PopKeyboardEnhancementFlags,
+        );
     }
 }
 
@@ -66,20 +81,16 @@ pub fn run() -> Result<()> {
 
         let timeout = tick.saturating_sub(last_tick.elapsed());
         if poll_event(timeout)? {
-            match read_event()? {
-                Event::Key(key) if key.kind == KeyEventKind::Press => {
-                    if let Err(err) = app.handle_key(key) {
-                        app.status = Some((false, err.to_string()));
-                    }
-                    if app.daemon_recheck_requested {
+            let event = read_event()?;
+            if matches!(event, Event::Resize(_, _)) {
+                let _ = execute!(stdout(), crossterm::terminal::Clear(ClearType::All));
+            }
+            if let Err(err) = app.handle_event(event) {
+                app.status = Some((false, err.to_string()));
+            }
+            if app.daemon_recheck_requested {
                         app.daemon_recheck_requested = false;
-                        daemon_checker.spawn_check();
-                    }
-                }
-                Event::Resize(_, _) => {
-                    let _ = execute!(stdout(), crossterm::terminal::Clear(ClearType::All));
-                }
-                _ => {}
+                daemon_checker.spawn_check();
             }
         }
 

@@ -8,6 +8,8 @@ use lae_core::{
     ping_daemon, run_doctor_checks, stop_daemon, tail_hypr_log, tail_raw,
     trace_path, uninstall_hypr, uninstall_waybar, workspace_module_key, DaemonClient, DaemonServer,
     InstallHyprOptions, InstallWaybarOptions, LaeError, Registry, Result, TaskService, TaskStatus,
+    TaskRepoSource, detect_vcs_root, find_repo, find_repo_by_path,
+    load_repos, register_repo, repo_label, unregister_repo,
     clear_hypr_log,
 };
 
@@ -41,6 +43,10 @@ enum Commands {
     Task {
         #[command(subcommand)]
         command: TaskCommands,
+    },
+    Repo {
+        #[command(subcommand)]
+        command: RepoCommands,
     },
     Waybar {
         #[command(subcommand)]
@@ -131,8 +137,12 @@ enum WorkspaceCommands {
 enum TaskCommands {
     New {
         name: String,
-        #[arg(long)]
+        #[arg(long, help = "Do not switch into the new task after creating it")]
         no_switch: bool,
+        #[arg(long, help = "Use an isolated scratch repo under the task home")]
+        scratch: bool,
+        #[arg(long, help = "Use a specific checkout path instead of detecting git/jj from cwd")]
+        repo_path: Option<std::path::PathBuf>,
     },
     List {
         #[arg(long)]
@@ -157,6 +167,26 @@ enum TaskCommands {
     /// Open the task manager TUI in a terminal window (used by SUPER+Tab)
     #[command(name = "tui-launch")]
     TuiLaunch,
+}
+
+#[derive(Subcommand)]
+enum RepoCommands {
+    /// Register a checkout (writes `.lae/repo.toml` inside the repo)
+    Add {
+        #[arg(value_name = "DIR")]
+        dir: Option<std::path::PathBuf>,
+    },
+    /// List registered repos
+    List,
+    /// Remove a repo from bookmarks (deletes `.lae/repo.toml` in the checkout)
+    Remove {
+        id_or_path: String,
+    },
+    /// Show the git/jj repo root for a directory (default: cwd)
+    Root {
+        #[arg(value_name = "DIR")]
+        dir: Option<std::path::PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -284,7 +314,12 @@ fn run() -> Result<()> {
             WorkspaceCommands::Goto { name } => cmd_workspace_goto(&name),
         },
         Commands::Task { command } => match command {
-            TaskCommands::New { name, no_switch } => cmd_task_new(&name, !no_switch),
+            TaskCommands::New {
+                name,
+                no_switch,
+                scratch,
+                repo_path,
+            } => cmd_task_new(&name, !no_switch, scratch, repo_path.as_deref()),
             TaskCommands::List { json, archived } => cmd_task_list(json, archived),
             TaskCommands::Switch { name_or_id } => cmd_task_switch(&name_or_id),
             TaskCommands::Current => cmd_task_current(),
@@ -292,6 +327,12 @@ fn run() -> Result<()> {
             TaskCommands::Delete { name_or_id } => cmd_task_delete(&name_or_id),
             TaskCommands::Menu | TaskCommands::TuiLaunch => cmd_task_tui_launch(),
             TaskCommands::Tui => cmd_task_tui(),
+        },
+        Commands::Repo { command } => match command {
+            RepoCommands::Add { dir } => cmd_repo_add(dir.as_deref()),
+            RepoCommands::List => cmd_repo_list(),
+            RepoCommands::Remove { id_or_path } => cmd_repo_remove(&id_or_path),
+            RepoCommands::Root { dir } => cmd_repo_root(dir.as_deref()),
         },
         Commands::Waybar { command } => match command {
             WaybarCommands::Status => cmd_waybar_install_status(),
@@ -612,8 +653,24 @@ fn cmd_workspace_goto(name: &str) -> Result<()> {
     Ok(())
 }
 
-fn cmd_task_new(name: &str, switch: bool) -> Result<()> {
-    let task = client()?.create_task(name, switch, None)?;
+fn cmd_task_new(
+    name: &str,
+    switch: bool,
+    scratch: bool,
+    repo_path: Option<&std::path::Path>,
+) -> Result<()> {
+    if scratch && repo_path.is_some() {
+        return Err(LaeError::Other(
+            "Use either --scratch or --repo-path, not both".into(),
+        ));
+    }
+    let repo = match (scratch, repo_path) {
+        (true, None) => TaskRepoSource::Scratch,
+        (false, Some(path)) => TaskRepoSource::Path(path.to_path_buf()),
+        (false, None) => TaskRepoSource::Auto,
+        (true, Some(_)) => unreachable!(),
+    };
+    let task = client()?.create_task(name, switch, repo)?;
     println!(
         "Created task {} → workspaces {}-1..{}-{}",
         task.id,
@@ -621,8 +678,74 @@ fn cmd_task_new(name: &str, switch: bool) -> Result<()> {
         task.id,
         task.workspace_count
     );
-    println!("Task home: {}", task.repo_path.parent().unwrap_or(&task.repo_path).display());
+    println!("Repo: {} ({})", repo_label(&task.repo_path), task.repo_path.display());
+    if let Some(home) = task.repo_path.parent() {
+        if home.file_name().is_some_and(|n| n == task.id.as_str()) {
+            println!("Task home: {}", home.display());
+        }
+    }
     Ok(())
+}
+
+fn cmd_repo_add(dir: Option<&std::path::Path>) -> Result<()> {
+    let start = dir
+        .map(std::path::Path::to_path_buf)
+        .or_else(|| std::env::current_dir().ok())
+        .ok_or_else(|| LaeError::Other("Could not resolve directory".into()))?;
+    let existing = load_repos([])?;
+    let repo = register_repo(&start, &existing)?;
+    println!(
+        "Registered {} → {}",
+        repo.name,
+        repo.path.display()
+    );
+    println!("Settings: {}", lae_core::repo_config_path(&repo.path).display());
+    Ok(())
+}
+
+fn cmd_repo_list() -> Result<()> {
+    let repos = load_repos([])?;
+    if repos.is_empty() {
+        println!("No repos registered — run `lae repo add` from a checkout");
+        return Ok(());
+    }
+    for repo in repos {
+        println!(
+            "{:<20}  {}  {}",
+            repo.id,
+            repo.name,
+            repo.path.display()
+        );
+    }
+    Ok(())
+}
+
+fn cmd_repo_remove(id_or_path: &str) -> Result<()> {
+    let repos = load_repos([])?;
+    let repo = find_repo(&repos, id_or_path)
+        .map(|r| r.path.clone())
+        .or_else(|| {
+            let path = std::path::PathBuf::from(id_or_path);
+            find_repo_by_path(&repos, &path).map(|r| r.path.clone())
+        })
+        .ok_or_else(|| LaeError::Other(format!("Unknown repo '{id_or_path}'")))?;
+    unregister_repo(&repo)?;
+    println!("Removed {}", repo.display());
+    Ok(())
+}
+
+fn cmd_repo_root(dir: Option<&std::path::Path>) -> Result<()> {
+    match detect_vcs_root(dir) {
+        Some(root) => {
+            println!("{}", root.display());
+            Ok(())
+        }
+        None => Err(LaeError::Other(format!(
+            "No git or jj repo found{}",
+            dir.map(|d| format!(" in {}", d.display()))
+                .unwrap_or_else(|| " from current directory".into())
+        ))),
+    }
 }
 
 fn cmd_task_archive(name_or_id: &str) -> Result<()> {
@@ -712,12 +835,10 @@ fn cmd_task_list(json: bool, include_archived: bool) -> Result<()> {
 
 fn print_task_line(t: &lae_core::Task) {
     println!(
-        "{:<20} {:<8}  {}-1..{}-{}  {}",
-        t.id,
+        "{:<24} {:<8}  {}  {}",
+        t.name,
         t.status.as_str(),
         t.id,
-        t.id,
-        t.workspace_count,
         t.repo_path.display()
     );
 }

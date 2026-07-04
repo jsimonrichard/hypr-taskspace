@@ -14,6 +14,8 @@ pub mod models;
 pub mod registry;
 pub mod repos;
 pub mod service;
+pub mod task_repo;
+pub mod vcs;
 pub mod state_notify;
 pub mod task_cleanup;
 pub mod taskspaces;
@@ -38,7 +40,14 @@ pub use install::{
     uninstall_hypr, uninstall_waybar, DoctorCheck, InstallHyprOptions, InstallWaybarOptions,
 };
 pub use models::{ContextMode, SessionState, Task, TaskStatus};
-pub use repos::{find_repo, load_repos, paths_match, repo_display_path, save_repos, RegisteredRepo, unique_repo_id};
+pub use repos::{
+    collect_task_repo_paths, find_repo, find_repo_by_path, is_task_scratch_repo, load_repo_config,
+    load_repos, normalize_repo_path, paths_match, register_repo, repo_bookmarks_path,
+    repo_config_path, repo_display_path, save_repo_config, unregister_repo, RegisteredRepo,
+    unique_repo_id,
+};
+pub use task_repo::{TaskRepoSource};
+pub use vcs::{detect_vcs_root, repo_label};
 pub use registry::Registry;
 pub use service::{MenuTask, TaskService};
 pub use state_notify::{

@@ -6,6 +6,6 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-crossterm = "0.28"
+crossterm = "0.29"
 lae-core = { path = "../lae-core" }
 ratatui = "0.29"

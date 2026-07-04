@@ -1,5 +1,7 @@
 //! Task and taskspace orchestration — writes `state.db` and publishes bar updates.
 
+use std::path::Path;
+
 use chrono::Utc;
 
 use crate::config::LaeConfig;
@@ -172,7 +174,13 @@ impl TaskService {
         Ok(Some(name.to_string()))
     }
 
-    pub fn create_task(&self, name: &str, switch: bool, repo_id: Option<&str>) -> Result<Task> {
+    pub fn create_task(
+        &self,
+        name: &str,
+        switch: bool,
+        repo: crate::task_repo::TaskRepoSource,
+        cwd: Option<&Path>,
+    ) -> Result<Task> {
         let mut state = self.load_state()?;
         let active_count = state
             .tasks
@@ -186,19 +194,11 @@ impl TaskService {
             )));
         }
 
-        let repos = crate::repos::load_repos()?;
         let task_id = self.registry.unique_task_id(&state, name);
         let task_home = self.config.tasks_base_dir.join(&task_id);
 
-        let (repo_path, repo_url) = match repo_id {
-            None => (task_home.join("repo"), None),
-            Some(id) => {
-                let repo = crate::repos::find_repo(&repos, id).ok_or_else(|| {
-                    LaeError::Other(format!("Unknown repo '{id}' — add it in the Repos panel"))
-                })?;
-                (crate::repos::repo_display_path(repo), repo.url.clone())
-            }
-        };
+        let (repo_path, create_repo_dir) = repo.resolve(&task_home, cwd)?;
+        let repo_url = repo.resolve_url();
 
         let agent_dir = task_home.join(".lae");
         std::fs::create_dir_all(&agent_dir).map_err(|source| LaeError::Write {
@@ -216,7 +216,7 @@ impl TaskService {
                 source,
             })?;
         }
-        if repo_id.is_none() {
+        if create_repo_dir {
             std::fs::create_dir_all(&repo_path).map_err(|source| LaeError::Write {
                 path: repo_path.clone(),
                 source,
@@ -455,17 +455,25 @@ mod tests {
     fn create_task_registers_workspaces_without_switch() {
         let dir = tempdir().unwrap();
         let svc = test_service(dir.path());
-        let task = svc.create_task("Auth Fix", false, None).unwrap();
-        assert_eq!(task.id, "auth-fix");
+        let task = svc
+            .create_task(
+                "Auth Fix",
+                false,
+                crate::task_repo::TaskRepoSource::Scratch,
+                None,
+            )
+            .unwrap();
+        assert!(task.id.starts_with('t'));
+        assert_eq!(task.name, "Auth Fix");
         assert_eq!(task.workspace_count, 10);
         assert_eq!(task.workspace_names().len(), 10);
-        assert_eq!(task.workspace_names()[0], "auth-fix-1");
-        assert_eq!(task.workspace_names()[9], "auth-fix-10");
+        assert_eq!(task.workspace_names()[0], format!("{}-1", task.id));
+        assert_eq!(task.workspace_names()[9], format!("{}-10", task.id));
         assert!(task.agent_notes_path.as_ref().unwrap().is_file());
         assert!(task.repo_path.is_dir());
 
         let state = svc.load_state().unwrap();
-        assert!(state.tasks.contains_key("auth-fix"));
+        assert!(state.tasks.contains_key(&task.id));
         assert_eq!(state.context_mode, ContextMode::Default);
     }
 
@@ -473,7 +481,14 @@ mod tests {
     fn create_task_with_switch_enters_taskspace() {
         let dir = tempdir().unwrap();
         let svc = test_service(dir.path());
-        let task = svc.create_task("billing", true, None).unwrap();
+        let task = svc
+            .create_task(
+                "billing",
+                true,
+                crate::task_repo::TaskRepoSource::Scratch,
+                None,
+            )
+            .unwrap();
         let state = svc.load_state().unwrap();
         assert_eq!(state.context_mode, ContextMode::Task);
         assert_eq!(state.current_task_id.as_deref(), Some(task.id.as_str()));
@@ -483,27 +498,41 @@ mod tests {
     fn archive_task_leaves_default_taskspace() {
         let dir = tempdir().unwrap();
         let svc = test_service(dir.path());
-        let task = svc.create_task("temp", true, None).unwrap();
+        let task = svc
+            .create_task(
+                "temp",
+                true,
+                crate::task_repo::TaskRepoSource::Scratch,
+                None,
+            )
+            .unwrap();
         svc.archive_task(&task.id).unwrap();
         let state = svc.load_state().unwrap();
         assert_eq!(state.tasks.get(&task.id).unwrap().status, TaskStatus::Archived);
         assert_eq!(state.context_mode, ContextMode::Default);
         assert!(state.current_task_id.is_none());
         assert!(svc.tasks_for_menu().unwrap().iter().all(|t| t.id != task.id));
-        assert!(dir.path().join("tasks").join("temp").is_dir());
+        assert!(dir.path().join("tasks").join(&task.id).is_dir());
     }
 
     #[test]
     fn delete_task_removes_record_and_data() {
         let dir = tempdir().unwrap();
         let svc = test_service(dir.path());
-        let task = svc.create_task("gone", false, None).unwrap();
-        let task_home = dir.path().join("tasks").join("gone");
+        let task = svc
+            .create_task(
+                "gone",
+                false,
+                crate::task_repo::TaskRepoSource::Scratch,
+                None,
+            )
+            .unwrap();
+        let task_home = dir.path().join("tasks").join(&task.id);
         assert!(task_home.is_dir());
 
         svc.delete_task(&task.id).unwrap();
         let state = svc.load_state().unwrap();
-        assert!(!state.tasks.contains_key("gone"));
+        assert!(!state.tasks.contains_key(&task.id));
         assert!(!task_home.exists());
     }
 
@@ -511,11 +540,39 @@ mod tests {
     fn delete_task_while_current_leaves_default_taskspace() {
         let dir = tempdir().unwrap();
         let svc = test_service(dir.path());
-        let task = svc.create_task("current", true, None).unwrap();
+        let task = svc
+            .create_task(
+                "current",
+                true,
+                crate::task_repo::TaskRepoSource::Scratch,
+                None,
+            )
+            .unwrap();
         svc.delete_task(&task.id).unwrap();
         let state = svc.load_state().unwrap();
-        assert!(!state.tasks.contains_key("current"));
+        assert!(!state.tasks.contains_key(&task.id));
         assert_eq!(state.context_mode, ContextMode::Default);
         assert!(state.current_task_id.is_none());
+    }
+
+    #[test]
+    fn create_task_with_path_uses_checkout_not_scratch() {
+        let dir = tempdir().unwrap();
+        let checkout = dir.path().join("checkout");
+        std::fs::create_dir_all(checkout.join(".git")).unwrap();
+        let svc = test_service(dir.path());
+        let task = svc
+            .create_task(
+                "My Feature",
+                false,
+                crate::task_repo::TaskRepoSource::Path(checkout.clone()),
+                None,
+            )
+            .unwrap();
+        assert_eq!(task.name, "My Feature");
+        assert!(task.id.starts_with('t'));
+        assert_eq!(task.repo_path, checkout);
+        let scratch = dir.path().join("tasks").join(&task.id).join("repo");
+        assert!(!scratch.exists() || !scratch.is_dir());
     }
 }

@@ -4,14 +4,19 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
 use ratatui::Frame;
 
-use lae_core::models::slugify;
-
-use crate::app::{
-    App, ListEntry, Panel, RepoFormField, Screen, TaskRow,
-};
+use crate::app::{App, ListEntry, Panel, Screen, TaskRow};
+use crate::grep_dir_picker;
 use crate::modal::{draw_button_bar, ModalButtonBar};
 
 pub fn draw(frame: &mut Frame, app: &mut App) {
+    match &mut app.screen {
+        Screen::RepoPicker { picker } => {
+            grep_dir_picker::draw(frame, picker);
+            return;
+        }
+        _ => {}
+    }
+
     let area = frame.area();
     frame.render_widget(Clear, area);
 
@@ -41,11 +46,10 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     match &app.screen {
         Screen::NewTaskPickRepo { .. } => draw_new_task_pick_repo(frame, area, app),
         Screen::NewTaskName { .. } => draw_new_task_name(frame, area, app),
-        Screen::RepoForm { .. } => draw_repo_form(frame, area, app),
         Screen::ConfirmDeleteRepo { .. } => draw_confirm_delete_repo(frame, area, app),
         Screen::ConfirmArchive { .. } => draw_confirm_archive(frame, area, app),
         Screen::ConfirmDelete { .. } => draw_confirm_delete(frame, area, app),
-        Screen::Main => {}
+        Screen::Main | Screen::RepoPicker { .. } => {}
     }
 }
 
@@ -125,7 +129,7 @@ fn draw_repo_list(frame: &mut Frame, area: Rect, app: &mut App) {
 
     if app.repos.is_empty() {
         frame.render_widget(
-            Paragraph::new("No repos configured — press n to add one")
+            Paragraph::new("No repos — press n to browse and register a checkout")
                 .block(block)
                 .wrap(Wrap { trim: true }),
             area,
@@ -186,11 +190,6 @@ fn task_line(task: &TaskRow) -> Line<'static> {
         "󱓝"
     };
     let marker = if task.current { " ●" } else { "" };
-    let detail = if task.is_default || slugify(&task.name) == task.id {
-        String::new()
-    } else {
-        format!("  {}", task.id)
-    };
     let name_style = if task.is_archived {
         Style::default().fg(Color::DarkGray)
     } else {
@@ -200,7 +199,7 @@ fn task_line(task: &TaskRow) -> Line<'static> {
         Span::raw("    "),
         Span::raw(format!("{icon} ")),
         Span::styled(task.name.clone(), name_style),
-        Span::raw(format!("{detail}{marker}")),
+        Span::raw(marker),
     ])
 }
 
@@ -210,7 +209,7 @@ fn draw_help(frame: &mut Frame, area: Rect, app: &App) {
             "↑/↓ move  Enter switch  n new  d archive  D delete  r refresh  h/l Tab panels  q quit"
         }
         Screen::Main if app.panel == Panel::Repos => {
-            "↑/↓ move  n new  e edit  d delete  r refresh  h/l Tab panels  q quit"
+            "↑/↓ move  n browse/add  d remove  r refresh  h/l Tab panels  q quit"
         }
         Screen::Main => "",
         _ => "",
@@ -345,49 +344,6 @@ fn draw_new_task_name(frame: &mut Frame, area: Rect, app: &App) {
     );
 }
 
-fn draw_repo_form(frame: &mut Frame, area: Rect, app: &App) {
-    let Screen::RepoForm {
-        name,
-        path,
-        url,
-        focus,
-        editing_id,
-        buttons,
-    } = &app.screen
-    else {
-        return;
-    };
-
-    let popup = centered_rect(70, 34, area);
-    let title = if editing_id.is_some() {
-        "Edit repo"
-    } else {
-        "Add repo"
-    };
-
-    let field = |label: &str, value: &str, active: bool| {
-        let marker = if active { "▸ " } else { "  " };
-        format!("{marker}{label}: {value}")
-    };
-
-    let body = format!(
-        "{}\n{}\n{}",
-        field("Name", name, *focus == RepoFormField::Name),
-        field("Path", path, *focus == RepoFormField::Path),
-        field("Url ", url, *focus == RepoFormField::Url),
-    );
-    draw_modal_dialog(
-        frame,
-        area,
-        popup,
-        title,
-        Color::Green,
-        &body,
-        buttons,
-        *focus == RepoFormField::Actions,
-    );
-}
-
 fn draw_confirm_delete_repo(frame: &mut Frame, area: Rect, app: &App) {
     let Screen::ConfirmDeleteRepo { repo_name, buttons, .. } = &app.screen else {
         return;
@@ -395,7 +351,7 @@ fn draw_confirm_delete_repo(frame: &mut Frame, area: Rect, app: &App) {
 
     let popup = centered_rect(70, 28, area);
     let body = format!(
-        "Remove \"{repo_name}\" from configuration?\n\nExisting tasks are not deleted."
+        "Remove \"{repo_name}\" from lae?\n\nDeletes `.lae/repo.toml` in the checkout.\nExisting tasks are not deleted."
     );
     draw_modal_dialog(
         frame,

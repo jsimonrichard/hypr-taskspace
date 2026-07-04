@@ -279,8 +279,9 @@ fn dispatch(
                 .get("switch")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(true);
-            let repo_id = params.get("repo_id").and_then(|v| v.as_str());
-            let task = svc.create_task(name, switch, repo_id)?;
+            let repo = crate::task_repo::TaskRepoSource::from_daemon_params(&params)?;
+            let cwd = crate::task_repo::TaskRepoSource::cwd_from_daemon_params(&params);
+            let task = svc.create_task(name, switch, repo, cwd.as_deref())?;
             Ok(serde_json::to_value(task).map_err(|e| LaeError::Other(e.to_string()))?)
         }
         "switch_task" => {

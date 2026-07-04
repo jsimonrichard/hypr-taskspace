@@ -115,6 +115,17 @@ impl SessionState {
     }
 }
 
+/// Opaque task identifier (not derived from the display name).
+pub fn generate_task_id() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let pid = std::process::id() as u128;
+    format!("t{:x}", nanos ^ (pid << 32))
+}
+
 pub fn slugify(name: &str) -> String {
     let slug: String = name
         .to_lowercase()
@@ -136,5 +147,12 @@ mod tests {
     #[test]
     fn slugify_basic() {
         assert_eq!(slugify("My Task"), "my-task");
+    }
+
+    #[test]
+    fn generate_task_id_is_opaque() {
+        let id = generate_task_id();
+        assert!(id.starts_with('t'));
+        assert_ne!(id, slugify("Some Name"));
     }
 }

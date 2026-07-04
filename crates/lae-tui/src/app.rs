@@ -1,13 +1,12 @@
-use std::collections::HashSet;
-use std::path::Path;
+use std::path::PathBuf;
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use lae_core::{
-    ensure_daemon, load_repos, paths_match, repo_display_path, save_repos, unique_repo_id,
-    ContextMode, DaemonClient, RegisteredRepo, Result,
+    collect_task_repo_paths, detect_vcs_root, ensure_daemon, load_repos, paths_match,
+    repo_display_path, unregister_repo, ContextMode, DaemonClient, RegisteredRepo, Result, Task,
+    TaskRepoSource,
 };
-use lae_core::Task;
-
+use crate::grep_dir_picker::{GrepDirPicker, PickerAction};
 use crate::modal::{arrow_nav_delta, ModalButtonAction, ModalButtonBar};
 use crate::ui;
 
@@ -34,20 +33,15 @@ pub struct TaskRow {
 
 #[derive(Debug, Clone)]
 pub struct RepoChoice {
-    pub repo_id: Option<String>,
+    pub repo: Option<PathBuf>,
     pub label: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RepoFormField {
-    Name,
-    Path,
-    Url,
-    Actions,
 }
 
 pub enum Screen {
     Main,
+    RepoPicker {
+        picker: GrepDirPicker,
+    },
     NewTaskPickRepo {
         choices: Vec<RepoChoice>,
         list_state: ratatui::widgets::ListState,
@@ -56,21 +50,13 @@ pub enum Screen {
     },
     NewTaskName {
         name: String,
-        repo_id: Option<String>,
+        repo: TaskRepoSource,
         repo_label: String,
         buttons: ModalButtonBar,
         actions_focused: bool,
     },
-    RepoForm {
-        name: String,
-        path: String,
-        url: String,
-        focus: RepoFormField,
-        editing_id: Option<String>,
-        buttons: ModalButtonBar,
-    },
     ConfirmDeleteRepo {
-        repo_id: String,
+        repo_path: PathBuf,
         repo_name: String,
         buttons: ModalButtonBar,
     },
@@ -120,7 +106,7 @@ impl App {
         let mut app = Self {
             client,
             panel: Panel::Tasks,
-            repos: load_repos()?,
+            repos: Vec::new(),
             entries: Vec::new(),
             list_state: ratatui::widgets::ListState::default(),
             repo_list_state: ratatui::widgets::ListState::default(),
@@ -157,13 +143,27 @@ impl App {
         }
     }
 
+    fn refresh_repos(&mut self, task_paths: impl IntoIterator<Item = PathBuf>) -> Result<()> {
+        self.repos = load_repos(task_paths)?;
+        Ok(())
+    }
+
     pub fn reload(&mut self) -> Result<()> {
         self.daemon_recheck_requested = true;
         let svc = self.client.direct();
-        self.repos = load_repos()?;
         let state = svc.load_state()?;
         self.default_taskspace_active = state.context_mode == ContextMode::Default;
         let current_task = state.current_task_id.as_deref();
+
+        let active_tasks = svc.list_active_tasks()?;
+        let archived_tasks = svc.list_archived_tasks()?;
+        let task_paths = collect_task_repo_paths(
+            active_tasks
+                .iter()
+                .chain(archived_tasks.iter())
+                .map(|t| t.repo_path.as_path()),
+        );
+        self.refresh_repos(task_paths)?;
 
         let prev_task_id = self
             .selected_task()
@@ -171,8 +171,7 @@ impl App {
             .filter(|id| !id.is_empty());
         let prev_repo_sel = self.repo_list_state.selected();
 
-        let active_tasks = svc.list_active_tasks()?;
-        let mut matched = HashSet::new();
+        let mut matched = std::collections::HashSet::new();
 
         self.entries.clear();
         self.entries.push(ListEntry::Header {
@@ -219,16 +218,15 @@ impl App {
             });
             for task in scratch {
                 self.entries.push(ListEntry::Task(TaskRow {
-                    id: task.id.clone(),
-                    name: task.name.clone(),
-                    current: current_task == Some(task.id.as_str()),
-                    is_default: false,
+                        id: task.id.clone(),
+                        name: task.name.clone(),
+                        current: current_task == Some(task.id.as_str()),
+                        is_default: false,
                     is_archived: false,
                 }));
             }
         }
 
-        let archived_tasks = svc.list_archived_tasks()?;
         if !archived_tasks.is_empty() {
             let mut archived = archived_tasks;
             archived.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
@@ -264,9 +262,43 @@ impl App {
 
         let repo_sel = prev_repo_sel
             .filter(|i| *i < self.repos.len())
-            .or_else(|| (!self.repos.is_empty()).then_some(0));
+            .or_else(|| default_repo_selection(&self.repos).or_else(|| (!self.repos.is_empty()).then_some(0)));
         self.repo_list_state.select(repo_sel);
 
+        Ok(())
+    }
+
+    pub fn handle_event(&mut self, event: Event) -> Result<()> {
+        if let Screen::RepoPicker { .. } = &self.screen {
+            let key = match event {
+                Event::Key(key) if key.kind == crossterm::event::KeyEventKind::Press => key,
+                _ => return Ok(()),
+            };
+            let action = if let Screen::RepoPicker { picker } = &mut self.screen {
+                picker.handle_key(key)?
+            } else {
+                return Ok(());
+            };
+            match action {
+                PickerAction::Continue => {}
+                PickerAction::Cancel => self.screen = Screen::Main,
+                PickerAction::Register => {
+                    let cwd = if let Screen::RepoPicker { picker } = &self.screen {
+                        picker.cwd().to_path_buf()
+                    } else {
+                        return Ok(());
+                    };
+                    self.finish_repo_picker(&cwd)?;
+                }
+            }
+            return Ok(());
+        }
+
+        if let Event::Key(key) = event {
+            if key.kind == crossterm::event::KeyEventKind::Press {
+                self.handle_key(key)?;
+            }
+        }
         Ok(())
     }
 
@@ -275,10 +307,10 @@ impl App {
             Screen::Main => self.handle_main_key(key),
             Screen::NewTaskPickRepo { .. } => self.handle_new_task_pick_repo_key(key),
             Screen::NewTaskName { .. } => self.handle_new_task_name_key(key),
-            Screen::RepoForm { .. } => self.handle_repo_form_key(key),
             Screen::ConfirmDeleteRepo { .. } => self.handle_confirm_delete_repo_key(key),
             Screen::ConfirmArchive { .. } => self.handle_confirm_archive_key(key),
             Screen::ConfirmDelete { .. } => self.handle_confirm_delete_key(key),
+            Screen::RepoPicker { .. } => Ok(()),
         }
     }
 
@@ -324,8 +356,7 @@ impl App {
             KeyCode::Char('q') | KeyCode::Esc => self.should_quit = true,
             KeyCode::Char('j') | KeyCode::Down => self.select_repo_next(),
             KeyCode::Char('k') | KeyCode::Up => self.select_repo_prev(),
-            KeyCode::Char('n') => self.begin_new_repo(),
-            KeyCode::Char('e') => self.begin_edit_repo(),
+            KeyCode::Char('n') => self.begin_repo_picker()?,
             KeyCode::Char('d') => self.begin_delete_repo(),
             KeyCode::Char('r') => {
                 self.reload()?;
@@ -336,21 +367,45 @@ impl App {
         Ok(())
     }
 
+    fn begin_repo_picker(&mut self) -> Result<()> {
+        self.status = None;
+        let picker = GrepDirPicker::new(None)?;
+        self.screen = Screen::RepoPicker { picker };
+        Ok(())
+    }
+
+    fn finish_repo_picker(&mut self, cwd: &std::path::Path) -> Result<()> {
+        match GrepDirPicker::register_at_cwd(&self.repos, cwd) {
+            Ok(repo) => {
+                self.reload()?;
+                self.status = Some((true, format!("Registered {}", repo.name)));
+                self.screen = Screen::Main;
+                self.panel = Panel::Repos;
+            }
+            Err(err) => {
+                self.status = Some((false, err.to_string()));
+                self.screen = Screen::Main;
+                self.panel = Panel::Repos;
+            }
+        }
+        Ok(())
+    }
+
     fn begin_new_task(&mut self) -> Result<()> {
         self.require_daemon()?;
         self.status = None;
         let mut choices = vec![RepoChoice {
-            repo_id: None,
+            repo: None,
             label: "No repo (scratch workspace)".into(),
         }];
         for repo in &self.repos {
             choices.push(RepoChoice {
-                repo_id: Some(repo.id.clone()),
+                repo: Some(repo_display_path(repo)),
                 label: format!("{}  {}", repo.name, repo.path.display()),
             });
         }
         let mut list_state = ratatui::widgets::ListState::default();
-        list_state.select(Some(0));
+        list_state.select(Some(default_new_task_choice(&choices).unwrap_or(0)));
         self.screen = Screen::NewTaskPickRepo {
             choices,
             list_state,
@@ -469,10 +524,20 @@ impl App {
         let Some(choice) = choices.get(sel).cloned() else {
             return Ok(());
         };
+        let (repo, repo_label_text) = match choice.repo {
+            None => (
+                TaskRepoSource::Scratch,
+                "Scratch workspace".into(),
+            ),
+            Some(path) => (
+                TaskRepoSource::Path(path.clone()),
+                choice.label,
+            ),
+        };
         self.screen = Screen::NewTaskName {
             name: String::new(),
-            repo_id: choice.repo_id,
-            repo_label: choice.label,
+            repo,
+            repo_label: repo_label_text,
             buttons: ModalButtonBar::cancel_create(),
             actions_focused: false,
         };
@@ -480,21 +545,18 @@ impl App {
     }
 
     fn handle_new_task_name_key(&mut self, key: KeyEvent) -> Result<()> {
-        if let Some(delta) = arrow_nav_delta(key) {
-            if let Screen::NewTaskName {
-                buttons,
-                actions_focused,
-                ..
-            } = &mut self.screen
-            {
-                if *actions_focused {
-                    buttons.navigate(delta);
-                } else {
-                    *actions_focused = true;
-                    buttons.enter_bar();
+        if let Screen::NewTaskName {
+            actions_focused, ..
+        } = &self.screen
+        {
+            if *actions_focused {
+                if let Some(delta) = arrow_nav_delta(key) {
+                    if let Screen::NewTaskName { buttons, .. } = &mut self.screen {
+                        buttons.navigate(delta);
+                    }
+                    return Ok(());
                 }
             }
-            return Ok(());
         }
 
         if let Screen::NewTaskName {
@@ -516,26 +578,25 @@ impl App {
 
         match key.code {
             KeyCode::Esc => self.screen = Screen::Main,
-            KeyCode::Enter => self.submit_new_task_name()?,
-            KeyCode::Backspace => {
+            KeyCode::Tab => {
                 if let Screen::NewTaskName {
-                    name,
                     actions_focused,
+                    buttons,
                     ..
                 } = &mut self.screen
                 {
-                    *actions_focused = false;
+                    *actions_focused = true;
+                    buttons.enter_bar();
+                }
+            }
+            KeyCode::Enter => self.submit_new_task_name()?,
+            KeyCode::Backspace => {
+                if let Screen::NewTaskName { name, .. } = &mut self.screen {
                     name.pop();
                 }
             }
             KeyCode::Char(ch) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                if let Screen::NewTaskName {
-                    name,
-                    actions_focused,
-                    ..
-                } = &mut self.screen
-                {
-                    *actions_focused = false;
+                if let Screen::NewTaskName { name, .. } = &mut self.screen {
                     name.push(ch);
                 }
             }
@@ -545,10 +606,8 @@ impl App {
     }
 
     fn submit_new_task_name(&mut self) -> Result<()> {
-        let (name, repo_id) = match &self.screen {
-            Screen::NewTaskName { name, repo_id, .. } => {
-                (name.trim().to_string(), repo_id.clone())
-            }
+        let (name, repo) = match &self.screen {
+            Screen::NewTaskName { name, repo, .. } => (name.trim().to_string(), repo.clone()),
             _ => return Ok(()),
         };
         if name.is_empty() {
@@ -556,10 +615,7 @@ impl App {
             self.screen = Screen::Main;
             return Ok(());
         }
-        match self
-            .client
-            .create_task(&name, true, repo_id.as_deref())
-        {
+        match self.client.create_task(&name, true, repo) {
             Ok(_task) => {
                 self.should_quit = true;
             }
@@ -571,225 +627,27 @@ impl App {
         Ok(())
     }
 
-    fn begin_new_repo(&mut self) {
-        self.status = None;
-        self.screen = Screen::RepoForm {
-            name: String::new(),
-            path: String::new(),
-            url: String::new(),
-            focus: RepoFormField::Path,
-            editing_id: None,
-            buttons: ModalButtonBar::cancel_save(),
-        };
-    }
-
-    fn begin_edit_repo(&mut self) {
-        let Some(repo) = self.selected_repo().cloned() else {
-            self.status = Some((false, "Select a repo to edit".into()));
-            return;
-        };
-        self.status = None;
-        self.screen = Screen::RepoForm {
-            name: repo.name,
-            path: repo.path.to_string_lossy().into_owned(),
-            url: repo.url.unwrap_or_default(),
-            focus: RepoFormField::Name,
-            editing_id: Some(repo.id),
-            buttons: ModalButtonBar::cancel_save(),
-        };
-    }
-
     fn begin_delete_repo(&mut self) {
         let Some(repo) = self.selected_repo().cloned() else {
-            self.status = Some((false, "Select a repo to delete".into()));
+            self.status = Some((false, "Select a repo to remove".into()));
             return;
         };
         self.status = None;
         self.screen = Screen::ConfirmDeleteRepo {
-            repo_id: repo.id,
+            repo_path: repo_display_path(&repo),
             repo_name: repo.name,
             buttons: ModalButtonBar::cancel_confirm("Remove"),
         };
     }
 
-    fn handle_repo_form_key(&mut self, key: KeyEvent) -> Result<()> {
-        if let Some(delta) = arrow_nav_delta(key) {
-            if let Screen::RepoForm { focus, buttons, .. } = &mut self.screen {
-                if *focus == RepoFormField::Actions {
-                    buttons.navigate(delta);
-                } else {
-                    *focus = RepoFormField::Actions;
-                    buttons.enter_bar();
-                }
-            }
-            return Ok(());
-        }
-
-        if let Screen::RepoForm { focus, buttons, .. } = &mut self.screen {
-            if *focus == RepoFormField::Actions {
-                if key.code == KeyCode::Tab {
-                    *focus = RepoFormField::Name;
-                    return Ok(());
-                }
-                if key.code == KeyCode::BackTab {
-                    *focus = RepoFormField::Url;
-                    return Ok(());
-                }
-                let action = buttons.handle_key(key);
-                match action {
-                    Some(ModalButtonAction::Cancel) => self.screen = Screen::Main,
-                    Some(ModalButtonAction::Confirm) => self.save_repo_form()?,
-                    None => {}
-                }
-                return Ok(());
-            }
-        }
-
-        match key.code {
-            KeyCode::Esc => self.screen = Screen::Main,
-            KeyCode::Tab => self.cycle_repo_form_focus(1),
-            KeyCode::BackTab => self.cycle_repo_form_focus(-1),
-            KeyCode::Enter => {
-                let Screen::RepoForm { focus, .. } = &mut self.screen else {
-                    return Ok(());
-                };
-                match focus {
-                    RepoFormField::Name => *focus = RepoFormField::Path,
-                    RepoFormField::Path => *focus = RepoFormField::Url,
-                    RepoFormField::Url => self.save_repo_form()?,
-                    RepoFormField::Actions => {}
-                }
-            }
-            KeyCode::Backspace => self.repo_form_pop(),
-            KeyCode::Char(ch) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.repo_form_push(ch);
-            }
-            _ => {}
-        }
-        Ok(())
-    }
-
-    fn cycle_repo_form_focus(&mut self, delta: i8) {
-        let Screen::RepoForm { focus, .. } = &mut self.screen else {
-            return;
-        };
-        *focus = match (*focus, delta) {
-            (RepoFormField::Name, 1) | (RepoFormField::Path, -1) => RepoFormField::Path,
-            (RepoFormField::Path, 1) | (RepoFormField::Url, -1) => RepoFormField::Url,
-            (RepoFormField::Url, 1) | (RepoFormField::Name, -1) => RepoFormField::Name,
-            (RepoFormField::Actions, 1) | (RepoFormField::Actions, -1) => RepoFormField::Name,
-            (f, _) => f,
-        };
-    }
-
-    fn repo_form_push(&mut self, ch: char) {
-        let Screen::RepoForm {
-            name,
-            path,
-            url,
-            focus,
-            ..
-        } = &mut self.screen
-        else {
-            return;
-        };
-        match focus {
-            RepoFormField::Name => name.push(ch),
-            RepoFormField::Path => path.push(ch),
-            RepoFormField::Url => url.push(ch),
-            RepoFormField::Actions => {}
-        }
-    }
-
-    fn repo_form_pop(&mut self) {
-        let Screen::RepoForm {
-            name,
-            path,
-            url,
-            focus,
-            ..
-        } = &mut self.screen
-        else {
-            return;
-        };
-        match focus {
-            RepoFormField::Name => {
-                name.pop();
-            }
-            RepoFormField::Path => {
-                path.pop();
-            }
-            RepoFormField::Url => {
-                url.pop();
-            }
-            RepoFormField::Actions => {}
-        }
-    }
-
-    fn save_repo_form(&mut self) -> Result<()> {
-        let Screen::RepoForm {
-            name,
-            path,
-            url,
-            editing_id,
-            ..
-        } = &self.screen
-        else {
-            return Ok(());
-        };
-
-        let path = path.trim();
-        if path.is_empty() {
-            self.status = Some((false, "Repo path is required".into()));
-            return Ok(());
-        }
-
-        let display_name = if name.trim().is_empty() {
-            Path::new(path)
-                .file_name()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_else(|| "repo".into())
-        } else {
-            name.trim().to_string()
-        };
-
-        let id = editing_id
-            .clone()
-            .unwrap_or_else(|| unique_repo_id(&self.repos, &display_name));
-
-        let repo = RegisteredRepo {
-            id: id.clone(),
-            name: display_name,
-            path: Path::new(path).into(),
-            url: if url.trim().is_empty() {
-                None
-            } else {
-                Some(url.trim().to_string())
-            },
-        };
-
-        if let Some(i) = self.repos.iter().position(|r| r.id == id) {
-            self.repos[i] = repo;
-        } else {
-            self.repos.push(repo);
-        }
-        self.repos.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
-        save_repos(&self.repos)?;
-        self.reload()?;
-        self.status = Some((true, "Saved repo".into()));
-        self.screen = Screen::Main;
-        self.panel = Panel::Repos;
-        Ok(())
-    }
-
     fn handle_confirm_delete_repo_key(&mut self, key: KeyEvent) -> Result<()> {
-        let (repo_id, repo_name, action) = match &mut self.screen {
+        let (repo_path, repo_name, action) = match &mut self.screen {
             Screen::ConfirmDeleteRepo {
-                repo_id,
+                repo_path,
                 repo_name,
                 buttons,
             } => (
-                repo_id.clone(),
+                repo_path.clone(),
                 repo_name.clone(),
                 buttons.handle_key(key),
             ),
@@ -799,8 +657,7 @@ impl App {
         match action {
             Some(ModalButtonAction::Cancel) => self.screen = Screen::Main,
             Some(ModalButtonAction::Confirm) => {
-                self.repos.retain(|r| r.id != repo_id);
-                save_repos(&self.repos)?;
+                unregister_repo(&repo_path)?;
                 self.reload()?;
                 self.status = Some((true, format!("Removed {repo_name}")));
                 self.screen = Screen::Main;
@@ -1045,4 +902,23 @@ impl App {
     pub fn draw(&mut self, frame: &mut ratatui::Frame) {
         ui::draw(frame, self);
     }
+}
+
+fn default_repo_selection(repos: &[RegisteredRepo]) -> Option<usize> {
+    let cwd = std::env::current_dir().ok()?;
+    let root = detect_vcs_root(Some(&cwd))?;
+    repos
+        .iter()
+        .position(|repo| paths_match(&repo.path, &root))
+}
+
+fn default_new_task_choice(choices: &[RepoChoice]) -> Option<usize> {
+    let cwd = std::env::current_dir().ok()?;
+    let root = detect_vcs_root(Some(&cwd))?;
+    choices.iter().position(|choice| {
+        choice
+            .repo
+            .as_ref()
+            .is_some_and(|path| paths_match(path, &root))
+    })
 }

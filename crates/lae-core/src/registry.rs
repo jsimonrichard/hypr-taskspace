@@ -7,7 +7,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use crate::config::LaeConfig;
 use crate::error::{LaeError, Result};
 use crate::models::{
-    slugify, ContextMode, SessionState, Task, TaskStatus, WindowRecord,
+    ContextMode, generate_task_id, SessionState, Task, TaskStatus, WindowRecord,
 };
 use crate::xdg::lae_state_db;
 
@@ -232,17 +232,14 @@ impl Registry {
         Ok(())
     }
 
-    pub fn unique_task_id(&self, state: &SessionState, name: &str) -> String {
-        let base = slugify(name);
-        let mut candidate = base.clone();
-        let mut n = 2;
-        while state.tasks.contains_key(&candidate)
-            && state.tasks.get(&candidate).is_some_and(|t| t.status != TaskStatus::Archived)
-        {
-            candidate = format!("{base}-{n}");
-            n += 1;
+    pub fn unique_task_id(&self, state: &SessionState, _name: &str) -> String {
+        for _ in 0..256 {
+            let candidate = generate_task_id();
+            if !state.tasks.contains_key(&candidate) {
+                return candidate;
+            }
         }
-        candidate
+        format!("t{}", uuid_like_suffix())
     }
 
     pub fn get_task<'a>(&self, state: &'a SessionState, name_or_id: &str) -> Option<&'a Task> {
@@ -283,6 +280,15 @@ fn parse_context_mode(raw: &str) -> ContextMode {
         "global" => ContextMode::Default,
         _ => ContextMode::Default,
     }
+}
+
+fn uuid_like_suffix() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("{nanos:x}")
 }
 
 fn task_from_row(row: &rusqlite::Row<'_>) -> Result<Task> {
