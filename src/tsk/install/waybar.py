@@ -55,17 +55,14 @@ def _dump_jsonc(data: dict) -> str:
 
 
 def _is_tsk_module(name: str) -> bool:
-    return name == TSK_TASK_MODULE or name.startswith(
-        ("custom/lae-desktop-", "custom/tsk-workspace-")
-    )
+    return name == TSK_TASK_MODULE or name.startswith("custom/tsk-workspace-")
 
 
 def _config_has_tsk(data: dict) -> bool:
     if any(_is_tsk_module(m) for m in data.get("modules-left", [])):
         return True
     return any(
-        key == TSK_TASK_MODULE
-        or key.startswith(("custom/lae-desktop-", "custom/tsk-workspace-"))
+        key == TSK_TASK_MODULE or key.startswith("custom/tsk-workspace-")
         for key in data
     )
 
@@ -150,7 +147,7 @@ def _patch_config(config_path: Path) -> bool:
     data = _load_jsonc(config_path)
 
     for key in list(data.keys()):
-        if key.startswith("custom/lae-desktop-") or key.startswith("custom/tsk-workspace-"):
+        if key.startswith("custom/tsk-workspace-"):
             del data[key]
 
     modules_left: list[str] = [
@@ -193,9 +190,7 @@ def _unpatch_config(config_path: Path) -> bool:
     changed = False
 
     for key in list(data.keys()):
-        if key == TSK_TASK_MODULE or key.startswith(
-            ("custom/lae-desktop-", "custom/tsk-workspace-")
-        ):
+        if key == TSK_TASK_MODULE or key.startswith("custom/tsk-workspace-"):
             del data[key]
             changed = True
 
@@ -312,13 +307,13 @@ def uninstall_waybar(*, cfg: TskConfig | None = None) -> list[str]:
         manifest_path.unlink()
 
     if m is None and not restored:
-        has_lae = False
+        has_tsk = False
         if config_path.is_file():
             try:
-                has_lae = _config_has_tsk(_load_jsonc(config_path))
+                has_tsk = _config_has_tsk(_load_jsonc(config_path))
             except (json.JSONDecodeError, OSError):
                 pass
-        if not has_lae:
+        if not has_tsk:
             raise RuntimeError("No tsk Waybar installation found")
 
     return apply_after_waybar()

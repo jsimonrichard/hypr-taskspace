@@ -198,11 +198,7 @@ fn bind_runs_tsk_workspace_go(bind: &Value) -> bool {
             .and_then(|v| v.as_str())
             .is_some_and(|arg| {
                 arg.contains("tsk-workspace-switch")
-                    || arg.contains("lae-workspace-switch")
                     || arg.contains("tsk workspace go")
-                    || arg.contains("tsk desktop go")
-                    || arg.contains("lae workspace go")
-                    || arg.contains("lae desktop go")
             })
 }
 

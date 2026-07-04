@@ -215,14 +215,14 @@ def doctor_checks(cfg: TskConfig | None = None) -> list[tuple[str, bool, str]]:
     checks.append(
         (
             "SUPER+1 runs tsk (not Omarchy workspace)",
-            _super_one_is_lae(),
+            _super_one_is_tsk(),
             "hyprctl binds -j",
         )
     )
     return checks
 
 
-def _super_one_is_lae() -> bool:
+def _super_one_is_tsk() -> bool:
     if not hyprland.available():
         return False
     try:
@@ -234,7 +234,10 @@ def _super_one_is_lae() -> bool:
         for b in binds
         if b.get("keycode") == 10
         and b.get("modmask") == 64
-        and "tsk workspace go" in str(b.get("arg", ""))
+        and (
+            "tsk-workspace-switch" in str(b.get("arg", ""))
+            or "tsk workspace go" in str(b.get("arg", ""))
+        )
     ]
     omarchy_binds = [
         b

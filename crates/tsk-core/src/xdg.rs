@@ -49,7 +49,7 @@ pub fn resolve_daemon_socket_path(configured: &str) -> PathBuf {
         return expand(trimmed);
     }
     match trimmed {
-        "daemon.sock" | "tsk/daemon.sock" | "lae/daemon.sock" => tsk_data_dir().join("daemon.sock"),
+        "daemon.sock" | "tsk/daemon.sock" => tsk_data_dir().join("daemon.sock"),
         other => tsk_data_dir().join(other),
     }
 }

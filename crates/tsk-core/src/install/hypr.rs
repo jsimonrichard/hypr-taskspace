@@ -37,7 +37,7 @@ pub fn install_hypr_status(cfg: &TskConfig) -> Result<Value> {
     let tui_helper = cfg.install_hypr_share_dir.join("bin/tsk-task-tui");
     let has_source = cfg.install_hypr_config_path.is_file()
         && fs::read_to_string(&cfg.install_hypr_config_path)
-            .map(|s| s.contains("tsk-managed") || s.contains("lae-managed"))
+            .map(|s| s.contains("tsk-managed"))
             .unwrap_or(false);
     Ok(json!({
         "installed": m.is_some(),
@@ -114,7 +114,7 @@ pub fn install_hypr(cfg: &TskConfig, options: &InstallHyprOptions) -> Result<Vec
             path: config_path.clone(),
             source,
         })?;
-        if !content.contains("tsk-managed") && !content.contains("lae-managed") {
+        if !content.contains("tsk-managed") {
             fs::OpenOptions::new()
                 .append(true)
                 .open(config_path)

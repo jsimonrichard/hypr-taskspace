@@ -185,7 +185,7 @@ pub fn uninstall_waybar(cfg: &TskConfig) -> Result<Vec<String>> {
     manifest::remove_manifest(&cfg.install_hypr_share_dir, "waybar")?;
 
     if m.is_none() && !restored {
-        let has_lae = config_path
+        let has_tsk = config_path
             .is_file()
             .then(|| {
                 fs::read_to_string(&config_path)
@@ -194,7 +194,7 @@ pub fn uninstall_waybar(cfg: &TskConfig) -> Result<Vec<String>> {
                     .is_some_and(|data| config_has_tsk(&data))
             })
             .unwrap_or(false);
-        if !has_lae {
+        if !has_tsk {
             return Err(TskError::Other(
                 "No tsk Waybar installation found".into(),
             ));
@@ -561,11 +561,7 @@ fn modules_left_map(data: &Map<String, Value>) -> Vec<String> {
 
 fn is_tsk_module(name: &str) -> bool {
     name == CFFI_MODULE
-        || name == "cffi/lae"
         || name == TSK_TASK_MODULE
-        || name == "custom/lae-task"
-        || name.starts_with("custom/lae-desktop-")
-        || name.starts_with("custom/lae-workspace-")
         || name.starts_with("custom/tsk-workspace-")
 }
 
@@ -580,12 +576,8 @@ fn config_has_tsk(data: &Value) -> bool {
     data.as_object().is_some_and(|obj| {
         obj.keys().any(|key| {
             key == TSK_TASK_MODULE
-                || key == "custom/lae-task"
-                || key.starts_with("custom/lae-desktop-")
-                || key.starts_with("custom/lae-workspace-")
                 || key.starts_with("custom/tsk-workspace-")
                 || key == CFFI_MODULE
-                || key == "cffi/lae"
         })
     })
 }
@@ -595,11 +587,7 @@ fn remove_tsk_keys(data: &mut Map<String, Value>) -> bool {
         .keys()
         .filter(|k| {
             *k == CFFI_MODULE
-                || *k == "cffi/lae"
                 || *k == TSK_TASK_MODULE
-                || *k == "custom/lae-task"
-                || k.starts_with("custom/lae-desktop-")
-                || k.starts_with("custom/lae-workspace-")
                 || k.starts_with("custom/tsk-workspace-")
         })
         .cloned()
@@ -616,7 +604,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn is_tsk_module_includes_cffi_and_legacy() {
+    fn is_tsk_module_includes_cffi() {
         assert!(is_tsk_module(CFFI_MODULE));
         assert!(is_tsk_module("custom/tsk-workspace-1"));
         assert!(!is_tsk_module("hyprland/workspaces"));
