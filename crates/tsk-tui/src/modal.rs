@@ -27,9 +27,6 @@ pub enum ModalButtonBar {
     CancelCreate {
         focused: usize,
     },
-    CancelSave {
-        focused: usize,
-    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,14 +36,6 @@ pub enum ModalButtonAction {
 }
 
 impl ModalButtonBar {
-    pub fn cancel_confirm(confirm_label: &'static str) -> Self {
-        Self::CancelConfirm {
-            confirm_label,
-            focused: 0,
-            confirm_first: false,
-        }
-    }
-
     /// Confirm-first layout — for low-friction happy paths (e.g. archive).
     pub fn confirm_first(confirm_label: &'static str) -> Self {
         Self::CancelConfirm {
@@ -62,10 +51,6 @@ impl ModalButtonBar {
 
     pub fn cancel_create() -> Self {
         Self::CancelCreate { focused: 0 }
-    }
-
-    pub fn cancel_save() -> Self {
-        Self::CancelSave { focused: 0 }
     }
 
     pub fn buttons(&self) -> Vec<ModalButton> {
@@ -109,16 +94,6 @@ impl ModalButtonBar {
                     shortcut: 'y',
                 },
             ],
-            Self::CancelSave { .. } => vec![
-                ModalButton {
-                    label: "Cancel",
-                    shortcut: 'n',
-                },
-                ModalButton {
-                    label: "Save",
-                    shortcut: 'y',
-                },
-            ],
         }
     }
 
@@ -126,8 +101,7 @@ impl ModalButtonBar {
         match self {
             Self::CancelConfirm { focused, .. }
             | Self::CancelContinue { focused, .. }
-            | Self::CancelCreate { focused, .. }
-            | Self::CancelSave { focused, .. } => *focused,
+            | Self::CancelCreate { focused, .. } => *focused,
         }
     }
 
@@ -137,8 +111,7 @@ impl ModalButtonBar {
         match self {
             Self::CancelConfirm { focused, .. }
             | Self::CancelContinue { focused, .. }
-            | Self::CancelCreate { focused, .. }
-            | Self::CancelSave { focused, .. } => *focused = index,
+            | Self::CancelCreate { focused, .. } => *focused = index,
         }
     }
 
@@ -182,8 +155,7 @@ impl ModalButtonBar {
             } => (1, 0),
             Self::CancelConfirm { .. }
             | Self::CancelContinue { .. }
-            | Self::CancelCreate { .. }
-            | Self::CancelSave { .. } => (0, 1),
+            | Self::CancelCreate { .. } => (0, 1),
         }
     }
 
