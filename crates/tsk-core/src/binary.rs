@@ -33,14 +33,22 @@ pub fn resolve_tsk_binary(_cfg: &TskConfig) -> PathBuf {
 }
 
 /// Rust binary to exec in a new terminal — never the dev share-tree bash wrapper.
+///
+/// When called from the Waybar CFFI module, `current_exe()` is the Waybar binary — not `tsk`.
 pub fn resolve_tsk_spawn_binary(cfg: &TskConfig) -> PathBuf {
     if let Ok(exe) = std::env::current_exe() {
-        if is_elf_executable(&exe) {
+        if is_elf_executable(&exe) && is_tsk_cli_executable(&exe) {
             return exe;
         }
     }
     let path = resolve_tsk_binary(cfg);
     peel_tsk_wrapper(&path).unwrap_or(path)
+}
+
+fn is_tsk_cli_executable(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|s| s.to_str())
+        .is_some_and(|name| name == "tsk")
 }
 
 /// Hyprland `$tsk` wrapper script → real executable path.
@@ -284,5 +292,35 @@ mod tests {
     #[test]
     fn shell_quote_escapes_single_quotes() {
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
+    }
+
+    #[test]
+    fn is_tsk_cli_executable_recognizes_tsk_only() {
+        assert!(is_tsk_cli_executable(Path::new("/usr/bin/tsk")));
+        assert!(!is_tsk_cli_executable(Path::new("/usr/bin/waybar")));
+    }
+
+    #[test]
+    fn resolve_tsk_spawn_binary_ignores_non_tsk_current_exe() {
+        let _lock = env_lock();
+        crate::dev_session::stop_dev_session().ok();
+        let dir = tempfile::tempdir().unwrap();
+        let tsk = dir.path().join("tsk");
+        fs::write(&tsk, b"").unwrap();
+
+        let old_path = std::env::var_os("PATH");
+        std::env::set_var("PATH", dir.path());
+        std::env::remove_var("TSK");
+
+        // Test runner's current_exe is not named "tsk" — must fall back to PATH.
+        assert!(!is_tsk_cli_executable(&std::env::current_exe().unwrap()));
+        let resolved = resolve_tsk_spawn_binary(&TskConfig::default());
+        assert_eq!(resolved, tsk);
+
+        if let Some(p) = old_path {
+            std::env::set_var("PATH", p);
+        } else {
+            std::env::remove_var("PATH");
+        }
     }
 }
