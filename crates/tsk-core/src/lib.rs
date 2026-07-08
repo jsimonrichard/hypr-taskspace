@@ -59,14 +59,14 @@ pub use install::{
 pub use models::{ContextMode, SessionState, Task, TaskStatus};
 pub use repos::{
     collect_task_repo_paths, ensure_repo_removable, find_repo, find_repo_by_path,
-    is_task_scratch_repo, load_repo_config, load_repos, normalize_repo_path, paths_match,
-    register_repo, repo_bookmarks_path, repo_config_path, repo_display_path, repo_id_from_path,
-    save_repo_config, task_belongs_to_repo, task_source_repo_path, tasks_for_repo,
-    unregister_repo, RegisteredRepo, RepoConfig,
+    is_scratch_task, is_task_scratch_repo, load_repo_config, load_repos, normalize_repo_path,
+    paths_match, register_repo, repo_bookmarks_path, repo_config_path, repo_display_path,
+    repo_id_from_path, save_repo_config, task_belongs_to_repo, task_source_repo_path,
+    tasks_for_repo, unregister_repo, RegisteredRepo, RepoConfig, SCRATCH_TASK_LIST_LABEL,
 };
 pub use task_paths::{
-    is_managed_task_checkout, linked_checkout_path, scratch_checkout_path, task_workspace_dir,
-    SCRATCH_DIR_NAME,
+    is_managed_task_checkout, is_scratch_workspace_path, linked_checkout_path,
+    scratch_checkout_path, task_workspace_dir, SCRATCH_DIR_NAME,
 };
 pub use task_repo::{
     provision_task_checkout, ResolvedTaskRepo, TaskRepoOptions, TaskRepoSetup, TaskRepoSource,

@@ -561,6 +561,11 @@ mod tests {
         assert_eq!(task.workspace_names()[9], format!("{}-10", task.id));
         assert!(task.agent_notes_path.as_ref().unwrap().is_file());
         assert!(task.repo_path.is_dir());
+        assert!(!task.repo_path.join(".git").exists());
+        assert_eq!(
+            task.repo_path,
+            dir.path().join("tasks").join(&task.id).join("workspace")
+        );
 
         let state = svc.load_state().unwrap();
         assert!(state.tasks.contains_key(&task.id));

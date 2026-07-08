@@ -4,16 +4,14 @@ use serde_json::{json, Value};
 
 use crate::error::{TskError, Result};
 use crate::repos::normalize_repo_path;
-use crate::task_paths::{linked_checkout_path, scratch_checkout_path};
-use crate::vcs::{
-    create_linked_checkout, detect_vcs_root, init_scratch_repo, vcs_kind_at, VcsKind,
-};
+use crate::task_paths::{ensure_scratch_workspace, linked_checkout_path, scratch_checkout_path};
+use crate::vcs::{create_linked_checkout, detect_vcs_root, vcs_kind_at, VcsKind};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TaskRepoSource {
-    /// Use the git/jj root from `cwd`, or a scratch repo if none is found.
+    /// Use the git/jj root from `cwd`, or an empty scratch workspace if none is found.
     Auto,
-    /// Always create an isolated repo directory under the task home.
+    /// Always create an empty workspace directory under the task home.
     Scratch,
     /// Use an explicit checkout path (typically a detected VCS root).
     Path(PathBuf),
@@ -178,10 +176,10 @@ impl TaskRepoSource {
     }
 }
 
-/// Create the on-disk checkout for a task (scratch git repo or linked worktree/workspace).
+/// Create the on-disk checkout for a task (scratch workspace or linked worktree/workspace).
 pub fn provision_task_checkout(resolved: &ResolvedTaskRepo, task_id: &str) -> Result<()> {
     match &resolved.setup {
-        TaskRepoSetup::Scratch => init_scratch_repo(&resolved.checkout_path),
+        TaskRepoSetup::Scratch => ensure_scratch_workspace(&resolved.checkout_path),
         TaskRepoSetup::Direct { .. } => Ok(()),
         TaskRepoSetup::Linked {
             source_root,
@@ -257,5 +255,31 @@ mod tests {
                 source_root: repo,
             }
         );
+    }
+
+    #[test]
+    fn resolve_scratch_uses_task_workspace_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let task_home = dir.path().join("tasks").join("tabc");
+        let resolved = TaskRepoSource::Scratch
+            .resolve(&task_home, None, &TaskRepoOptions::default())
+            .unwrap();
+        assert_eq!(
+            resolved.checkout_path,
+            task_home.join("workspace")
+        );
+        assert_eq!(resolved.setup, TaskRepoSetup::Scratch);
+    }
+
+    #[test]
+    fn provision_scratch_workspace_is_empty_dir_without_git() {
+        let dir = tempfile::tempdir().unwrap();
+        let task_home = dir.path().join("tasks").join("tabc");
+        let resolved = TaskRepoSource::Scratch
+            .resolve(&task_home, None, &TaskRepoOptions::default())
+            .unwrap();
+        provision_task_checkout(&resolved, "tabc").unwrap();
+        assert!(resolved.checkout_path.is_dir());
+        assert!(!resolved.checkout_path.join(".git").exists());
     }
 }

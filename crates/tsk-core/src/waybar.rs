@@ -7,7 +7,7 @@ use crate::context_sync;
 use crate::error::Result;
 use crate::hyprland;
 use crate::models::SessionState;
-use crate::repos::task_source_repo_path;
+use crate::repos::{is_scratch_task, task_source_repo_path};
 use crate::task_ids::{format_workspaces_tooltip, short_task_id, workspace_tooltip_label};
 use crate::taskspaces::visible_default_workspace_count;
 use crate::vcs::repo_label;
@@ -138,7 +138,13 @@ fn build_waybar_data_with(
         context_mode: state.context_mode.as_str().into(),
         task_id: state.current_task_id.clone(),
         task_name: task.map(|t| t.name.clone()),
-        repo_name: task.map(|t| repo_label(task_source_repo_path(t))),
+        repo_name: task.and_then(|t| {
+            if is_scratch_task(t) {
+                None
+            } else {
+                Some(repo_label(task_source_repo_path(t)))
+            }
+        }),
         workspaces: allowed.clone(),
         workspace_count: allowed.len(),
         visible_workspace_count: visible,
@@ -315,7 +321,7 @@ mod tests {
                 status: TaskStatus::Active,
                 repo_url: None,
                 repo_path: PathBuf::from("/home/user/projects/my-app"),
-                source_repo_path: None,
+                source_repo_path: Some(PathBuf::from("/home/user/projects/my-app")),
                 branch: None,
                 container_name: "tsk-t1".into(),
                 workspace_count: 3,

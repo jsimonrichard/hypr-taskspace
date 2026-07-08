@@ -2,9 +2,9 @@ use std::path::PathBuf;
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use tsk_core::{
-    collect_task_repo_paths, detect_vcs_root, ensure_daemon, ensure_repo_removable, load_repos,
-    paths_match, repo_display_path, unregister_repo, ContextMode, DaemonClient, RegisteredRepo,
-    Result, Task, TaskRepoSource,
+    collect_task_repo_paths, detect_vcs_root, ensure_daemon, ensure_repo_removable, is_scratch_task,
+    load_repos, paths_match, repo_display_path, task_belongs_to_repo, unregister_repo, ContextMode, DaemonClient,
+    RegisteredRepo, Result, Task, TaskRepoSource, SCRATCH_TASK_LIST_LABEL,
 };
 use crate::grep_dir_picker::{GrepDirPicker, PickerAction};
 use crate::modal::{arrow_nav_delta, ModalButtonAction, ModalButtonBar};
@@ -167,12 +167,7 @@ impl App {
         let task_paths = collect_task_repo_paths(
             active_tasks
                 .iter()
-                .chain(archived_tasks.iter())
-                .map(|t| {
-                    t.source_repo_path
-                        .as_deref()
-                        .unwrap_or(t.repo_path.as_path())
-                }),
+                .chain(archived_tasks.iter()),
         );
         self.refresh_repos(task_paths)?;
 
@@ -184,8 +179,6 @@ impl App {
                 .map(|t| t.id.clone())
                 .filter(|id| !id.is_empty());
         let prev_repo_sel = self.repo_list_state.selected();
-
-        let mut matched = std::collections::HashSet::new();
 
         self.entries.clear();
         self.entries.push(ListEntry::Header {
@@ -202,13 +195,7 @@ impl App {
         for repo in &self.repos {
             let mut repo_tasks: Vec<&Task> = active_tasks
                 .iter()
-                .filter(|t| {
-                    let key = t
-                        .source_repo_path
-                        .as_deref()
-                        .unwrap_or(t.repo_path.as_path());
-                    paths_match(key, &repo_display_path(repo))
-                })
+                .filter(|t| !is_scratch_task(t) && task_belongs_to_repo(t, repo))
                 .collect();
             repo_tasks.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
 
@@ -220,7 +207,6 @@ impl App {
                 label: repo.name.clone(),
             });
             for task in repo_tasks {
-                matched.insert(task.id.clone());
                 self.entries.push(ListEntry::Task(TaskRow {
                     id: task.id.clone(),
                     name: task.name.clone(),
@@ -233,12 +219,12 @@ impl App {
 
         let mut scratch: Vec<&Task> = active_tasks
             .iter()
-            .filter(|t| !matched.contains(&t.id))
+            .filter(|t| is_scratch_task(t))
             .collect();
         if !scratch.is_empty() {
             scratch.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
             self.entries.push(ListEntry::Header {
-                label: "scratch".into(),
+                label: SCRATCH_TASK_LIST_LABEL.into(),
             });
             for task in scratch {
                 self.entries.push(ListEntry::Task(TaskRow {
@@ -253,17 +239,10 @@ impl App {
 
         self.archived_entries.clear();
         if !archived_tasks.is_empty() {
-            let mut archived_matched = std::collections::HashSet::new();
             for repo in &self.repos {
                 let mut repo_tasks: Vec<&Task> = archived_tasks
                     .iter()
-                    .filter(|t| {
-                        let key = t
-                            .source_repo_path
-                            .as_deref()
-                            .unwrap_or(t.repo_path.as_path());
-                        paths_match(key, &repo_display_path(repo))
-                    })
+                    .filter(|t| !is_scratch_task(t) && task_belongs_to_repo(t, repo))
                     .collect();
                 repo_tasks.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
 
@@ -275,7 +254,6 @@ impl App {
                     label: repo.name.clone(),
                 });
                 for task in repo_tasks {
-                    archived_matched.insert(task.id.clone());
                     self.archived_entries.push(ListEntry::Task(TaskRow {
                         id: task.id.clone(),
                         name: task.name.clone(),
@@ -288,12 +266,12 @@ impl App {
 
             let mut scratch: Vec<&Task> = archived_tasks
                 .iter()
-                .filter(|t| !archived_matched.contains(&t.id))
+                .filter(|t| is_scratch_task(t))
                 .collect();
             if !scratch.is_empty() {
                 scratch.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
                 self.archived_entries.push(ListEntry::Header {
-                    label: "scratch".into(),
+                    label: SCRATCH_TASK_LIST_LABEL.into(),
                 });
                 for task in scratch {
                     self.archived_entries.push(ListEntry::Task(TaskRow {

@@ -52,7 +52,7 @@ pub fn repo_label(path: &Path) -> String {
         .unwrap_or_else(|| path.display().to_string())
 }
 
-/// Initialize an empty git repo for scratch tasks.
+/// Initialize an empty git repo (test fixtures and local dev checkouts).
 pub fn init_scratch_repo(dest: &Path) -> Result<()> {
     std::fs::create_dir_all(dest).map_err(|source| TskError::Write {
         path: dest.to_path_buf(),

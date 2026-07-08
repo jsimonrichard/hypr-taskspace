@@ -12,7 +12,9 @@ use sha2::{Digest, Sha256};
 
 use crate::error::{TskError, Result};
 use crate::models::Task;
-use crate::task_paths::scratch_checkout_path;
+use crate::task_paths::{
+    is_scratch_workspace_path, scratch_checkout_path, task_workspace_dir, SCRATCH_DIR_NAME,
+};
 use crate::vcs::{detect_vcs_root, repo_label, VcsKind};
 use crate::xdg::{ensure_parent, expand, tsk_config_dir};
 
@@ -79,12 +81,22 @@ pub fn repo_id_from_path(path: &Path) -> String {
     format!("{:x}", digest)[..12].to_string()
 }
 
-/// True when the task uses an isolated scratch repo under its task home.
+/// Heading for scratch tasks in the task list.
+pub const SCRATCH_TASK_LIST_LABEL: &str = "SCRATCH";
+
+/// True when the task uses an empty scratch workspace under its task home.
 pub fn is_task_scratch_repo(task_id: &str, repo_path: &Path, tasks_base_dir: &Path) -> bool {
-    paths_match(
-        repo_path,
-        &scratch_checkout_path(&tasks_base_dir.join(task_id)),
-    )
+    let task_home = tasks_base_dir.join(task_id);
+    paths_match(repo_path, &scratch_checkout_path(&task_home))
+        || paths_match(
+            repo_path,
+            &task_workspace_dir(&task_home).join(SCRATCH_DIR_NAME),
+        )
+}
+
+/// Scratch taskspaces have no registered source checkout.
+pub fn is_scratch_task(task: &Task) -> bool {
+    task.source_repo_path.is_none()
 }
 
 #[derive(Deserialize)]
@@ -244,12 +256,31 @@ fn build_registered_repo(path: PathBuf, id: String, config: Option<RepoConfig>) 
 }
 
 pub fn load_repos(extra_paths: impl IntoIterator<Item = PathBuf>) -> Result<Vec<RegisteredRepo>> {
+    let tasks_base = crate::config::load_config()
+        .ok()
+        .map(|cfg| expand(cfg.tasks_base_dir));
+    let conn = repos_db_conn()?;
+
     let mut paths: BTreeMap<String, (String, PathBuf)> = BTreeMap::new();
     for (id, path) in load_repo_records()? {
-        paths.insert(path.display().to_string(), (id, normalize_repo_path(&path)));
+        let path = normalize_repo_path(&path);
+        if tasks_base
+            .as_ref()
+            .is_some_and(|base| is_scratch_workspace_path(&path, base))
+        {
+            let _ = delete_repo_record(&conn, &path);
+            continue;
+        }
+        paths.insert(path.display().to_string(), (id, path));
     }
     for path in extra_paths {
         let path = normalize_repo_path(&path);
+        if tasks_base
+            .as_ref()
+            .is_some_and(|base| is_scratch_workspace_path(&path, base))
+        {
+            continue;
+        }
         let key = path.display().to_string();
         paths
             .entry(key)
@@ -330,6 +361,9 @@ pub fn task_source_repo_path(task: &Task) -> &Path {
 }
 
 pub fn task_belongs_to_repo(task: &Task, repo: &RegisteredRepo) -> bool {
+    if is_scratch_task(task) {
+        return false;
+    }
     paths_match(task_source_repo_path(task), &repo_display_path(repo))
 }
 
@@ -354,11 +388,14 @@ pub fn ensure_repo_removable(repo: &RegisteredRepo, tasks: &[Task]) -> Result<()
     Ok(())
 }
 
-pub fn collect_task_repo_paths(tasks: impl IntoIterator<Item = impl AsRef<Path>>) -> Vec<PathBuf> {
+pub fn collect_task_repo_paths<'a>(tasks: impl IntoIterator<Item = &'a Task>) -> Vec<PathBuf> {
     let mut seen = HashSet::new();
     let mut paths = Vec::new();
-    for path in tasks {
-        let path = normalize_repo_path(path.as_ref());
+    for task in tasks {
+        if is_scratch_task(task) {
+            continue;
+        }
+        let path = normalize_repo_path(task_source_repo_path(task));
         let key = path.display().to_string();
         if seen.insert(key) {
             paths.push(path);
@@ -445,5 +482,50 @@ path = "/tmp/legacy-app"
             assert_eq!(loaded.len(), 1);
             assert!(paths_match(&loaded[0].path, &checkout));
         });
+    }
+
+    #[test]
+    fn collect_task_repo_paths_skips_scratch_tasks() {
+        use chrono::Utc;
+        use crate::models::TaskStatus;
+
+        let now = Utc::now();
+        let linked = Task {
+            id: "t1".into(),
+            name: "linked".into(),
+            status: TaskStatus::Active,
+            repo_url: None,
+            repo_path: PathBuf::from("/tmp/tsk-tasks/t1/workspace/my-app"),
+            source_repo_path: Some(PathBuf::from("/home/user/my-app")),
+            branch: None,
+            container_name: "tsk-t1".into(),
+            workspace_count: 10,
+            browser_profile: None,
+            created_at: now,
+            last_active_at: now,
+            agent_notes_path: None,
+            ports: vec![],
+        };
+        let scratch = Task {
+            id: "t2".into(),
+            name: "scratch".into(),
+            status: TaskStatus::Active,
+            repo_url: None,
+            repo_path: PathBuf::from("/tmp/tsk-tasks/t2/workspace"),
+            source_repo_path: None,
+            branch: None,
+            container_name: "tsk-t2".into(),
+            workspace_count: 10,
+            browser_profile: None,
+            created_at: now,
+            last_active_at: now,
+            agent_notes_path: None,
+            ports: vec![],
+        };
+
+        let paths = collect_task_repo_paths([&linked, &scratch]);
+        assert_eq!(paths, vec![PathBuf::from("/home/user/my-app")]);
+        assert!(is_scratch_task(&scratch));
+        assert!(!is_scratch_task(&linked));
     }
 }

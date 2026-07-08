@@ -218,7 +218,7 @@ enum TaskCommands {
         name: String,
         #[arg(long, help = "Do not switch into the new task after creating it")]
         no_switch: bool,
-        #[arg(long, help = "Use an isolated scratch repo under the task home")]
+        #[arg(long, help = "Use an empty scratch workspace under the task home")]
         scratch: bool,
         #[arg(long, help = "Use a specific checkout path instead of detecting git/jj from cwd")]
         repo_path: Option<std::path::PathBuf>,
