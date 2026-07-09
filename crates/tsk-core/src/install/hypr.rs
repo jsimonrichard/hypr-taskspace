@@ -12,6 +12,7 @@ use crate::error::{TskError, Result};
 use crate::install::backup::{self, backup_timestamp};
 use crate::install::bins::{self, InstallBinsOptions};
 use crate::install::manifest::{self, Manifest};
+use crate::install::omarchy;
 use crate::install::profile::{InstallProfile, install_metadata_dir, profile_for_config};
 use crate::share::{effective_share_dir, uses_packaged_share};
 use crate::install::reload;
@@ -100,6 +101,15 @@ pub fn install_hypr(cfg: &TskConfig, options: &InstallHyprOptions) -> Result<Vec
             "would append to {}",
             cfg.install_hypr_config_path.display()
         ));
+        if options.omarchy_integration {
+            if let Some(entry) =
+                omarchy::patch_omarchy_input_gestures(cfg, &backup_dir, true)?
+            {
+                if let Some(path) = entry.get("path").and_then(|v| v.as_str()) {
+                    lines.push(format!("would patch {path} (disable native workspace gestures)"));
+                }
+            }
+        }
         return Ok(lines);
     }
 
@@ -155,7 +165,13 @@ pub fn install_hypr(cfg: &TskConfig, options: &InstallHyprOptions) -> Result<Vec
         })?;
     let modified = true;
 
-    let share_src = bins::find_share_root(options.workspace_root.as_deref())?;
+    if options.omarchy_integration {
+        if let Some(entry) = omarchy::patch_omarchy_input_gestures(cfg, &backup_dir, false)? {
+            backed_up.push(entry);
+        }
+    }
+
+    let share_src = bins::resolve_share_templates(options.workspace_root.as_deref(), profile)?;
     let m = Manifest {
         version: 1,
         integration: "hypr".into(),

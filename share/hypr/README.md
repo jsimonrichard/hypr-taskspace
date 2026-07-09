@@ -15,7 +15,7 @@ Shipped templates install to `@TSK_SHARE@/hypr/` via the **pacman package**, **`
    Or use **`tsk install omarchy`** to do this automatically (Omarchy only).
 
 3. Resolve keybind conflicts your way:
-   - **Omarchy**: source `integrations/omarchy-unbind.conf` before `bindings.conf`, or edit your existing Omarchy binds manually instead of using unbinds.
+   - **Omarchy**: `tsk install omarchy` comments out native `gesture = …, workspace` lines in `~/.config/hypr/input.conf` and sources tsk swipe gestures (`tsk workspace prev/next`) from `bindings.conf`. Omarchy unbinds for keybinds are applied automatically.
 
 Because Hyprland uses the **last** matching bind, sourcing `bindings.conf` last overrides earlier workspace keys.
 

@@ -51,19 +51,27 @@ pub fn install_bins(cfg: &TskConfig, options: &InstallBinsOptions) -> Result<Vec
     let profile = options.profile.unwrap_or_else(|| profile_for_config(cfg));
     let share_dir = effective_share_dir(cfg);
     let system_share = uses_packaged_share(cfg);
-    let share_src = find_share_root(options.workspace_root.as_deref())?;
+    let deploy_user_share =
+        should_deploy_user_share(cfg, system_share, options.omarchy_integration);
+    let share_src = resolve_share_templates(options.workspace_root.as_deref(), profile)?;
     let tsk_cmd = resolve_tsk_command(cfg);
 
     if options.dry_run {
         return Ok(vec![
             format!("would verify tsk on PATH ({tsk_cmd})"),
-            if system_share {
+            if deploy_user_share {
+                format!(
+                    "would deploy share templates from {} → {}",
+                    share_src.display(),
+                    cfg.install_hypr_share_dir.display()
+                )
+            } else if system_share {
                 format!("would use system share at {}", share_dir.display())
             } else {
                 format!(
                     "would copy share templates from {} → {}",
                     share_src.display(),
-                    share_dir.display()
+                    cfg.install_hypr_share_dir.display()
                 )
             },
             if options.skip_waybar {
@@ -103,28 +111,43 @@ pub fn install_bins(cfg: &TskConfig, options: &InstallBinsOptions) -> Result<Vec
         )));
     }
 
-    if system_share {
-        verify_system_share(cfg, options)?;
-    } else {
+    if deploy_user_share {
+        let template_src = share_src.clone();
         let tsk_bin = resolve_tsk_binary(cfg);
         copy_share_tree(
             cfg,
-            &share_src,
+            &template_src,
             profile,
             options.omarchy_integration,
             &resolve_tsk_command(cfg),
         )?;
-        install_tsk_wrapper(cfg, &tsk_bin)?;
-        if !options.skip_waybar {
-            install_waybar_module(cfg, options)?;
+        if !system_share {
+            install_tsk_wrapper(cfg, &tsk_bin)?;
         }
+        if !options.skip_waybar {
+            if system_share {
+                verify_system_share_for_waybar(cfg)?;
+            } else {
+                install_waybar_module(cfg, options)?;
+            }
+        }
+    } else {
+        verify_system_share(cfg, options)?;
     }
 
     let mut actions = vec![
-        if system_share {
+        if deploy_user_share {
+            format!(
+                "deployed share data to {}",
+                cfg.install_hypr_share_dir.display()
+            )
+        } else if system_share {
             format!("using system share at {}", share_dir.display())
         } else {
-            format!("installed share data to {}", share_dir.display())
+            format!(
+                "installed share data to {}",
+                cfg.install_hypr_share_dir.display()
+            )
         },
         format!("using tsk at {path_detail}"),
         format!("runtime data in {}", cfg.data_dir.display()),
@@ -387,11 +410,14 @@ fn copy_hypr_tree(
                 );
                 out = format!("{integration}{out}");
             }
-            out
+            remap_packaged_share_paths(&out, share_str)
         } else if raw.contains(TSK_SHARE_PLACEHOLDER) || raw.contains(TSK_CMD_PLACEHOLDER) {
-            substitute_share(&raw, share_str).replace(TSK_CMD_PLACEHOLDER, tsk_cmd)
+            remap_packaged_share_paths(
+                &substitute_share(&raw, share_str).replace(TSK_CMD_PLACEHOLDER, tsk_cmd),
+                share_str,
+            )
         } else {
-            raw
+            remap_packaged_share_paths(&raw, share_str)
         };
         let target = dest.join(path.file_name().unwrap());
         ensure_parent(&target)?;
@@ -446,13 +472,109 @@ fn substitute_share(content: &str, share_dir: &str) -> String {
     content.replace(TSK_SHARE_PLACEHOLDER, share_dir)
 }
 
-pub fn find_share_root(workspace_root: Option<&Path>) -> Result<PathBuf> {
+fn remap_packaged_share_paths(content: &str, share_dir: &str) -> String {
+    if share_dir == crate::share::SYSTEM_SHARE_DIR {
+        return content.to_string();
+    }
+    content.replace(crate::share::SYSTEM_SHARE_DIR, share_dir)
+}
+
+/// Deploy user-local Hypr/Waybar templates even when the pacman share tree exists.
+fn should_deploy_user_share(
+    cfg: &TskConfig,
+    system_share: bool,
+    omarchy_integration: bool,
+) -> bool {
+    !system_share
+        || omarchy_integration
+        || cfg.install_hypr_share_dir != effective_share_dir(cfg)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::TskConfig;
+    use crate::install::profile::InstallProfile;
+    use crate::xdg::expand;
+
+    #[test]
+    fn should_deploy_user_share_for_omarchy_on_packaged_install() {
+        if !crate::share::system_share_available() {
+            return;
+        }
+        let mut cfg = TskConfig::default();
+        cfg.install_hypr_share_dir = expand("~/.local/share/tsk");
+        assert!(should_deploy_user_share(&cfg, true, true));
+    }
+
+    #[test]
+    fn should_deploy_user_share_when_configured_share_dir_differs() {
+        if !crate::share::system_share_available() {
+            return;
+        }
+        let mut cfg = TskConfig::default();
+        cfg.install_hypr_share_dir = expand("~/.local/share/tsk");
+        assert!(should_deploy_user_share(&cfg, true, false));
+    }
+
+    #[test]
+    fn bindings_include_omarchy_unbind_source_when_requested() {
+        let raw = "source = @TSK_SHARE@/hypr/window-rules.conf\n$tsk = @TSK_CMD@\n";
+        let share = "/home/u/.local/share/tsk";
+        let mut out = substitute_share(raw, share);
+        out = out.replace(TSK_CMD_PLACEHOLDER, "/usr/bin/tsk");
+        if InstallProfile::Prod.include_omarchy_unbinds_for(true) {
+            let integration = format!(
+                "source = {share}/hypr/integrations/omarchy-unbind.conf\n\n"
+            );
+            out = format!("{integration}{out}");
+        }
+        assert!(out.starts_with("source = /home/u/.local/share/tsk/hypr/integrations/omarchy-unbind.conf"));
+    }
+
+    #[test]
+    fn remap_packaged_share_paths_rewrites_system_tree() {
+        let raw = "source = /usr/share/tsk/hypr/window-rules.conf\n";
+        assert_eq!(
+            remap_packaged_share_paths(raw, "/home/u/.local/share/tsk"),
+            "source = /home/u/.local/share/tsk/hypr/window-rules.conf\n"
+        );
+    }
+
+    #[test]
+    fn resolve_share_templates_prefers_system_share_for_prod() {
+        if !crate::share::system_share_available() {
+            return;
+        }
+        let resolved = resolve_share_templates(None, InstallProfile::Prod).unwrap();
+        assert_eq!(resolved, crate::share::system_share_dir());
+    }
+}
+
+pub fn resolve_share_templates(
+    workspace_root: Option<&Path>,
+    profile: InstallProfile,
+) -> Result<PathBuf> {
     if let Some(root) = workspace_root {
         return Ok(root.join("share"));
     }
-    find_workspace_root()
-        .map(|w| w.join("share"))
-        .ok_or_else(|| TskError::Other("could not find share/ templates".into()))
+    if profile == InstallProfile::Prod && crate::share::system_share_available() {
+        return Ok(crate::share::system_share_dir());
+    }
+    if let Some(workspace) = find_workspace_root() {
+        return Ok(workspace.join("share"));
+    }
+    if crate::share::system_share_available() {
+        return Ok(crate::share::system_share_dir());
+    }
+    Err(TskError::Other(
+        "could not find share/ templates — install the hypr-taskspace package or run from the repo".into(),
+    ))
+}
+
+/// Back-compat alias for dev callers that discover templates from the repo.
+pub fn find_share_root(workspace_root: Option<&Path>) -> Result<PathBuf> {
+    resolve_share_templates(workspace_root, InstallProfile::Dev)
 }
 
 pub fn find_workspace_root() -> Option<PathBuf> {

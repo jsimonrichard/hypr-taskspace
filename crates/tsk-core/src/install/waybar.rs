@@ -252,7 +252,11 @@ fn copy_share_templates(cfg: &TskConfig) -> Result<()> {
     if uses_packaged_share(cfg) {
         return Ok(());
     }
-    let share_src = crate::install::bins::find_share_root(None)?.join("waybar");
+    let share_src = crate::install::bins::resolve_share_templates(
+        None,
+        profile_for_config(cfg),
+    )?
+    .join("waybar");
     let share_dest = cfg.install_hypr_share_dir.join("waybar");
     let share_str = cfg.install_hypr_share_dir.to_string_lossy();
     ensure_parent(&share_dest.join("_"))?;
