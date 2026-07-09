@@ -21,6 +21,7 @@ pub mod vcs;
 pub mod share;
 pub mod state_notify;
 pub mod task_cleanup;
+pub mod task_env;
 pub mod task_ids;
 pub mod task_on_start;
 pub mod taskspaces;

@@ -499,7 +499,8 @@ impl TaskService {
     pub fn open_terminal(&self, task_id: Option<&str>, host: bool) -> Result<()> {
         let mut state = self.load_state()?;
         if host {
-            return crate::terminal::launch_host_terminal(None);
+            let env = crate::task_env::build_default_taskspace_env();
+            return crate::terminal::launch_host_terminal(None, &env);
         }
 
         if let Some(tid) = task_id {
@@ -508,7 +509,8 @@ impl TaskService {
                 .get(tid)
                 .cloned()
                 .ok_or_else(|| TskError::Other(format!("Unknown task: {tid}")))?;
-            return crate::terminal::launch_task_terminal(&task);
+            let env = crate::task_env::build_task_env(&state, &task, &self.config.tasks_base_dir, None);
+            return crate::terminal::launch_task_terminal(&task, &env);
         }
 
         crate::context_sync::sync_from_active_workspace(&mut state);
@@ -516,12 +518,19 @@ impl TaskService {
         if state.context_mode == ContextMode::Task {
             if let Some(tid) = state.current_task_id.as_deref() {
                 if let Some(task) = state.tasks.get(tid) {
-                    return crate::terminal::launch_task_terminal(task);
+                    let env = crate::task_env::build_task_env(
+                        &state,
+                        task,
+                        &self.config.tasks_base_dir,
+                        None,
+                    );
+                    return crate::terminal::launch_task_terminal(task, &env);
                 }
             }
         }
 
-        crate::terminal::launch_host_terminal(None)
+        let env = crate::task_env::build_taskspace_env(&state, &self.config.tasks_base_dir);
+        crate::terminal::launch_host_terminal(None, &env)
     }
 
     pub fn switch_task(&self, task_id: &str) -> Result<Task> {

@@ -4,11 +4,12 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use crate::config::TskConfig;
+use crate::config::{load_config, TskConfig};
 use crate::error::Result;
 use crate::hyprland;
 use crate::models::{SessionState, Task};
 use crate::repos::{load_repo_config, normalize_repo_path, RepoConfig};
+use crate::task_env;
 use crate::task_paths::is_managed_task_checkout;
 use crate::task_repo::TaskRepoSetup;
 use crate::vcs::{vcs_kind_at, VcsKind};
@@ -87,7 +88,7 @@ fn run_task_hook(
         setup,
         &source_root,
         &repo_config,
-        &task_workspace,
+        state,
         monitor.as_deref(),
     )
 }
@@ -140,10 +141,10 @@ fn prepare_hyprland_for_hook(task_workspace: &str, monitor: Option<&str>) {
 fn run_hook_script(
     hook: TaskHook,
     task: &Task,
-    setup: &TaskRepoSetup,
+    _setup: &TaskRepoSetup,
     source_root: &Path,
     config: &RepoConfig,
-    task_workspace: &str,
+    state: &SessionState,
     monitor: Option<&str>,
 ) -> Result<()> {
     let script_rel = match hook {
@@ -161,19 +162,20 @@ fn run_hook_script(
         return Ok(());
     }
 
-    let is_worktree = matches!(setup, TaskRepoSetup::Linked { .. });
+    let is_worktree = matches!(_setup, TaskRepoSetup::Linked { .. });
     let mut cmd = command_for_script(&script_path);
-    cmd.current_dir(&task.repo_path)
-        .env("TSK_TASK_ID", &task.id)
-        .env("TSK_TASK_NAME", &task.name)
-        .env(
-            "TSK_TASK_REPO",
-            task.repo_path.to_string_lossy().as_ref(),
-        )
-        .env("TSK_SOURCE_REPO", source_root.to_string_lossy().as_ref())
-        .env("TSK_TASK_WORKSPACE", task_workspace)
-        .env("TSK_WORKTREE", if is_worktree { "1" } else { "0" })
-        .env("TSK_TASK_HOOK", hook.env_name());
+    cmd.current_dir(&task.repo_path);
+    let tsk_config = load_config()?;
+    task_env::apply_env(
+        &mut cmd,
+        &task_env::build_task_env(
+            state,
+            task,
+            &tsk_config.tasks_base_dir,
+            Some(is_worktree),
+        ),
+    );
+    cmd.env("TSK_TASK_HOOK", hook.env_name());
     if let Some(monitor) = monitor {
         cmd.env("TSK_ON_START_MONITOR", monitor);
     }
@@ -306,7 +308,7 @@ mod tests {
                 source.join(".tsk/on-start.sh"),
                 format!(
                     "#!/bin/sh\n\
-                     printf '%s' \"$TSK_TASK_WORKSPACE\" > {marker}\n",
+                     printf '%s' \"$TSK_PRIMARY_NON_GLOBAL_WORKSPACE\" > {marker}\n",
                     marker = marker.display()
                 ),
             )
@@ -349,7 +351,7 @@ mod tests {
                 source.join(".tsk/on-start.sh"),
                 format!(
                     "#!/bin/sh\n\
-                     printf '%s\\n' \"$TSK_TASK_ID\" \"$TSK_TASK_REPO\" \"$TSK_SOURCE_REPO\" \"$TSK_WORKTREE\" \"$TSK_TASK_WORKSPACE\" \"$TSK_TASK_HOOK\" > {marker}\n",
+                     printf '%s\\n' \"$TSK_TASK_ID\" \"$TSK_TASK_REPO\" \"$TSK_SOURCE_REPO\" \"$TSK_WORKTREE\" \"$TSK_PRIMARY_NON_GLOBAL_WORKSPACE\" \"$TSK_TASK_HOOK\" > {marker}\n",
                     marker = marker.display()
                 ),
             )

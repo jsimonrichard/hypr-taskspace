@@ -1,0 +1,35 @@
+[default]
+workspace_count = 10
+# Slots that always map to default Hyprland workspaces (e.g. 1 → workspace "1"), even in a task taskspace.
+# global_workspaces = [1]
+
+[tasks]
+base_dir = "~/tsk-tasks"
+workspaces_per_task = 10
+max_tasks = 9
+
+[distrobox]
+image = "quay.io/toolbx-images/arch-toolbox:latest"
+container_prefix = "tsk"
+
+[terminal]
+command = "xdg-terminal-exec"
+title_flag = "--title"
+
+[hyprland]
+enabled = true
+auto_move_tagged_windows = true
+switch_task_on_window_focus = false
+
+[daemon]
+socket = "~/.local/share/tsk/daemon.sock"
+
+[data]
+dir = "~/.local/share/tsk"
+
+[install.hypr]
+config_path = "~/.config/hypr/hyprland.conf"
+share_dir = "/usr/share/tsk"
+source_line = "/usr/share/tsk/hypr/bindings.conf"
+require_sourced_last = true
+allow_user_file_comments = false
