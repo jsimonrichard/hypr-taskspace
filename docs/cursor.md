@@ -15,8 +15,17 @@ Optional settings in `.tsk/repo.toml`:
 ```
 
 ```bash
+# Prefer the tsk launcher — respects Distrobox isolation when the task was created with --container
+tsk task editor "$TSK_TASK_ID"
+```
+
+Legacy / host-only:
+
+```bash
 cursor "$TSK_TASK_REPO"
 ```
+
+When `TSK_CONTAINER_ISOLATION=1`, on-start scripts should launch via Distrobox (`distrobox enter --name "$TSK_CONTAINER_NAME" -- cursor "$TSK_TASK_REPO"`) or `tsk task editor`. Distrobox integrates GUI apps with the host Wayland session.
 
 `TSK_TASK_REPO` is the task-specific path under `~/tsk-tasks/<id>/workspace/<repo-folder-name>` (or `workspace/` for scratch tasks). Always use this path — not the canonical repo location elsewhere on disk — so Cursor scopes agent conversations to the task checkout.
 

@@ -53,6 +53,9 @@ pub struct Task {
     pub source_repo_path: Option<PathBuf>,
     pub branch: Option<String>,
     pub container_name: String,
+    /// When true, terminals / editors / browsers launch via Distrobox enter.
+    #[serde(default)]
+    pub container_isolation: bool,
     pub workspace_count: u32,
     pub browser_profile: Option<String>,
     pub created_at: DateTime<Utc>,

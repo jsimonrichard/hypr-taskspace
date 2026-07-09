@@ -12,7 +12,7 @@ Hyprland keybinds call `tsk` on your **PATH**. Runtime state (`state.db`, daemon
 
 Optional:
 
-- `distrobox` + Podman — deferred; container create/enter is not implemented yet (`tsk task terminal` opens a host shell in the task checkout)
+- `distrobox` + Podman (or Docker) — optional per-task container isolation (`tsk task new … --container`)
 
 ---
 
@@ -180,16 +180,21 @@ tsk task new my-feature              # uses git/jj repo from cwd (or scratch if 
 tsk task new other --no-switch       # create without switching
 tsk task new notes --scratch         # isolated repo under ~/tsk-tasks/<id>/workspace/scratch
 tsk task new fix --repo-path /path/to/checkout
+tsk task new iso --container         # Distrobox isolation for terminals / editor / browser
 tsk repo root                        # print detected git/jj root for cwd
 tsk task list
 tsk task switch my-feature
 tsk task archive my-feature
-tsk task terminal                    # host shell in current task checkout
+tsk task terminal                    # task checkout shell (Distrobox enter when --container)
+tsk task editor                      # Cursor/VS Code (inside Distrobox when isolation is on)
+tsk task browser                     # Chromium/browser (inside Distrobox when isolation is on)
 ```
+
+Enable Distrobox at create time with `--container` or the TUI checkbox. That runs `distrobox create --home ~/tsk-tasks/<id>` and routes **SUPER+Return** / **SUPER+E** / **SUPER+B** through `distrobox enter`. Tasks without isolation still launch host apps. Image defaults live in `[distrobox]` in `~/.config/tsk/config.toml`.
 
 Task homes are created under `~/tsk-tasks/<id>/` for notes and agent metadata. Linked git/jj checkouts live under `~/tsk-tasks/<id>/workspace/<repo-folder-name>` (scratch tasks use `workspace/scratch`). Optional checkout settings (custom name, remote URL, VCS kind) live in `.tsk/repo.toml`; registered checkout paths and stable ids live in `state.db`.
 
-Cursor opens on the task-specific checkout path (`TSK_TASK_REPO`). When multi-repo tasks are supported, tsk will open a task-level `.code-workspace` spanning all checkouts instead. See **[docs/cursor.md](docs/cursor.md)**.
+Cursor opens on the task-specific checkout path (`TSK_TASK_REPO`). With container isolation, prefer `tsk task editor` (or the default on-start script) so Cursor runs via Distrobox. When multi-repo tasks are supported, tsk will open a task-level `.code-workspace` spanning all checkouts instead. See **[docs/cursor.md](docs/cursor.md)**.
 
 ```bash
 tsk repo add                         # register cwd (writes .tsk/repo.toml in the checkout)

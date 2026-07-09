@@ -338,7 +338,19 @@ fn dispatch(
                 .get("create_worktree")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(true);
-            let repo_options = crate::task_repo::TaskRepoOptions { create_worktree };
+            let container_isolation = params
+                .get("container_isolation")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let defer_container_create = params
+                .get("defer_container_create")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let repo_options = crate::task_repo::TaskRepoOptions {
+                create_worktree,
+                container_isolation,
+                defer_container_create,
+            };
             let task = svc.create_task(name, switch, repo, cwd.as_deref(), repo_options)?;
             Ok(serde_json::to_value(task).map_err(|e| TskError::Other(e.to_string()))?)
         }
@@ -400,6 +412,24 @@ fn dispatch(
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
             svc.open_terminal(task_id, host)?;
+            Ok(json!({ "ok": true }))
+        }
+        "open_editor" => {
+            let task_id = params.get("task_id").and_then(|v| v.as_str());
+            svc.open_editor(task_id)?;
+            Ok(json!({ "ok": true }))
+        }
+        "open_browser" => {
+            let task_id = params.get("task_id").and_then(|v| v.as_str());
+            svc.open_browser(task_id)?;
+            Ok(json!({ "ok": true }))
+        }
+        "run_on_create_hook" => {
+            let task_id = params
+                .get("task_id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| TskError::Other("task_id required".into()))?;
+            svc.run_on_create_hook(task_id)?;
             Ok(json!({ "ok": true }))
         }
 

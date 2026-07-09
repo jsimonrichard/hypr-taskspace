@@ -1,9 +1,10 @@
-//! Launch terminals — task manager TUI and task-scoped host shells.
+//! Launch terminals — task manager TUI and task-scoped host/container shells.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::config::{load_config, TskConfig};
+use crate::distrobox;
 use crate::error::{TskError, Result};
 use crate::binary::{resolve_tsk_spawn_binary, command_v_login};
 use crate::models::Task;
@@ -42,12 +43,62 @@ pub fn launch_task_tui() -> Result<()> {
     )
 }
 
-/// Open a host terminal in the task's linked checkout (no container isolation).
+/// Open a terminal in the task checkout (Distrobox enter when isolation is enabled).
 pub fn launch_task_terminal(task: &Task, env: &[(String, String)]) -> Result<()> {
     let cfg = load_config()?;
     crate::vcs::ensure_task_checkout_ready(task, &cfg)?;
     let term = resolve_terminal_command(&cfg)?;
     let title = format!("[{}] terminal", task.id);
+
+    if task.container_isolation {
+        // Open the host terminal immediately so Distrobox create/enter can show
+        // pull/start progress in that window instead of blocking before spawn.
+        if distrobox::container_exists(&task.container_name) {
+            let argv = distrobox::shell_enter_argv(&task.container_name, &task.repo_path);
+            let (program, args) = argv
+                .split_first()
+                .ok_or_else(|| TskError::Other("empty distrobox enter argv".into()))?;
+            let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+            return spawn_terminal_command(
+                &term,
+                Path::new(program),
+                &arg_refs,
+                Some(&task.repo_path),
+                &title,
+                "org.tsk.task-terminal",
+                env,
+            );
+        }
+
+        // Container missing (e.g. deferred create never finished) — create inside
+        // the terminal so the user sees progress/errors, then enter.
+        let image = distrobox::resolve_create_image(&cfg.distrobox_image)?;
+        let task_home = crate::task_cleanup::task_data_dir(&cfg, &task.id);
+        let name_q = shell_single_quote(&task.container_name);
+        let image_q = shell_single_quote(&image);
+        let home_q = shell_single_quote(&task_home.display().to_string());
+        let enter = distrobox::shell_enter_argv(&task.container_name, &task.repo_path)
+            .into_iter()
+            .map(|a| shell_single_quote(&a))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let script = format!(
+            "set -euo pipefail\n\
+             printf 'Creating Distrobox %s (was missing)…\\n' {name_q}\n\
+             distrobox create -Y --name {name_q} --image {image_q} --home {home_q} --no-entry\n\
+             exec {enter}\n"
+        );
+        return spawn_terminal_command(
+            &term,
+            Path::new("bash"),
+            &["-lc", &script],
+            Some(&task.repo_path),
+            &title,
+            "org.tsk.task-terminal",
+            env,
+        );
+    }
+
     spawn_host_shell(&term, &task.repo_path, &title, env)
 }
 
@@ -61,6 +112,10 @@ pub fn launch_host_terminal(cwd: Option<PathBuf>, env: &[(String, String)]) -> R
         "terminal",
         env,
     )
+}
+
+fn shell_single_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 fn resolve_terminal_command(cfg: &TskConfig) -> Result<String> {
@@ -183,11 +238,11 @@ fn spawn_terminal_command(
             cmd.args([
                 &format!("--class={class}"),
                 &format!("--title={title}"),
-                "--",
             ]);
             if let Some(cwd) = cwd {
                 cmd.args([&format!("--directory={}", cwd.display())]);
             }
+            cmd.args(["--"]);
             cmd.arg(program);
             cmd.args(args);
         }

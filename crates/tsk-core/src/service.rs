@@ -322,6 +322,7 @@ impl TaskService {
             source_repo_path,
             branch,
             container_name: format!("{}-{task_id}", self.config.container_prefix),
+            container_isolation: repo_options.container_isolation,
             workspace_count: self.config.default_workspace_count,
             browser_profile: None,
             created_at: now,
@@ -329,37 +330,82 @@ impl TaskService {
             agent_notes_path: Some(notes_path),
             ports: vec![],
         };
+
+        if repo_options.container_isolation {
+            let image = self.config.distrobox_image.trim();
+            if image.is_empty() {
+                return Err(TskError::Other(
+                    "Distrobox isolation requested, but no image is configured \
+                     ([distrobox].image is empty). Set a supported Distrobox image for this host \
+                     (Arch: quay.io/toolbx/arch-toolbox:latest)."
+                        .into(),
+                ));
+            }
+            if !repo_options.defer_container_create {
+                crate::distrobox::create_container(
+                    &task.container_name,
+                    &task_home,
+                    &self.config.distrobox_image,
+                )?;
+            }
+        }
+
         self.registry.touch_task(&mut task);
         state.tasks.insert(task_id.clone(), task.clone());
 
-        if hyprland::available() && self.config.hyprland_enabled && !switch {
-            workspace_nav::setup_task_workspaces(&task_id, self.config.default_workspace_count);
-        }
+        // Deferred Distrobox create also defers switch: `switch_task` closes the TUI
+        // (`close_tsk_tui_windows`), which would kill the setup progress UI mid-create.
+        // Never provision Hyprland workspaces here — `switch_task` / `set_taskspace` does
+        // that. Calling `ensure_workspaces` from create switches focus and races with the
+        // workspacev2 listener.
+        let do_switch = switch && !repo_options.defer_container_create;
+        let run_hook = !repo_options.defer_container_create;
 
-        if switch {
+        if do_switch {
             self.commit_state(&state, Some(StateChangeKind::Full))?;
             let task = self.switch_task(&task_id)?;
-            if let Err(err) = crate::task_on_start::run_on_create_after_create(
-                &task,
-                &resolved.setup,
-                self.config.hyprland_enabled,
-                &state,
-            ) {
-                eprintln!("tsk: on_create hook: {err}");
+            if run_hook {
+                if let Err(err) = crate::task_on_start::run_on_create_after_create(
+                    &task,
+                    &resolved.setup,
+                    self.config.hyprland_enabled,
+                    &state,
+                ) {
+                    eprintln!("tsk: on_create hook: {err}");
+                }
             }
             Ok(task)
         } else {
             self.commit_state(&state, Some(StateChangeKind::Full))?;
-            if let Err(err) = crate::task_on_start::run_on_create_after_create(
-                &task,
-                &resolved.setup,
-                self.config.hyprland_enabled,
-                &state,
-            ) {
-                eprintln!("tsk: on_create hook: {err}");
+            if run_hook {
+                if let Err(err) = crate::task_on_start::run_on_create_after_create(
+                    &task,
+                    &resolved.setup,
+                    self.config.hyprland_enabled,
+                    &state,
+                ) {
+                    eprintln!("tsk: on_create hook: {err}");
+                }
             }
             Ok(task)
         }
+    }
+
+    /// Run the create hook after deferred Distrobox setup finishes.
+    pub fn run_on_create_hook(&self, task_id: &str) -> Result<()> {
+        let state = self.load_state()?;
+        let task = state
+            .tasks
+            .get(task_id)
+            .cloned()
+            .ok_or_else(|| TskError::Other(format!("Unknown task: {task_id}")))?;
+        let setup = crate::task_on_start::setup_for_task(&task, &self.config);
+        crate::task_on_start::run_on_create_after_create(
+            &task,
+            &setup,
+            self.config.hyprland_enabled,
+            &state,
+        )
     }
 
     /// Validate and leave the taskspace when archiving the active task. Holds the service lock.
@@ -425,11 +471,26 @@ impl TaskService {
         if let Err(err) = crate::task_cleanup::reattach_task_checkout(&self.config, &task) {
             return Err(err);
         }
-        if let Err(err) = crate::task_cleanup::start_task_container(&task) {
-            eprintln!(
-                "tsk: restore task {}: start container {}: {err}",
-                task.id, task.container_name
-            );
+        if task.container_isolation {
+            if !crate::distrobox::container_exists(&task.container_name) {
+                let task_home = crate::task_cleanup::task_data_dir(&self.config, &task.id);
+                if let Err(err) = crate::distrobox::create_container(
+                    &task.container_name,
+                    &task_home,
+                    &self.config.distrobox_image,
+                ) {
+                    eprintln!(
+                        "tsk: restore task {}: create container {}: {err}",
+                        task.id, task.container_name
+                    );
+                }
+            }
+            if let Err(err) = crate::task_cleanup::start_task_container(&task) {
+                eprintln!(
+                    "tsk: restore task {}: start container {}: {err}",
+                    task.id, task.container_name
+                );
+            }
         }
 
         if let Some(entry) = state.tasks.get_mut(task_id) {
@@ -546,6 +607,43 @@ impl TaskService {
 
         let env = crate::task_env::build_taskspace_env(&state, &self.config.tasks_base_dir);
         crate::terminal::launch_host_terminal(None, &env)
+    }
+
+    fn resolve_task_for_launch(
+        &self,
+        state: &mut SessionState,
+        task_id: Option<&str>,
+    ) -> Result<Task> {
+        if let Some(tid) = task_id {
+            return state
+                .tasks
+                .get(tid)
+                .cloned()
+                .ok_or_else(|| TskError::Other(format!("Unknown task: {tid}")));
+        }
+        crate::context_sync::sync_from_active_workspace(state);
+        if state.context_mode == ContextMode::Task {
+            if let Some(tid) = state.current_task_id.as_deref() {
+                if let Some(task) = state.tasks.get(tid) {
+                    return Ok(task.clone());
+                }
+            }
+        }
+        Err(TskError::Other(
+            "not in a task taskspace — switch to a task first or pass a task id".into(),
+        ))
+    }
+
+    pub fn open_editor(&self, task_id: Option<&str>) -> Result<()> {
+        let mut state = self.load_state()?;
+        let task = self.resolve_task_for_launch(&mut state, task_id)?;
+        crate::apps::launch_task_editor(&task, &state)
+    }
+
+    pub fn open_browser(&self, task_id: Option<&str>) -> Result<()> {
+        let mut state = self.load_state()?;
+        let task = self.resolve_task_for_launch(&mut state, task_id)?;
+        crate::apps::launch_task_browser(&task, &state)
     }
 
     pub fn switch_task(&self, task_id: &str) -> Result<Task> {
@@ -835,6 +933,31 @@ mod tests {
     }
 
     #[test]
+    fn create_task_with_deferred_container_skips_switch() {
+        let dir = tempdir().unwrap();
+        let svc = test_service(dir.path());
+        let task = svc
+            .create_task(
+                "Isolated",
+                true,
+                crate::task_repo::TaskRepoSource::Scratch,
+                None,
+                crate::task_repo::TaskRepoOptions {
+                    create_worktree: true,
+                    container_isolation: true,
+                    defer_container_create: true,
+                },
+            )
+            .unwrap();
+        assert!(task.container_isolation);
+        let state = svc.load_state().unwrap();
+        // Switch must wait until Distrobox setup finishes (TUI progress UI).
+        assert_eq!(state.context_mode, ContextMode::Default);
+        assert!(state.current_task_id.is_none());
+        assert!(state.tasks.contains_key(&task.id));
+    }
+
+    #[test]
     fn create_task_with_path_without_worktree_uses_main_repo() {
         let dir = tempdir().unwrap();
         let checkout = dir.path().join("checkout");
@@ -849,6 +972,8 @@ mod tests {
                 None,
                 crate::task_repo::TaskRepoOptions {
                     create_worktree: false,
+                    container_isolation: false,
+                defer_container_create: false,
                 },
             )
             .unwrap();

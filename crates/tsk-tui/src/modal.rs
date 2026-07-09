@@ -84,14 +84,15 @@ impl ModalButtonBar {
                     shortcut: 'y',
                 },
             ],
+            // Create-first — matches confirm_first happy-path layout.
             Self::CancelCreate { .. } => vec![
-                ModalButton {
-                    label: "Cancel",
-                    shortcut: 'n',
-                },
                 ModalButton {
                     label: "Create",
                     shortcut: 'y',
+                },
+                ModalButton {
+                    label: "Cancel",
+                    shortcut: 'n',
                 },
             ],
         }
@@ -152,10 +153,9 @@ impl ModalButtonBar {
             Self::CancelConfirm {
                 confirm_first: true,
                 ..
-            } => (1, 0),
-            Self::CancelConfirm { .. }
-            | Self::CancelContinue { .. }
-            | Self::CancelCreate { .. } => (0, 1),
+            }
+            | Self::CancelCreate { .. } => (1, 0),
+            Self::CancelConfirm { .. } | Self::CancelContinue { .. } => (0, 1),
         }
     }
 

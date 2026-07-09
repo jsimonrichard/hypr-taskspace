@@ -1,6 +1,6 @@
 # Task-Centric Agentic Coding UX Notes
 
-> **Note:** The active implementation is the **Rust CLI** (`crates/tsk-cli`) and **Waybar CFFI module** (`crates/tsk-waybar`). See [README.md](../README.md). These notes describe the original product vision; Distrobox and window-routing pieces are deferred.
+> **Note:** The active implementation is the **Rust CLI** (`crates/tsk-cli`) and **Waybar CFFI module** (`crates/tsk-waybar`). See [README.md](../README.md). These notes describe the original product vision; Distrobox isolation is available via `tsk task new --container`. Window-routing remains deferred.
 
 ## Goal
 

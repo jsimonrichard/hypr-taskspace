@@ -22,11 +22,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     frame.render_widget(Clear, area);
 
     let header_rows = if app.show_daemon_warning() { 2 } else { 1 };
+    let status_rows = status_area_rows(app);
     let chunks = Layout::vertical([
         Constraint::Length(header_rows),
         Constraint::Min(3),
         Constraint::Length(2),
-        Constraint::Length(1),
+        Constraint::Length(status_rows),
     ])
     .split(area);
 
@@ -47,6 +48,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     match &app.screen {
         Screen::NewTaskPickRepo { .. } => draw_new_task_pick_repo(frame, area, app),
         Screen::NewTaskName { .. } => draw_new_task_name(frame, area, app),
+        Screen::ContainerSetup { .. } => draw_container_setup(frame, area, app),
         Screen::ConfirmDeleteRepo { .. } => draw_confirm_delete_repo(frame, area, app),
         Screen::ConfirmArchive { .. } => draw_confirm_archive(frame, area, app),
         Screen::ConfirmRestore { .. } => draw_confirm_restore(frame, area, app),
@@ -223,6 +225,11 @@ fn draw_help(frame: &mut Frame, area: Rect, app: &App) {
         Screen::Main if app.panel == Panel::Repos => {
             "↑/↓ move  n browse/add  d remove  R refresh  h/l Tab panels  q quit"
         }
+        Screen::ContainerSetup { done: Some(Ok(())), .. } => "Enter — close",
+        Screen::ContainerSetup {
+            done: Some(Err(_)), ..
+        } => "Enter / Esc — return",
+        Screen::ContainerSetup { .. } => "Distrobox setup in progress…",
         Screen::Main => "",
         _ => "",
     };
@@ -230,18 +237,26 @@ fn draw_help(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(help, area);
 }
 
+fn status_area_rows(app: &App) -> u16 {
+    match &app.status {
+        Some((false, msg)) if msg.len() > 80 || msg.contains('\n') => 3,
+        Some(_) => 2,
+        None => 1,
+    }
+}
+
 fn draw_status(frame: &mut Frame, area: Rect, app: &App) {
-    let line = if let Some((ok, ref msg)) = app.status {
+    let paragraph = if let Some((ok, ref msg)) = app.status {
         let style = if ok {
             Style::default().fg(Color::Green)
         } else {
             Style::default().fg(Color::Red)
         };
-        Line::from(Span::styled(msg.clone(), style))
+        Paragraph::new(Span::styled(msg.clone(), style)).wrap(Wrap { trim: true })
     } else {
-        Line::from("")
+        Paragraph::new("")
     };
-    frame.render_widget(Paragraph::new(line), area);
+    frame.render_widget(paragraph, area);
 }
 
 fn draw_modal_dialog(
@@ -336,6 +351,7 @@ fn draw_new_task_name(frame: &mut Frame, area: Rect, app: &App) {
         repo_label,
         repo,
         create_worktree,
+        container_isolation,
         buttons,
         focus,
     } = &app.screen
@@ -343,7 +359,7 @@ fn draw_new_task_name(frame: &mut Frame, area: Rect, app: &App) {
         return;
     };
 
-    let popup = centered_rect(70, 32, area);
+    let popup = centered_rect(70, 40, area);
     frame.render_widget(Clear, popup);
 
     let block = Block::default()
@@ -396,6 +412,21 @@ fn draw_new_task_name(frame: &mut Frame, area: Rect, app: &App) {
         lines.push(Line::from(""));
     }
 
+    {
+        let focused = *focus == NewTaskFormFocus::Container;
+        let marker = if focused { "▸ " } else { "  " };
+        let toggle = if *container_isolation { "[x]" } else { "[ ]" };
+        lines.push(Line::from(vec![
+            Span::raw(marker),
+            Span::styled(
+                format!("{toggle} Distrobox isolation"),
+                field_style(focused),
+            ),
+            Span::styled("  Space", Style::default().fg(Color::DarkGray)),
+        ]));
+        lines.push(Line::from(""));
+    }
+
     lines.push(Line::from(Span::styled(
         "Tab / ↑↓ move focus",
         Style::default().fg(Color::DarkGray),
@@ -418,6 +449,60 @@ fn field_style(focused: bool) -> Style {
     } else {
         Style::default().fg(Color::Gray)
     }
+}
+
+fn draw_container_setup(frame: &mut Frame, area: Rect, app: &App) {
+    let Screen::ContainerSetup {
+        container_name,
+        lines,
+        scroll,
+        done,
+        ..
+    } = &app.screen
+    else {
+        return;
+    };
+
+    let popup = centered_rect(80, 70, area);
+    frame.render_widget(Clear, popup);
+
+    let title = format!(" Distrobox setup — {container_name} ");
+    let border = match done {
+        Some(Ok(())) => Color::Green,
+        Some(Err(_)) => Color::Red,
+        None => Color::Cyan,
+    };
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(border));
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(inner);
+    let visible = chunks[0].height as usize;
+    let max_scroll = lines.len().saturating_sub(visible.max(1));
+    let scroll_y = (*scroll as usize).min(max_scroll) as u16;
+    let log_lines: Vec<Line> = lines
+        .iter()
+        .map(|line| Line::from(Span::raw(line.as_str())))
+        .collect();
+    frame.render_widget(
+        Paragraph::new(log_lines)
+            .wrap(Wrap { trim: false })
+            .scroll((scroll_y, 0)),
+        chunks[0],
+    );
+
+    let footer = match done {
+        Some(Ok(())) => "Enter / q — close",
+        Some(Err(_)) => "Enter / Esc — return",
+        None => "Creating container…",
+    };
+    frame.render_widget(
+        Paragraph::new(Span::styled(footer, Style::default().fg(Color::DarkGray))),
+        chunks[1],
+    );
 }
 
 fn draw_confirm_delete_repo(frame: &mut Frame, area: Rect, app: &App) {

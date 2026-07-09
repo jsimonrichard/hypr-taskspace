@@ -110,6 +110,7 @@ mod tests {
             source_repo_path: None,
             branch: None,
             container_name: "tsk-auth-fix".into(),
+            container_isolation: false,
             workspace_count: 10,
             browser_profile: None,
             created_at: chrono::Utc::now(),

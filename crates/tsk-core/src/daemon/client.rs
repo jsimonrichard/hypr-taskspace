@@ -19,6 +19,8 @@ use crate::dev_session::dev_session_active;
 use crate::xdg::resolve_daemon_socket_path;
 
 const RPC_TIMEOUT: Duration = Duration::from_secs(5);
+/// Distrobox image pull / create can take several minutes.
+const CREATE_TASK_TIMEOUT: Duration = Duration::from_secs(600);
 const PING_TIMEOUT: Duration = Duration::from_millis(300);
 
 const DAEMON_REQUIRED_MSG: &str = "tsk daemon is not running — run `tsk daemon start`";
@@ -305,11 +307,13 @@ impl DaemonClient {
             "name": name,
             "switch": switch,
             "create_worktree": repo_options.create_worktree,
+            "container_isolation": repo_options.container_isolation,
+            "defer_container_create": repo_options.defer_container_create,
         });
         if let Value::Object(mut repo_params) = repo.to_daemon_params(cwd.as_deref()) {
             body.as_object_mut().unwrap().append(&mut repo_params);
         }
-        let v = daemon_request("create_task", body)?;
+        let v = daemon_request_with_timeout("create_task", body, CREATE_TASK_TIMEOUT)?;
         serde_json::from_value(v).map_err(|e| TskError::Other(e.to_string()))
     }
 
@@ -343,6 +347,38 @@ impl DaemonClient {
             daemon_request("open_terminal", body).map(|_| ())
         } else {
             self.direct.open_terminal(task_id, host)
+        }
+    }
+
+    pub fn open_editor(&self, task_id: Option<&str>) -> Result<()> {
+        if is_daemon_running() {
+            let mut body = json!({});
+            if let Some(task_id) = task_id {
+                body["task_id"] = json!(task_id);
+            }
+            daemon_request("open_editor", body).map(|_| ())
+        } else {
+            self.direct.open_editor(task_id)
+        }
+    }
+
+    pub fn open_browser(&self, task_id: Option<&str>) -> Result<()> {
+        if is_daemon_running() {
+            let mut body = json!({});
+            if let Some(task_id) = task_id {
+                body["task_id"] = json!(task_id);
+            }
+            daemon_request("open_browser", body).map(|_| ())
+        } else {
+            self.direct.open_browser(task_id)
+        }
+    }
+
+    pub fn run_on_create_hook(&self, task_id: &str) -> Result<()> {
+        if is_daemon_running() {
+            daemon_request("run_on_create_hook", json!({ "task_id": task_id })).map(|_| ())
+        } else {
+            self.direct.run_on_create_hook(task_id)
         }
     }
 

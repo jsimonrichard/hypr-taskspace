@@ -1,10 +1,13 @@
 use std::path::PathBuf;
+use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::thread;
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use tsk_core::{
-    collect_task_repo_paths, detect_vcs_root, ensure_daemon, ensure_repo_removable, is_scratch_task,
-    load_repos, paths_match, repo_display_path, task_belongs_to_repo, unregister_repo, ContextMode, DaemonClient,
-    RegisteredRepo, Result, Task, TaskRepoSource, SCRATCH_TASK_LIST_LABEL,
+    collect_task_repo_paths, create_container_with_progress, detect_vcs_root, ensure_daemon,
+    ensure_repo_removable, is_scratch_task, load_config, load_repos, paths_match, repo_display_path,
+    task_belongs_to_repo, task_data_dir, unregister_repo, ContextMode, DaemonClient, RegisteredRepo,
+    Result, Task, TaskRepoSource, SCRATCH_TASK_LIST_LABEL,
 };
 use crate::grep_dir_picker::{GrepDirPicker, PickerAction};
 use crate::modal::{arrow_nav_delta, ModalButtonAction, ModalButtonBar};
@@ -39,6 +42,12 @@ pub struct RepoChoice {
     pub label: String,
 }
 
+#[derive(Debug)]
+pub enum ContainerSetupEvent {
+    Line(String),
+    Finished(std::result::Result<(), String>),
+}
+
 pub enum Screen {
     Main,
     RepoPicker {
@@ -55,8 +64,18 @@ pub enum Screen {
         repo: TaskRepoSource,
         repo_label: String,
         create_worktree: bool,
+        container_isolation: bool,
         buttons: ModalButtonBar,
         focus: NewTaskFormFocus,
+    },
+    /// Streaming Distrobox create output after the task record exists.
+    ContainerSetup {
+        task_id: String,
+        container_name: String,
+        lines: Vec<String>,
+        scroll: u16,
+        done: Option<std::result::Result<(), String>>,
+        rx: Receiver<ContainerSetupEvent>,
     },
     ConfirmDeleteRepo {
         repo_path: PathBuf,
@@ -369,6 +388,36 @@ impl App {
             Screen::Main => self.handle_main_key(key),
             Screen::NewTaskPickRepo { .. } => self.handle_new_task_pick_repo_key(key),
             Screen::NewTaskName { .. } => self.handle_new_task_name_key(key),
+            Screen::ContainerSetup { done, task_id, .. } => {
+                if done.is_some()
+                    && matches!(
+                        key.code,
+                        KeyCode::Enter | KeyCode::Esc | KeyCode::Char('q')
+                    )
+                {
+                    if done.as_ref().is_some_and(|r| r.is_ok()) {
+                        let task_id = task_id.clone();
+                        // Switch was deferred during create so this TUI stayed open.
+                        if let Err(err) = self.client.switch_task(&task_id) {
+                            self.status = Some((false, format!("switch task: {err}")));
+                            self.screen = Screen::Main;
+                            return Ok(());
+                        }
+                        if let Err(err) = self.client.run_on_create_hook(&task_id) {
+                            self.status = Some((false, format!("on_create hook: {err}")));
+                        }
+                        self.should_quit = true;
+                    } else {
+                        // Keep the failed task registered; user can retry create or delete.
+                        self.status = Some((
+                            false,
+                            "Distrobox setup failed — task kept without a container".into(),
+                        ));
+                        self.screen = Screen::Main;
+                    }
+                }
+                Ok(())
+            }
             Screen::ConfirmDeleteRepo { .. } => self.handle_confirm_delete_repo_key(key),
             Screen::ConfirmArchive { .. } => self.handle_confirm_archive_key(key),
             Screen::ConfirmRestore { .. } => self.handle_confirm_restore_key(key),
@@ -610,6 +659,7 @@ impl App {
             repo,
             repo_label: repo_label_text,
             create_worktree,
+            container_isolation: false,
             buttons: ModalButtonBar::cancel_create(),
             focus,
         };
@@ -666,6 +716,18 @@ impl App {
                 KeyCode::Enter => self.move_new_task_form_focus(1),
                 _ => {}
             },
+            NewTaskFormFocus::Container => match key.code {
+                KeyCode::Char(' ') => {
+                    if let Screen::NewTaskName {
+                        container_isolation, ..
+                    } = &mut self.screen
+                    {
+                        *container_isolation = !*container_isolation;
+                    }
+                }
+                KeyCode::Enter => self.move_new_task_form_focus(1),
+                _ => {}
+            },
             NewTaskFormFocus::Name => match key.code {
                 KeyCode::Enter => self.submit_new_task_name()?,
                 KeyCode::Backspace => {
@@ -700,13 +762,19 @@ impl App {
     }
 
     fn submit_new_task_name(&mut self) -> Result<()> {
-        let (name, repo, create_worktree) = match &self.screen {
+        let (name, repo, create_worktree, container_isolation) = match &self.screen {
             Screen::NewTaskName {
                 name,
                 repo,
                 create_worktree,
+                container_isolation,
                 ..
-            } => (name.trim().to_string(), repo.clone(), *create_worktree),
+            } => (
+                name.trim().to_string(),
+                repo.clone(),
+                *create_worktree,
+                *container_isolation,
+            ),
             _ => return Ok(()),
         };
         if name.is_empty() {
@@ -714,10 +782,20 @@ impl App {
             self.screen = Screen::Main;
             return Ok(());
         }
-        let repo_options = tsk_core::TaskRepoOptions { create_worktree };
+        let repo_options = tsk_core::TaskRepoOptions {
+            create_worktree,
+            container_isolation,
+            defer_container_create: container_isolation,
+        };
         match self.client.create_task(&name, true, repo, repo_options) {
-            Ok(_task) => {
-                self.should_quit = true;
+            Ok(task) => {
+                // Prefer the option we just submitted — a stale daemon may omit
+                // `container_isolation` in the JSON response (serde default false).
+                if container_isolation || task.container_isolation {
+                    self.start_container_setup(task)?;
+                } else {
+                    self.should_quit = true;
+                }
             }
             Err(err) => {
                 self.status = Some((false, err.to_string()));
@@ -725,6 +803,83 @@ impl App {
             }
         }
         Ok(())
+    }
+
+    fn start_container_setup(&mut self, task: Task) -> Result<()> {
+        let cfg = load_config()?;
+        let task_home = task_data_dir(&cfg, &task.id);
+        let container_name = task.container_name.clone();
+        let image = cfg.distrobox_image.clone();
+        let (tx, rx) = mpsc::channel();
+        let name_for_thread = container_name.clone();
+        thread::spawn(move || {
+            let result = create_container_with_progress(
+                &name_for_thread,
+                &task_home,
+                &image,
+                |line| {
+                    let _ = tx.send(ContainerSetupEvent::Line(line));
+                },
+            );
+            let finished = match result {
+                Ok(()) => Ok(()),
+                Err(err) => Err(err.to_string()),
+            };
+            let _ = tx.send(ContainerSetupEvent::Finished(finished));
+        });
+        self.screen = Screen::ContainerSetup {
+            task_id: task.id,
+            container_name,
+            lines: vec!["Starting Distrobox setup…".into()],
+            scroll: 0,
+            done: None,
+            rx,
+        };
+        Ok(())
+    }
+
+    /// Drain Distrobox setup log events (call from the TUI tick loop).
+    pub fn poll_container_setup(&mut self) {
+        let Screen::ContainerSetup {
+            lines,
+            scroll,
+            done,
+            rx,
+            ..
+        } = &mut self.screen
+        else {
+            return;
+        };
+        if done.is_some() {
+            return;
+        }
+        loop {
+            match rx.try_recv() {
+                Ok(ContainerSetupEvent::Line(line)) => {
+                    lines.push(line);
+                    *scroll = u16::MAX;
+                }
+                Ok(ContainerSetupEvent::Finished(result)) => {
+                    match &result {
+                        Ok(()) => lines.push("Done. Press Enter to close.".into()),
+                        Err(err) => {
+                            lines.push(format!("Failed: {err}"));
+                            lines.push("Press Enter to return.".into());
+                        }
+                    }
+                    *done = Some(result);
+                    *scroll = u16::MAX;
+                }
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    if done.is_none() {
+                        lines.push("Setup worker disconnected.".into());
+                        *done = Some(Err("setup worker disconnected".into()));
+                    }
+                    break;
+                }
+            }
+        }
     }
 
     fn begin_delete_repo(&mut self) {

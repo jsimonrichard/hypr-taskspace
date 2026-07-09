@@ -113,6 +113,7 @@ mod tests {
             source_repo_path: None,
             branch: None,
             container_name: format!("tsk-{id}"),
+            container_isolation: false,
             workspace_count: 3,
             browser_profile: None,
             created_at: Utc::now(),

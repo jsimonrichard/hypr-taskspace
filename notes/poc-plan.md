@@ -1,6 +1,6 @@
 # Python POC Plan: Local Agentic Coding Environment Management
 
-> **Implementation status (2026):** The **Rust CLI** in `crates/` is the control plane. See [README.md](../README.md). Hyprland keybinds use `~/.local/share/tsk/bin/tsk`; task management uses the **ratatui TUI** (`tsk task tui-launch`). Waybar uses the Rust **CFFI module** (`cffi/tsk`) with Hyprland socket2 for instant updates. Deferred: Distrobox create/enter, remote git clone on `task new`, window routing.
+> **Implementation status (2026):** The **Rust CLI** in `crates/` is the control plane. See [README.md](../README.md). Hyprland keybinds use `~/.local/share/tsk/bin/tsk`; task management uses the **ratatui TUI** (`tsk task tui-launch`). Waybar uses the Rust **CFFI module** (`cffi/tsk`) with Hyprland socket2 for instant updates. Distrobox create/enter is available per task via `tsk task new --container` (or the TUI toggle). Deferred: remote git clone on `task new`, window routing.
 
 This plan expands on [ai-convo-notes.md](./ai-convo-notes.md) into an implementable proof-of-concept. The POC validates the core abstraction:
 
@@ -965,7 +965,7 @@ task_workspace_stride = 3        # buffer between default (3) and tasks (10) is 
 max_tasks = 9
 
 [distrobox]
-image = "quay.io/toolbx-images/fedora-toolbox:40"
+image = "quay.io/toolbx/arch-toolbox:latest"
 container_prefix = "tsk"
 
 [terminal]

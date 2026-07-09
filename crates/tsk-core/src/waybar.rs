@@ -324,6 +324,7 @@ mod tests {
                 source_repo_path: Some(PathBuf::from("/home/user/projects/my-app")),
                 branch: None,
                 container_name: "tsk-t1".into(),
+                container_isolation: false,
                 workspace_count: 3,
                 browser_profile: None,
                 created_at: Utc::now(),

@@ -34,12 +34,19 @@ pub enum TaskRepoSetup {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TaskRepoOptions {
     pub create_worktree: bool,
+    /// Create a Distrobox container and launch apps via `distrobox enter`.
+    pub container_isolation: bool,
+    /// When true with `container_isolation`, skip Distrobox create in `create_task`
+    /// so the caller (e.g. TUI) can stream setup progress itself.
+    pub defer_container_create: bool,
 }
 
 impl Default for TaskRepoOptions {
     fn default() -> Self {
         Self {
             create_worktree: true,
+            container_isolation: false,
+            defer_container_create: false,
         }
     }
 }
@@ -245,6 +252,8 @@ mod tests {
                 Some(&repo),
                 &TaskRepoOptions {
                     create_worktree: false,
+                    container_isolation: false,
+                defer_container_create: false,
                 },
             )
             .unwrap();

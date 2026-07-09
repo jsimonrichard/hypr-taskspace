@@ -248,6 +248,11 @@ enum TaskCommands {
             help = "Use the main repo checkout directly instead of creating a git worktree / jj workspace"
         )]
         no_worktree: bool,
+        #[arg(
+            long,
+            help = "Create a Distrobox container and launch terminals/editors/browsers via distrobox enter"
+        )]
+        container: bool,
     },
     List {
         #[arg(long)]
@@ -281,6 +286,16 @@ enum TaskCommands {
         name_or_id: Option<String>,
         #[arg(long, help = "Open a plain host terminal (not scoped to a task)")]
         host: bool,
+    },
+    /// Open Cursor/VS Code for the current (or named) task
+    Editor {
+        #[arg(value_name = "NAME_OR_ID")]
+        name_or_id: Option<String>,
+    },
+    /// Open Chromium/browser for the current (or named) task
+    Browser {
+        #[arg(value_name = "NAME_OR_ID")]
+        name_or_id: Option<String>,
     },
 }
 
@@ -489,7 +504,15 @@ fn run() -> Result<()> {
                 scratch,
                 repo_path,
                 no_worktree,
-            } => cmd_task_new(&name, !no_switch, scratch, repo_path.as_deref(), no_worktree),
+                container,
+            } => cmd_task_new(
+                &name,
+                !no_switch,
+                scratch,
+                repo_path.as_deref(),
+                no_worktree,
+                container,
+            ),
             TaskCommands::List { json, archived } => cmd_task_list(json, archived),
             TaskCommands::Switch { name_or_id } => cmd_task_switch(&name_or_id),
             TaskCommands::Current => cmd_task_current(),
@@ -501,6 +524,8 @@ fn run() -> Result<()> {
             TaskCommands::Terminal { name_or_id, host } => {
                 cmd_task_terminal(name_or_id.as_deref(), host)
             }
+            TaskCommands::Editor { name_or_id } => cmd_task_editor(name_or_id.as_deref()),
+            TaskCommands::Browser { name_or_id } => cmd_task_browser(name_or_id.as_deref()),
         },
         Commands::Repo { command } => match command {
             RepoCommands::Add { dir } => cmd_repo_add(dir.as_deref()),
@@ -1031,6 +1056,7 @@ fn cmd_task_new(
     scratch: bool,
     repo_path: Option<&std::path::Path>,
     no_worktree: bool,
+    container: bool,
 ) -> Result<()> {
     if scratch && repo_path.is_some() {
         return Err(TskError::Other(
@@ -1045,8 +1071,12 @@ fn cmd_task_new(
     };
     let repo_options = tsk_core::TaskRepoOptions {
         create_worktree: !no_worktree,
+        container_isolation: container,
+        defer_container_create: container,
     };
-    let task = client()?.create_task(name, switch, repo, repo_options)?;
+    // Defer switch when creating a container so Distrobox progress stays visible
+    // (switch closes the task TUI / changes focus mid-create).
+    let task = client()?.create_task(name, switch && !container, repo, repo_options)?;
     println!(
         "Created task {} → workspaces {}-1..{}-{}",
         task.id,
@@ -1055,6 +1085,23 @@ fn cmd_task_new(
         task.workspace_count
     );
     println!("Repo: {} ({})", repo_label(&task.repo_path), task.repo_path.display());
+    if container {
+        let cfg = load_config()?;
+        let task_home = tsk_core::task_data_dir(&cfg, &task.id);
+        println!("Container: {} (Distrobox isolation)", task.container_name);
+        tsk_core::create_container_with_progress(
+            &task.container_name,
+            &task_home,
+            &cfg.distrobox_image,
+            |line| println!("{line}"),
+        )?;
+        if switch {
+            client()?.switch_task(&task.id)?;
+        }
+        if let Err(err) = client()?.run_on_create_hook(&task.id) {
+            eprintln!("tsk: on_create hook: {err}");
+        }
+    }
     if let Some(home) = task.repo_path.parent() {
         if home.file_name().is_some_and(|n| n == task.id.as_str()) {
             println!("Task home: {}", home.display());
@@ -1271,6 +1318,24 @@ fn cmd_task_terminal(name_or_id: Option<&str>, host: bool) -> Result<()> {
         None
     };
     client()?.open_terminal(task_id.as_deref(), host)
+}
+
+fn cmd_task_editor(name_or_id: Option<&str>) -> Result<()> {
+    let task_id = if let Some(name) = name_or_id {
+        Some(client()?.resolve_task(name)?.id)
+    } else {
+        None
+    };
+    client()?.open_editor(task_id.as_deref())
+}
+
+fn cmd_task_browser(name_or_id: Option<&str>) -> Result<()> {
+    let task_id = if let Some(name) = name_or_id {
+        Some(client()?.resolve_task(name)?.id)
+    } else {
+        None
+    };
+    client()?.open_browser(task_id.as_deref())
 }
 
 fn cmd_task_tui() -> Result<()> {

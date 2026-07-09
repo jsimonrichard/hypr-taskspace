@@ -35,7 +35,9 @@ CREATE TABLE IF NOT EXISTS tasks (
     created_at TEXT NOT NULL,
     last_active_at TEXT NOT NULL,
     agent_notes_path TEXT,
-    ports TEXT NOT NULL DEFAULT '[]'
+    ports TEXT NOT NULL DEFAULT '[]',
+    source_repo_path TEXT,
+    container_isolation INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS windows (
@@ -131,6 +133,13 @@ impl Registry {
         let task_cols = table_columns(conn, "tasks")?;
         if !task_cols.iter().any(|c| c == "source_repo_path") {
             conn.execute("ALTER TABLE tasks ADD COLUMN source_repo_path TEXT", [])?;
+        }
+        let task_cols = table_columns(conn, "tasks")?;
+        if !task_cols.iter().any(|c| c == "container_isolation") {
+            conn.execute(
+                "ALTER TABLE tasks ADD COLUMN container_isolation INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
         }
         Ok(())
     }
@@ -318,6 +327,12 @@ fn task_from_row(row: &rusqlite::Row<'_>) -> Result<Task> {
     let ports: Vec<u16> = serde_json::from_str(&ports_raw).unwrap_or_default();
     let created_at: String = row.get(9)?;
     let last_active_at: String = row.get(10)?;
+    let container_isolation = row
+        .get::<_, Option<i32>>(14)
+        .ok()
+        .flatten()
+        .unwrap_or(0)
+        != 0;
     Ok(Task {
         id: row.get(0)?,
         name: row.get(1)?,
@@ -330,6 +345,7 @@ fn task_from_row(row: &rusqlite::Row<'_>) -> Result<Task> {
         repo_path: PathBuf::from(row.get::<_, String>(4)?),
         branch: row.get(5)?,
         container_name: row.get(6)?,
+        container_isolation,
         workspace_count: row.get::<_, i32>(7)? as u32,
         browser_profile: row.get(8)?,
         created_at: DateTime::parse_from_rfc3339(&created_at)
@@ -353,7 +369,7 @@ fn task_from_row(row: &rusqlite::Row<'_>) -> Result<Task> {
 fn upsert_task(conn: &Connection, task: &Task) -> Result<()> {
     let ports = serde_json::to_string(&task.ports).map_err(|e| TskError::Other(e.to_string()))?;
     conn.execute(
-        "INSERT OR REPLACE INTO tasks (id, name, status, repo_url, repo_path, branch, container_name, desktop_count, browser_profile, created_at, last_active_at, agent_notes_path, ports, source_repo_path) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+        "INSERT OR REPLACE INTO tasks (id, name, status, repo_url, repo_path, branch, container_name, desktop_count, browser_profile, created_at, last_active_at, agent_notes_path, ports, source_repo_path, container_isolation) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
         params![
             task.id,
             task.name,
@@ -369,6 +385,7 @@ fn upsert_task(conn: &Connection, task: &Task) -> Result<()> {
             task.agent_notes_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
             ports,
             task.source_repo_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
+            if task.container_isolation { 1 } else { 0 },
         ],
     )?;
     Ok(())

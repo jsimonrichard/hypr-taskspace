@@ -72,6 +72,9 @@ pub fn run() -> Result<()> {
             app.set_daemon_status(running);
         }
 
+        // Drain Distrobox setup lines every frame so progress/errors show promptly.
+        app.poll_container_setup();
+
         loop {
             match terminal.draw(|frame| app.draw(frame)) {
                 Ok(_) => break,

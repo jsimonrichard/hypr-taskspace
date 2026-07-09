@@ -114,7 +114,8 @@ fn hook_config(hook: TaskHook, setup: &TaskRepoSetup) -> Result<Option<(PathBuf,
     Ok(Some((source_root, config)))
 }
 
-fn setup_for_restored_task(task: &Task, config: &TskConfig) -> TaskRepoSetup {
+/// Infer checkout setup for a stored task (used by restore and deferred on_create).
+pub fn setup_for_task(task: &Task, config: &TskConfig) -> TaskRepoSetup {
     if task.source_repo_path.is_none() {
         return TaskRepoSetup::Scratch;
     }
@@ -128,6 +129,10 @@ fn setup_for_restored_task(task: &Task, config: &TskConfig) -> TaskRepoSetup {
     } else {
         TaskRepoSetup::Direct { source_root }
     }
+}
+
+fn setup_for_restored_task(task: &Task, config: &TskConfig) -> TaskRepoSetup {
+    setup_for_task(task, config)
 }
 
 fn prepare_hyprland_for_hook(task_workspace: &str, monitor: Option<&str>) {
@@ -279,6 +284,7 @@ mod tests {
             source_repo_path: Some(dir.to_path_buf()),
             branch: None,
             container_name: format!("tsk-{id}"),
+            container_isolation: false,
             workspace_count: 10,
             browser_profile: None,
             created_at: now,

@@ -33,7 +33,8 @@ pub fn preview_teardown(config: &TskConfig, task: &Task) -> Result<TaskTeardownP
         window_count: count_task_windows(config, task)?,
         data_dir: task_data_dir(config, task.id.as_str()),
         container_name: task.container_name.clone(),
-        container_exists: distrobox::container_exists(&task.container_name),
+        container_exists: task.container_isolation
+            && distrobox::container_exists(&task.container_name),
     })
 }
 
@@ -98,14 +99,23 @@ pub fn close_task_windows(config: &TskConfig, task: &Task) -> Result<usize> {
 }
 
 pub fn start_task_container(task: &Task) -> Result<()> {
+    if !task.container_isolation {
+        return Ok(());
+    }
     distrobox::start_container(&task.container_name)
 }
 
 pub fn stop_task_container(task: &Task) -> Result<()> {
+    if !task.container_isolation {
+        return Ok(());
+    }
     distrobox::stop_container(&task.container_name)
 }
 
 pub fn remove_task_container(task: &Task) -> Result<()> {
+    if !task.container_isolation {
+        return Ok(());
+    }
     distrobox::remove_container(&task.container_name)
 }
 
@@ -198,6 +208,7 @@ mod tests {
             source_repo_path: None,
             branch: None,
             container_name: "tsk-auth-fix".into(),
+            container_isolation: false,
             workspace_count: 10,
             browser_profile: None,
             created_at: chrono::Utc::now(),

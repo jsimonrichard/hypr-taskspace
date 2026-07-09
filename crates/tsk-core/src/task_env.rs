@@ -77,6 +77,12 @@ pub fn build_task_env(
         ));
     }
 
+    env.push((
+        "TSK_CONTAINER_ISOLATION".into(),
+        if task.container_isolation { "1" } else { "0" }.into(),
+    ));
+    env.push(("TSK_CONTAINER_NAME".into(), task.container_name.clone()));
+
     env
 }
 
@@ -109,6 +115,7 @@ mod tests {
             source_repo_path: source,
             branch: None,
             container_name: format!("tsk-{id}"),
+            container_isolation: false,
             workspace_count: 10,
             browser_profile: None,
             created_at: now,

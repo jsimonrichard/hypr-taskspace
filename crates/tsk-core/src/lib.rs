@@ -1,5 +1,6 @@
 //! Shared TSK library — models, config, registry, Hyprland, and Waybar export.
 
+pub mod apps;
 pub mod config;
 pub mod context_sync;
 pub mod daemon;
@@ -94,6 +95,9 @@ pub use binary::{
     waybar_module_path,
 };
 pub use xdg::normalize_desktop_env;
+pub use apps::{launch_task_browser, launch_task_editor};
+pub use distrobox::create_container_with_progress;
+pub use task_cleanup::task_data_dir;
 pub use terminal::{launch_host_terminal, launch_task_terminal, launch_task_tui};
 pub use version::{
     build_version_info, format_version_long, format_version_short, version_info, VersionInfo,

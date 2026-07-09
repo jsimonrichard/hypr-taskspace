@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use serde::Deserialize;
 
 use crate::error::{TskError, Result};
-use crate::host::default_distrobox_image;
+use crate::host::{default_distrobox_image, migrate_stale_distrobox_image};
 use crate::install::profile::is_dev_share_dir;
 use crate::share::default_prod_share_dir;
 use crate::xdg::{ensure_parent, expand, tsk_config_path, tsk_data_dir, resolve_daemon_socket_path};
@@ -425,7 +425,8 @@ fn parse_config(raw: RawConfig) -> TskConfig {
         cfg.max_tasks = n;
     }
     if let Some(image) = raw.distrobox.image {
-        cfg.distrobox_image = image;
+        cfg.distrobox_image =
+            migrate_stale_distrobox_image(&image).unwrap_or(image);
     }
     if let Some(prefix) = raw.distrobox.container_prefix {
         cfg.container_prefix = prefix;
@@ -486,7 +487,21 @@ mod tests {
     fn default_config_uses_host_distrobox_image() {
         let contents = default_config_contents();
         assert!(contents.contains("[distrobox]"));
-        assert!(contents.contains("quay.io/toolbx-images/"));
+        assert!(contents.contains("image = "));
+        assert!(!contents.contains("quay.io/toolbx-images/"));
+    }
+
+    #[test]
+    fn stale_toolbx_images_are_migrated_on_load() {
+        let raw: RawConfig = toml::from_str(
+            r#"
+[distrobox]
+image = "quay.io/toolbx-images/arch-toolbox:latest"
+"#,
+        )
+        .unwrap();
+        let cfg = parse_config(raw);
+        assert_eq!(cfg.distrobox_image, "quay.io/toolbx/arch-toolbox:latest");
     }
 
     #[test]
