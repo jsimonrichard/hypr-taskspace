@@ -189,6 +189,8 @@ tsk task terminal                    # host shell in current task checkout
 
 Task homes are created under `~/tsk-tasks/<id>/` for notes and agent metadata. Linked git/jj checkouts live under `~/tsk-tasks/<id>/workspace/<repo-folder-name>` (scratch tasks use `workspace/scratch`). Optional checkout settings (custom name, remote URL, VCS kind) live in `.tsk/repo.toml`; registered checkout paths and stable ids live in `state.db`.
 
+Cursor opens on the task-specific checkout path (`TSK_TASK_REPO`). When multi-repo tasks are supported, tsk will open a task-level `.code-workspace` spanning all checkouts instead. See **[docs/cursor.md](docs/cursor.md)**.
+
 ```bash
 tsk repo add                         # register cwd (writes .tsk/repo.toml in the checkout)
 tsk repo list

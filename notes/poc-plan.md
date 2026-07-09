@@ -1011,6 +1011,8 @@ tsk task notes auth-fix   # opens agent-notes.md in $EDITOR
 
 This aligns with the notes' goal of task-owned agent state without building an agent runtime in POC.
 
+**Cursor launch:** Today `.tsk/on-start.sh` runs `cursor "$TSK_TASK_REPO"` (the task-specific checkout under `workspace/`). When a task has multiple repos, open a generated `~/tsk-tasks/<id>/task.code-workspace` multi-root workspace so the Agents panel stays unified per task. Full notes: [docs/cursor.md](../docs/cursor.md).
+
 ---
 
 ## Risks and Mitigations
