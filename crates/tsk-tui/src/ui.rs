@@ -441,6 +441,14 @@ fn draw_confirm_delete_repo(frame: &mut Frame, area: Rect, app: &App) {
     );
 }
 
+fn windows_close_line(window_count: usize) -> Option<String> {
+    match window_count {
+        0 => None,
+        1 => Some("Close 1 open window.".into()),
+        n => Some(format!("Close {n} open windows.")),
+    }
+}
+
 fn draw_confirm_archive(frame: &mut Frame, area: Rect, app: &App) {
     let Screen::ConfirmArchive {
         task_name,
@@ -454,19 +462,17 @@ fn draw_confirm_archive(frame: &mut Frame, area: Rect, app: &App) {
         return;
     };
 
-    let windows_line = if *window_count == 1 {
-        "Close 1 open window.".into()
-    } else {
-        format!("Close {window_count} open windows.")
-    };
     let container_line = if *container_exists {
         "Stop the Distrobox container (files kept).".to_string()
     } else {
         String::new()
     };
-    let mut body = format!(
-        "Archive \"{task_name}\"?\n\n{windows_line}\nTask files stay at {data_dir}."
-    );
+    let mut body = format!("Archive \"{task_name}\"?\n\n");
+    if let Some(windows_line) = windows_close_line(*window_count) {
+        body.push_str(&windows_line);
+        body.push('\n');
+    }
+    body.push_str(&format!("Task files stay at {data_dir}."));
     if !container_line.is_empty() {
         body.push('\n');
         body.push_str(&container_line);
@@ -537,11 +543,6 @@ fn draw_confirm_delete(frame: &mut Frame, area: Rect, app: &App) {
         return;
     };
 
-    let windows_line = if *window_count == 1 {
-        "Close 1 open window.".into()
-    } else {
-        format!("Close {window_count} open windows.")
-    };
     let container_line = if *container_exists {
         "Remove the Distrobox container.".to_string()
     } else {
@@ -552,9 +553,12 @@ fn draw_confirm_delete(frame: &mut Frame, area: Rect, app: &App) {
     } else {
         "This skips archive and deletes immediately.\n".to_string()
     };
-    let mut body = format!(
-        "{archive_note}Permanently delete \"{task_name}\"?\n\n{windows_line}\nDelete task data at {data_dir}."
-    );
+    let mut body = format!("{archive_note}Permanently delete \"{task_name}\"?\n\n");
+    if let Some(windows_line) = windows_close_line(*window_count) {
+        body.push_str(&windows_line);
+        body.push('\n');
+    }
+    body.push_str(&format!("Delete task data at {data_dir}."));
     if !container_line.is_empty() {
         body.push('\n');
         body.push_str(&container_line);

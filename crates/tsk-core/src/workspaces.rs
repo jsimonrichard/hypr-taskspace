@@ -60,6 +60,18 @@ pub fn primary_task_workspace_slot(
     1
 }
 
+/// Hyprland workspace names owned by a task (excludes global slots like `"1"`).
+pub fn task_owned_workspace_names(
+    task_id: &str,
+    default_workspace_count: u32,
+    global_workspace_slots: &[u32],
+) -> Vec<String> {
+    (1..=default_workspace_count)
+        .filter(|slot| !is_global_workspace_slot(*slot, global_workspace_slots))
+        .map(|slot| task_workspace_name(task_id, slot))
+        .collect()
+}
+
 /// Task taskspace slots — same count as default (`SUPER+1..0` keybinds).
 pub fn task_taskspace_workspace_names(state: &SessionState, task_id: &str) -> Vec<String> {
     (1..=state.default_workspace_count)

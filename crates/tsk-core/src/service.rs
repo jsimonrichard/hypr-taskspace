@@ -400,7 +400,7 @@ impl TaskService {
             self.commit_state(&state, Some(StateChangeKind::Taskspace))?;
         }
 
-        let _closed = crate::task_cleanup::close_task_windows(&task)?;
+        let _closed = crate::task_cleanup::close_task_windows(&self.config, &task)?;
         if let Err(err) = crate::task_cleanup::stop_task_container(&task) {
             eprintln!(
                 "tsk: delete task {}: stop container {}: {err}",
