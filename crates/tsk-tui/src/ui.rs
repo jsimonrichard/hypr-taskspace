@@ -49,6 +49,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Screen::NewTaskName { .. } => draw_new_task_name(frame, area, app),
         Screen::ConfirmDeleteRepo { .. } => draw_confirm_delete_repo(frame, area, app),
         Screen::ConfirmArchive { .. } => draw_confirm_archive(frame, area, app),
+        Screen::ConfirmRestore { .. } => draw_confirm_restore(frame, area, app),
         Screen::ConfirmDelete { .. } => draw_confirm_delete(frame, area, app),
         Screen::Main | Screen::RepoPicker { .. } => {}
     }
@@ -214,13 +215,13 @@ fn task_line(task: &TaskRow) -> Line<'static> {
 fn draw_help(frame: &mut Frame, area: Rect, app: &App) {
     let text = match &app.screen {
         Screen::Main if app.panel == Panel::Tasks => {
-            "↑/↓ move  Enter switch  n new  d archive  D delete  r refresh  h/l Tab panels  q quit"
+            "↑/↓ move  Enter switch  n new  d archive  D delete  R refresh  h/l Tab panels  q quit"
         }
         Screen::Main if app.panel == Panel::Archived => {
-            "↑/↓ move  D delete  r refresh  h/l Tab panels  q quit"
+            "↑/↓ move  r restore  D delete  R refresh  h/l Tab panels  q quit"
         }
         Screen::Main if app.panel == Panel::Repos => {
-            "↑/↓ move  n browse/add  d remove  r refresh  h/l Tab panels  q quit"
+            "↑/↓ move  n browse/add  d remove  R refresh  h/l Tab panels  q quit"
         }
         Screen::Main => "",
         _ => "",
@@ -426,7 +427,7 @@ fn draw_confirm_delete_repo(frame: &mut Frame, area: Rect, app: &App) {
 
     let popup = centered_rect(70, 28, area);
     let body = format!(
-        "Remove \"{repo_name}\" from tsk?\n\nDeletes `.tsk/repo.toml` in the checkout."
+        "Remove \"{repo_name}\" from tsk?\n\nCheckout files (including `.tsk/`) are left unchanged."
     );
     draw_modal_dialog(
         frame,
@@ -478,6 +479,44 @@ fn draw_confirm_archive(frame: &mut Frame, area: Rect, app: &App) {
         popup,
         "Archive task",
         Color::Yellow,
+        &body,
+        buttons,
+        true,
+    );
+}
+
+fn draw_confirm_restore(frame: &mut Frame, area: Rect, app: &App) {
+    let Screen::ConfirmRestore {
+        task_name,
+        container_exists,
+        data_dir,
+        buttons,
+        ..
+    } = &app.screen
+    else {
+        return;
+    };
+
+    let container_line = if *container_exists {
+        "Start the Distrobox container.".to_string()
+    } else {
+        String::new()
+    };
+    let mut body = format!(
+        "Restore \"{task_name}\"?\n\nTask files at {data_dir}."
+    );
+    if !container_line.is_empty() {
+        body.push('\n');
+        body.push_str(&container_line);
+    }
+
+    let popup = centered_rect(70, 32, area);
+    draw_modal_dialog(
+        frame,
+        area,
+        popup,
+        "Restore task",
+        Color::Green,
         &body,
         buttons,
         true,

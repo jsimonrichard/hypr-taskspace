@@ -32,7 +32,7 @@ pub fn launch_task_tui() -> Result<()> {
 /// Open a host terminal in the task's linked checkout (no container isolation).
 pub fn launch_task_terminal(task: &Task) -> Result<()> {
     let cfg = load_config()?;
-    crate::vcs::ensure_checkout_ready(&task.repo_path)?;
+    crate::vcs::ensure_task_checkout_ready(task, &cfg)?;
     let term = resolve_terminal_command(&cfg)?;
     let title = format!("[{}] terminal", task.id);
     spawn_host_shell(&term, &task.repo_path, &title)

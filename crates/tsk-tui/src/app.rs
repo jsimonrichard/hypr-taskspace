@@ -71,6 +71,13 @@ pub enum Screen {
         data_dir: String,
         buttons: ModalButtonBar,
     },
+    ConfirmRestore {
+        task_id: String,
+        task_name: String,
+        container_exists: bool,
+        data_dir: String,
+        buttons: ModalButtonBar,
+    },
     ConfirmDelete {
         task_id: String,
         task_name: String,
@@ -364,12 +371,18 @@ impl App {
             Screen::NewTaskName { .. } => self.handle_new_task_name_key(key),
             Screen::ConfirmDeleteRepo { .. } => self.handle_confirm_delete_repo_key(key),
             Screen::ConfirmArchive { .. } => self.handle_confirm_archive_key(key),
+            Screen::ConfirmRestore { .. } => self.handle_confirm_restore_key(key),
             Screen::ConfirmDelete { .. } => self.handle_confirm_delete_key(key),
             Screen::RepoPicker { .. } => Ok(()),
         }
     }
 
     fn handle_main_key(&mut self, key: KeyEvent) -> Result<()> {
+        if matches!(key.code, KeyCode::Char('R')) {
+            self.reload()?;
+            self.status = Some((true, "Refreshed".into()));
+            return Ok(());
+        }
         match key.code {
             KeyCode::Tab | KeyCode::Char('l') | KeyCode::Right => {
                 self.panel = match self.panel {
@@ -402,10 +415,7 @@ impl App {
             KeyCode::Char('j') | KeyCode::Down => self.select_next(),
             KeyCode::Char('k') | KeyCode::Up => self.select_prev(),
             KeyCode::Char('n') => self.begin_new_task()?,
-            KeyCode::Char('r') => {
-                self.reload()?;
-                self.status = Some((true, "Refreshed".into()));
-            }
+            KeyCode::Char('r') if self.panel == Panel::Archived => self.begin_restore()?,
             KeyCode::Char('d') if self.panel == Panel::Tasks => self.begin_archive()?,
             KeyCode::Char('D') => self.begin_delete()?,
             KeyCode::Enter => self.switch_selected_task()?,
@@ -421,10 +431,6 @@ impl App {
             KeyCode::Char('k') | KeyCode::Up => self.select_repo_prev(),
             KeyCode::Char('n') => self.begin_repo_picker()?,
             KeyCode::Char('d') => self.begin_delete_repo(),
-            KeyCode::Char('r') => {
-                self.reload()?;
-                self.status = Some((true, "Refreshed".into()));
-            }
             _ => {}
         }
         Ok(())
@@ -804,8 +810,44 @@ impl App {
             Some(ModalButtonAction::Confirm) => {
                 match self.client.archive_task(&task_id) {
                     Ok(()) => {
+                        self.set_daemon_status(true);
                         self.reload()?;
                         self.status = Some((true, format!("Archived {task_name}")));
+                    }
+                    Err(err) => {
+                        self.status = Some((false, err.to_string()));
+                    }
+                }
+                self.screen = Screen::Main;
+            }
+            None => {}
+        }
+        Ok(())
+    }
+
+    fn handle_confirm_restore_key(&mut self, key: KeyEvent) -> Result<()> {
+        let (task_id, task_name, action) = match &mut self.screen {
+            Screen::ConfirmRestore {
+                task_id,
+                task_name,
+                buttons,
+                ..
+            } => (
+                task_id.clone(),
+                task_name.clone(),
+                buttons.handle_key(key),
+            ),
+            _ => return Ok(()),
+        };
+
+        match action {
+            Some(ModalButtonAction::Cancel) => self.screen = Screen::Main,
+            Some(ModalButtonAction::Confirm) => {
+                match self.client.restore_task(&task_id) {
+                    Ok(()) => {
+                        self.reload()?;
+                        self.status = Some((true, format!("Restored {task_name}")));
+                        self.panel = Panel::Tasks;
                     }
                     Err(err) => {
                         self.status = Some((false, err.to_string()));
@@ -988,7 +1030,7 @@ impl App {
             return Ok(());
         };
         if task.is_archived {
-            self.status = Some((false, "Archived tasks cannot be switched to — delete or recreate".into()));
+            self.status = Some((false, "Archived tasks cannot be switched to — restore or delete first".into()));
             return Ok(());
         }
         if task.is_default {
@@ -1022,6 +1064,27 @@ impl App {
             container_exists: preview.container_exists,
             data_dir: preview.data_dir.display().to_string(),
             buttons: ModalButtonBar::confirm_first("Archive"),
+        };
+        Ok(())
+    }
+
+    fn begin_restore(&mut self) -> Result<()> {
+        self.require_daemon()?;
+        let Some(task) = self.selected_task().cloned() else {
+            return Ok(());
+        };
+        if !task.is_archived {
+            self.status = Some((false, "Task is not archived".into()));
+            return Ok(());
+        }
+        let preview = self.client.preview_task_teardown(&task.id)?;
+        self.status = None;
+        self.screen = Screen::ConfirmRestore {
+            task_id: task.id,
+            task_name: task.name,
+            container_exists: preview.container_exists,
+            data_dir: preview.data_dir.display().to_string(),
+            buttons: ModalButtonBar::confirm_first("Restore"),
         };
         Ok(())
     }

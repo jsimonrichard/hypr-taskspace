@@ -215,11 +215,30 @@ fn dispatch(
     method: &str,
     params: Value,
 ) -> Result<Value> {
+    if method == "ping" {
+        return Ok(json!({ "pong": true }));
+    }
+
+    if method == "archive_task" {
+        let task_id = params
+            .get("task_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| TskError::Other("task_id required".into()))?;
+        let (task, config) = {
+            let svc = service.lock().map_err(|e| TskError::Other(e.to_string()))?;
+            svc.prepare_archive(task_id)?
+        };
+        crate::task_cleanup::run_archive_teardown(&config, &task)?;
+        {
+            let svc = service.lock().map_err(|e| TskError::Other(e.to_string()))?;
+            svc.complete_archive(task_id)?;
+        }
+        return Ok(json!({ "archived": task_id }));
+    }
+
     let svc = service.lock().map_err(|e| TskError::Other(e.to_string()))?;
 
     match method {
-        "ping" => Ok(json!({ "pong": true })),
-
         "get_state" => {
             let state = svc.load_state()?;
             Ok(serde_json::to_value(state).map_err(|e| TskError::Other(e.to_string()))?)
@@ -323,13 +342,13 @@ fn dispatch(
             let task = svc.switch_task(task_id)?;
             Ok(serde_json::to_value(task).map_err(|e| TskError::Other(e.to_string()))?)
         }
-        "archive_task" => {
+        "restore_task" => {
             let task_id = params
                 .get("task_id")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| TskError::Other("task_id required".into()))?;
-            svc.archive_task(task_id)?;
-            Ok(json!({ "archived": task_id }))
+            svc.restore_task(task_id)?;
+            Ok(json!({ "restored": task_id }))
         }
         "delete_task" => {
             let task_id = params

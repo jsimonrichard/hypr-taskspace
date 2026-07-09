@@ -4,7 +4,15 @@ How tsk opens Cursor and how that will evolve when a task has multiple repos.
 
 ## Current behavior
 
-When a task is created, `.tsk/on-start.sh` opens Cursor on the task's managed checkout:
+When a task is **created** or **restored** from archive, tsk runs `.tsk/on-start.sh` by default (no `repo.toml` entry required). Use `TSK_TASK_HOOK` (`create` or `restore`) inside the script if you need different behavior per event.
+
+Optional settings in `.tsk/repo.toml`:
+
+```toml
+# on_start_monitor = "eDP-1"
+# on_create = ".tsk/on-create.sh"   # override for create only
+# on_restore = ".tsk/on-restore.sh" # override for restore only
+```
 
 ```bash
 cursor "$TSK_TASK_REPO"

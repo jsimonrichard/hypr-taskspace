@@ -10,7 +10,8 @@ use crate::hyprland::{self, HyprWindow};
 use crate::models::{SessionState, Task};
 use crate::task_paths::is_managed_task_checkout;
 use crate::vcs::{
-    detach_linked_checkout, jj_workspace_name_for_task, remove_linked_checkout,
+    detach_linked_checkout, jj_workspace_name_for_task, reattach_linked_checkout,
+    remove_linked_checkout,
 };
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -75,6 +76,10 @@ pub fn close_task_windows(task: &Task) -> Result<usize> {
     Ok(clients.len())
 }
 
+pub fn start_task_container(task: &Task) -> Result<()> {
+    distrobox::start_container(&task.container_name)
+}
+
 pub fn stop_task_container(task: &Task) -> Result<()> {
     distrobox::stop_container(&task.container_name)
 }
@@ -100,6 +105,21 @@ pub fn purge_task_session_keys(state: &mut SessionState, task_id: &str) {
     }
 }
 
+/// Window close, container stop, and checkout detach for archive — does not touch session state.
+pub fn run_archive_teardown(config: &TskConfig, task: &Task) -> Result<()> {
+    let _closed = close_task_windows(task)?;
+    if let Err(err) = stop_task_container(task) {
+        eprintln!(
+            "tsk: archive task {}: stop container {}: {err}",
+            task.id, task.container_name
+        );
+    }
+    if let Err(err) = detach_task_checkout(config, task) {
+        eprintln!("tsk: archive task {}: detach checkout: {err}", task.id);
+    }
+    Ok(())
+}
+
 pub fn detach_task_checkout(config: &TskConfig, task: &Task) -> Result<()> {
     if !is_managed_task_checkout(&task.repo_path, &config.tasks_base_dir, &task.id) {
         return Ok(());
@@ -107,6 +127,15 @@ pub fn detach_task_checkout(config: &TskConfig, task: &Task) -> Result<()> {
     let source = task.source_repo_path.as_deref();
     let name = jj_workspace_name_for_task(&task.id);
     detach_linked_checkout(&task.repo_path, source, Some(&name))
+}
+
+pub fn reattach_task_checkout(config: &TskConfig, task: &Task) -> Result<()> {
+    if !is_managed_task_checkout(&task.repo_path, &config.tasks_base_dir, &task.id) {
+        return Ok(());
+    }
+    let source = task.source_repo_path.as_deref();
+    let name = jj_workspace_name_for_task(&task.id);
+    reattach_linked_checkout(&task.repo_path, source, Some(&name))
 }
 
 pub fn remove_task_checkout(config: &TskConfig, task: &Task) -> Result<()> {

@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{TskError, Result};
 use crate::xdg::expand;
+use crate::models::Task;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -116,12 +117,31 @@ pub fn reconnect_jj_workspace(checkout: &Path) -> Result<()> {
     )
 }
 
+/// Ensure a task's managed checkout is usable before opening a terminal or similar.
+pub fn ensure_task_checkout_ready(task: &Task, config: &crate::config::TskConfig) -> Result<()> {
+    if !crate::task_paths::is_managed_task_checkout(
+        &task.repo_path,
+        &config.tasks_base_dir,
+        &task.id,
+    ) {
+        return ensure_checkout_ready(&task.repo_path);
+    }
+    let source = task.source_repo_path.as_deref();
+    let name = jj_workspace_name_for_task(&task.id);
+    reattach_linked_checkout(&task.repo_path, source, Some(&name))
+}
+
 /// Ensure a managed jj checkout is usable (no-op for git and non-jj paths).
 pub fn ensure_checkout_ready(checkout: &Path) -> Result<()> {
     if linked_checkout_kind(checkout) == Some(VcsKind::Jj) {
         reconnect_jj_workspace(checkout)?;
     }
     Ok(())
+}
+
+/// Stable git branch name for a tsk task worktree.
+pub fn git_branch_for_task(task_id: &str) -> String {
+    format!("tsk-{task_id}")
 }
 
 fn create_git_worktree(source_root: &Path, dest: &Path, branch: &str) -> Result<()> {
@@ -206,8 +226,8 @@ pub fn detach_jj_workspace(source_root: &Path, workspace_name: &str) -> Result<(
     forget_jj_workspace(source_root, workspace_name)
 }
 
-/// Detach a linked checkout from its source repo without deleting files (archive).
-pub fn detach_linked_checkout(
+/// Re-link a detached checkout to its source repo (e.g. restore from archive).
+pub fn reattach_linked_checkout(
     checkout: &Path,
     source_root: Option<&Path>,
     workspace_name: Option<&str>,
@@ -233,9 +253,93 @@ pub fn detach_linked_checkout(
                         checkout.display()
                     ))
                 })?;
+            if jj_workspace_registered_at_source(&source, &name) {
+                reconnect_jj_workspace(checkout)
+            } else {
+                relink_forgotten_jj_workspace(&source, checkout, &name)
+            }
+        }
+        Some(VcsKind::Git) => reattach_git_worktree(source_root, checkout, workspace_name),
+        None => {
+            if let (Some(source), Some(task_id)) = (source_root, workspace_name) {
+                if checkout.exists() && !checkout.join(".jj").is_dir() {
+                    return reattach_git_worktree(Some(source), checkout, Some(task_id));
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
+fn reattach_git_worktree(
+    source_root: Option<&Path>,
+    checkout: &Path,
+    task_id: Option<&str>,
+) -> Result<()> {
+    let task_id = task_id
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| {
+            TskError::Other(format!(
+                "Could not determine git worktree branch for {}",
+                checkout.display()
+            ))
+        })?;
+    let source = source_root
+        .map(|p| p.to_path_buf())
+        .ok_or_else(|| {
+            TskError::Other(format!(
+                "Could not find git repository for {}",
+                checkout.display()
+            ))
+        })?;
+    if git_worktree_listed_at_source(&source, checkout) && is_git_worktree(checkout) {
+        return Ok(());
+    }
+    relink_detached_git_worktree(&source, checkout, task_id)
+}
+
+/// Detach a linked checkout from its source repo without deleting files (archive).
+pub fn detach_linked_checkout(
+    checkout: &Path,
+    source_root: Option<&Path>,
+    workspace_name: Option<&str>,
+) -> Result<()> {
+    if !checkout.exists() {
+        return Ok(());
+    }
+    match linked_checkout_kind(checkout) {
+        Some(VcsKind::Git) => {
+            let source = source_root
+                .map(|p| p.to_path_buf())
+                .ok_or_else(|| {
+                    TskError::Other(format!(
+                        "Could not find git repository for {}",
+                        checkout.display()
+                    ))
+                })?;
+            detach_git_worktree(&source, checkout)
+        }
+        Some(VcsKind::Jj) => {
+            let name = workspace_name
+                .map(str::to_string)
+                .or_else(|| jj_workspace_name_at(checkout).ok())
+                .unwrap_or_default();
+            if name.is_empty() {
+                return Ok(());
+            }
+            let source = source_root
+                .map(|p| p.to_path_buf())
+                .or_else(|| jj_repo_root_from_checkout(checkout))
+                .ok_or_else(|| {
+                    TskError::Other(format!(
+                        "Could not find jj repository for {}",
+                        checkout.display()
+                    ))
+                })?;
             forget_jj_workspace(&source, &name)
         }
-        Some(VcsKind::Git) | None => Ok(()),
+        None => Ok(()),
     }
 }
 
@@ -314,6 +418,260 @@ fn remove_git_worktree(checkout: &Path) -> Result<()> {
         "git worktree remove failed: {}",
         stderr.trim()
     )))
+}
+
+/// Stop tracking a git worktree without deleting files (archive).
+fn detach_git_worktree(source_root: &Path, checkout: &Path) -> Result<()> {
+    let checkout = expand(checkout);
+    if is_git_worktree(&checkout) {
+        let git_file = checkout.join(".git");
+        std::fs::remove_file(&git_file).map_err(|source| TskError::Write {
+            path: git_file,
+            source,
+        })?;
+    }
+    prune_git_worktrees(source_root)
+}
+
+fn prune_git_worktrees(source_root: &Path) -> Result<()> {
+    let source = source_root.to_str().ok_or_else(|| {
+        TskError::Other(format!(
+            "Invalid git repository path: {}",
+            source_root.display()
+        ))
+    })?;
+    let out = Command::new("git")
+        .args(["-C", source, "worktree", "prune"])
+        .output()
+        .map_err(|e| TskError::Other(format!("failed to run git worktree prune: {e}")))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        Err(TskError::Other(format!(
+            "git worktree prune failed: {}",
+            stderr.trim()
+        )))
+    }
+}
+
+fn git_worktree_listed_at_source(source_root: &Path, checkout: &Path) -> bool {
+    let Some(source) = source_root.to_str() else {
+        return false;
+    };
+    let Ok(out) = Command::new("git")
+        .args(["-C", source, "worktree", "list"])
+        .output()
+    else {
+        return false;
+    };
+    if !out.status.success() {
+        return false;
+    }
+    let checkout_canon =
+        std::fs::canonicalize(checkout).unwrap_or_else(|_| expand(checkout));
+    String::from_utf8_lossy(&out.stdout).lines().any(|line| {
+        let Some(path) = line.split_whitespace().next() else {
+            return false;
+        };
+        let path = expand(Path::new(path));
+        std::fs::canonicalize(&path).unwrap_or(path) == checkout_canon
+    })
+}
+
+fn add_git_worktree_existing_branch(
+    source_root: &Path,
+    dest: &Path,
+    task_id: &str,
+) -> Result<()> {
+    let branch = git_branch_for_task(task_id);
+    let source = source_root.to_str().ok_or_else(|| {
+        TskError::Other(format!(
+            "Invalid source repo path: {}",
+            source_root.display()
+        ))
+    })?;
+    let dest_str = dest.to_str().ok_or_else(|| {
+        TskError::Other(format!("Invalid checkout path: {}", dest.display()))
+    })?;
+    run_checked(
+        Command::new("git").args([
+            "-C",
+            source,
+            "worktree",
+            "add",
+            dest_str,
+            branch.as_str(),
+        ]),
+        "git worktree add",
+    )
+}
+
+/// Re-register a detached git worktree directory (files kept on disk).
+fn relink_detached_git_worktree(
+    source_root: &Path,
+    checkout: &Path,
+    task_id: &str,
+) -> Result<()> {
+    let checkout = expand(checkout);
+    let parent = checkout.parent().ok_or_else(|| {
+        TskError::Other(format!("Invalid checkout path: {}", checkout.display()))
+    })?;
+    let backup = parent.join(format!(".{task_id}-git-relink-tmp"));
+    if backup.exists() {
+        std::fs::remove_dir_all(&backup).map_err(|source| TskError::Write {
+            path: backup.clone(),
+            source,
+        })?;
+    }
+    std::fs::create_dir_all(&backup).map_err(|source| TskError::Write {
+        path: backup.clone(),
+        source,
+    })?;
+
+    if checkout.exists() {
+        for entry in std::fs::read_dir(&checkout).map_err(|source| TskError::Read {
+            path: checkout.clone(),
+            source,
+        })? {
+            let entry = entry.map_err(|source| TskError::Read {
+                path: checkout.clone(),
+                source,
+            })?;
+            let dest = backup.join(entry.file_name());
+            std::fs::rename(entry.path(), dest).map_err(|source| TskError::Write {
+                path: entry.path(),
+                source,
+            })?;
+        }
+        std::fs::remove_dir(&checkout).map_err(|source| TskError::Write {
+            path: checkout.clone(),
+            source,
+        })?;
+    }
+
+    add_git_worktree_existing_branch(source_root, &checkout, task_id)?;
+
+    for entry in std::fs::read_dir(&backup).map_err(|source| TskError::Read {
+        path: backup.clone(),
+        source,
+    })? {
+        let entry = entry.map_err(|source| TskError::Read {
+            path: backup.clone(),
+            source,
+        })?;
+        if entry.file_name() == ".git" {
+            continue;
+        }
+        let dest = checkout.join(entry.file_name());
+        if dest.exists() {
+            if dest.is_dir() {
+                std::fs::remove_dir_all(&dest).map_err(|source| TskError::Write {
+                    path: dest.clone(),
+                    source,
+                })?;
+            } else {
+                std::fs::remove_file(&dest).map_err(|source| TskError::Write {
+                    path: dest.clone(),
+                    source,
+                })?;
+            }
+        }
+        std::fs::rename(entry.path(), dest).map_err(|source| TskError::Write {
+            path: entry.path(),
+            source,
+        })?;
+    }
+
+    let _ = std::fs::remove_dir_all(&backup);
+    Ok(())
+}
+
+fn relink_forgotten_jj_workspace(source_root: &Path, checkout: &Path, name: &str) -> Result<()> {
+    let checkout = expand(checkout);
+    let parent = checkout.parent().ok_or_else(|| {
+        TskError::Other(format!("Invalid checkout path: {}", checkout.display()))
+    })?;
+    let backup = parent.join(format!(".{name}-relink-tmp"));
+    if backup.exists() {
+        std::fs::remove_dir_all(&backup).map_err(|source| TskError::Write {
+            path: backup.clone(),
+            source,
+        })?;
+    }
+    std::fs::create_dir_all(&backup).map_err(|source| TskError::Write {
+        path: backup.clone(),
+        source,
+    })?;
+
+    for entry in std::fs::read_dir(&checkout).map_err(|source| TskError::Read {
+        path: checkout.clone(),
+        source,
+    })? {
+        let entry = entry.map_err(|source| TskError::Read {
+            path: checkout.clone(),
+            source,
+        })?;
+        let dest = backup.join(entry.file_name());
+        std::fs::rename(entry.path(), dest).map_err(|source| TskError::Write {
+            path: entry.path(),
+            source,
+        })?;
+    }
+
+    create_jj_workspace(source_root, &checkout, name)?;
+
+    for entry in std::fs::read_dir(&backup).map_err(|source| TskError::Read {
+        path: backup.clone(),
+        source,
+    })? {
+        let entry = entry.map_err(|source| TskError::Read {
+            path: backup.clone(),
+            source,
+        })?;
+        if entry.file_name() == ".jj" {
+            continue;
+        }
+        let dest = checkout.join(entry.file_name());
+        if dest.exists() {
+            if dest.is_dir() {
+                std::fs::remove_dir_all(&dest).map_err(|source| TskError::Write {
+                    path: dest.clone(),
+                    source,
+                })?;
+            } else {
+                std::fs::remove_file(&dest).map_err(|source| TskError::Write {
+                    path: dest.clone(),
+                    source,
+                })?;
+            }
+        }
+        std::fs::rename(entry.path(), dest).map_err(|source| TskError::Write {
+            path: entry.path(),
+            source,
+        })?;
+    }
+
+    let _ = std::fs::remove_dir_all(&backup);
+    Ok(())
+}
+
+fn jj_workspace_registered_at_source(source_root: &Path, workspace_name: &str) -> bool {
+    let Some(source) = source_root.to_str() else {
+        return false;
+    };
+    let Ok(out) = Command::new("jj")
+        .args(["-R", source, "workspace", "list"])
+        .output()
+    else {
+        return false;
+    };
+    if !out.status.success() {
+        return false;
+    }
+    String::from_utf8_lossy(&out.stdout).lines().any(|line| {
+        line.split(':').next().map(|n| n.trim()) == Some(workspace_name)
+    })
 }
 
 fn forget_jj_workspace(source_root: &Path, workspace_name: &str) -> Result<()> {
@@ -505,5 +863,40 @@ mod tests {
         assert!(is_git_worktree(&dest));
         remove_linked_checkout(&dest, Some(&source), Some("t1")).unwrap();
         assert!(!dest.exists());
+    }
+
+    #[test]
+    fn git_worktree_detach_reattach_preserves_files() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("main");
+        init_scratch_repo(&source).unwrap();
+        let source_str = source.to_str().unwrap();
+        for args in [
+            &["config", "user.email", "tsk@test"][..],
+            &["config", "user.name", "tsk"][..],
+            &["commit", "--allow-empty", "-m", "init"][..],
+        ] {
+            let mut cmd = Command::new("git");
+            cmd.arg("-C").arg(source_str);
+            cmd.args(args);
+            run_checked(&mut cmd, "git").unwrap();
+        }
+        let dest = dir.path().join("tasks").join("tabc123").join("workspace").join("main");
+        create_linked_checkout(&source, &dest, "tabc123", VcsKind::Git).unwrap();
+        fs::write(dest.join("local.txt"), "local only").unwrap();
+
+        detach_linked_checkout(&dest, Some(&source), Some("tabc123")).unwrap();
+        assert!(!is_git_worktree(&dest));
+        assert!(dest.join("local.txt").is_file());
+        assert!(!git_worktree_listed_at_source(&source, &dest));
+
+        reattach_linked_checkout(&dest, Some(&source), Some("tabc123")).unwrap();
+        assert!(is_git_worktree(&dest));
+        assert!(git_worktree_listed_at_source(&source, &dest));
+        assert_eq!(fs::read_to_string(dest.join("local.txt")).unwrap(), "local only");
+        assert_eq!(
+            current_branch(&dest).as_deref(),
+            Some(git_branch_for_task("tabc123").as_str())
+        );
     }
 }

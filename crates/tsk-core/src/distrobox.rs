@@ -1,4 +1,4 @@
-//! Distrobox container helpers — stop/remove only.
+//! Distrobox container helpers — start/stop/remove.
 
 use std::process::Command;
 
@@ -21,6 +21,25 @@ pub fn container_exists(name: &str) -> bool {
     String::from_utf8_lossy(&output.stdout)
         .lines()
         .any(|line| line.split_whitespace().next() == Some(name))
+}
+
+pub fn start_container(name: &str) -> Result<()> {
+    if !available() || !container_exists(name) {
+        return Ok(());
+    }
+    let output = Command::new("distrobox")
+        .args(["start", "--name", name])
+        .output()
+        .map_err(|e| TskError::Other(format!("distrobox start failed: {e}")))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(TskError::Other(format!(
+            "distrobox start {} failed: {}",
+            name,
+            String::from_utf8_lossy(&output.stderr).trim()
+        )))
+    }
 }
 
 pub fn stop_container(name: &str) -> Result<()> {

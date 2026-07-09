@@ -1,3 +1,7 @@
-on_start = ".tsk/on-start.sh"
-# Optional: Hyprland monitor to focus before on_start (see `hyprctl monitors`).
+# Optional: Hyprland monitor to focus before hooks (see `hyprctl monitors`).
 # on_start_monitor = "eDP-1"
+
+# Optional per-event hook overrides (default: .tsk/on-start.sh when that file exists):
+# on_start = ".tsk/custom-start.sh"
+# on_create = ".tsk/on-create.sh"
+# on_restore = ".tsk/on-restore.sh"

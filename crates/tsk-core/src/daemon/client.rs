@@ -42,7 +42,18 @@ pub fn daemon_pid_path() -> Result<PathBuf> {
 }
 
 pub fn is_daemon_running() -> bool {
-    ping_daemon().unwrap_or(false)
+    const MAX_ATTEMPTS: u32 = 3;
+    const RETRY_DELAY: Duration = Duration::from_millis(50);
+
+    for attempt in 0..MAX_ATTEMPTS {
+        if ping_daemon().unwrap_or(false) {
+            return true;
+        }
+        if attempt + 1 < MAX_ATTEMPTS {
+            std::thread::sleep(RETRY_DELAY);
+        }
+    }
+    false
 }
 
 /// Error returned when a state mutation is attempted without the daemon.
@@ -260,6 +271,11 @@ impl DaemonClient {
     pub fn archive_task(&self, task_id: &str) -> Result<()> {
         ensure_daemon()?;
         daemon_request("archive_task", json!({ "task_id": task_id })).map(|_| ())
+    }
+
+    pub fn restore_task(&self, task_id: &str) -> Result<()> {
+        ensure_daemon()?;
+        daemon_request("restore_task", json!({ "task_id": task_id })).map(|_| ())
     }
 
     pub fn delete_task(&self, task_id: &str) -> Result<()> {

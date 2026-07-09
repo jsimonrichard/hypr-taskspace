@@ -274,30 +274,31 @@ impl TaskService {
         if switch {
             self.commit_state(&state, Some(StateChangeKind::Full))?;
             let task = self.switch_task(&task_id)?;
-            if let Err(err) = crate::task_on_start::run_on_start_after_create(
+            if let Err(err) = crate::task_on_start::run_on_create_after_create(
                 &task,
                 &resolved.setup,
                 self.config.hyprland_enabled,
                 &state,
             ) {
-                eprintln!("tsk: on_start hook: {err}");
+                eprintln!("tsk: on_create hook: {err}");
             }
             Ok(task)
         } else {
             self.commit_state(&state, Some(StateChangeKind::Full))?;
-            if let Err(err) = crate::task_on_start::run_on_start_after_create(
+            if let Err(err) = crate::task_on_start::run_on_create_after_create(
                 &task,
                 &resolved.setup,
                 self.config.hyprland_enabled,
                 &state,
             ) {
-                eprintln!("tsk: on_start hook: {err}");
+                eprintln!("tsk: on_create hook: {err}");
             }
             Ok(task)
         }
     }
 
-    pub fn archive_task(&self, task_id: &str) -> Result<()> {
+    /// Validate and leave the taskspace when archiving the active task. Holds the service lock.
+    pub fn prepare_archive(&self, task_id: &str) -> Result<(Task, crate::config::TskConfig)> {
         let mut state = self.load_state()?;
         let task = state
             .tasks
@@ -315,23 +316,74 @@ impl TaskService {
             self.commit_state(&state, Some(StateChangeKind::Taskspace))?;
         }
 
-        let _closed = crate::task_cleanup::close_task_windows(&task)?;
-        if let Err(err) = crate::task_cleanup::stop_task_container(&task) {
-            eprintln!(
-                "tsk: archive task {}: stop container {}: {err}",
-                task.id, task.container_name
-            );
-        }
-        if let Err(err) = crate::task_cleanup::detach_task_checkout(&self.config, &task) {
-            eprintln!("tsk: archive task {}: detach checkout: {err}", task.id);
+        Ok((task, self.config.clone()))
+    }
+
+    /// Mark a task archived after teardown. Holds the service lock.
+    pub fn complete_archive(&self, task_id: &str) -> Result<()> {
+        let mut state = self.load_state()?;
+        if !state.tasks.contains_key(task_id) {
+            return Err(TskError::Other(format!("Unknown task: {task_id}")));
         }
         crate::task_cleanup::purge_task_windows(&mut state, task_id);
-
         if let Some(entry) = state.tasks.get_mut(task_id) {
             entry.status = TaskStatus::Archived;
         }
-
         self.commit_state(&state, Some(StateChangeKind::Full))
+    }
+
+    pub fn archive_task(&self, task_id: &str) -> Result<()> {
+        let (task, config) = self.prepare_archive(task_id)?;
+        crate::task_cleanup::run_archive_teardown(&config, &task)?;
+        self.complete_archive(task_id)
+    }
+
+    pub fn restore_task(&self, task_id: &str) -> Result<()> {
+        let mut state = self.load_state()?;
+        let task = state
+            .tasks
+            .get(task_id)
+            .cloned()
+            .ok_or_else(|| TskError::Other(format!("Unknown task: {task_id}")))?;
+        if task.status != TaskStatus::Archived {
+            return Err(TskError::Other(format!("Task is not archived: {task_id}")));
+        }
+
+        let data_dir = crate::task_cleanup::task_data_dir(&self.config, task_id);
+        if !data_dir.exists() {
+            return Err(TskError::Other(format!(
+                "Task data directory is missing: {}",
+                data_dir.display()
+            )));
+        }
+
+        if let Err(err) = crate::task_cleanup::reattach_task_checkout(&self.config, &task) {
+            return Err(err);
+        }
+        if let Err(err) = crate::task_cleanup::start_task_container(&task) {
+            eprintln!(
+                "tsk: restore task {}: start container {}: {err}",
+                task.id, task.container_name
+            );
+        }
+
+        if let Some(entry) = state.tasks.get_mut(task_id) {
+            entry.status = TaskStatus::Active;
+            entry.last_active_at = Utc::now();
+        }
+
+        self.commit_state(&state, Some(StateChangeKind::Full))?;
+
+        if let Err(err) = crate::task_on_start::run_on_restore_after_restore(
+            &task,
+            &self.config,
+            self.config.hyprland_enabled,
+            &state,
+        ) {
+            eprintln!("tsk: on_restore hook: {err}");
+        }
+
+        Ok(())
     }
 
     pub fn delete_task(&self, task_id: &str) -> Result<()> {
@@ -610,6 +662,28 @@ mod tests {
         assert!(state.current_task_id.is_none());
         assert!(svc.tasks_for_menu().unwrap().iter().all(|t| t.id != task.id));
         assert!(dir.path().join("tasks").join(&task.id).is_dir());
+    }
+
+    #[test]
+    fn restore_task_reactivates_archived_task() {
+        let dir = tempdir().unwrap();
+        let svc = test_service(dir.path());
+        let task = svc
+            .create_task(
+                "paused",
+                false,
+                crate::task_repo::TaskRepoSource::Scratch,
+                None,
+                crate::task_repo::TaskRepoOptions::default(),
+            )
+            .unwrap();
+        svc.archive_task(&task.id).unwrap();
+        assert!(svc.tasks_for_menu().unwrap().iter().all(|t| t.id != task.id));
+
+        svc.restore_task(&task.id).unwrap();
+        let state = svc.load_state().unwrap();
+        assert_eq!(state.tasks.get(&task.id).unwrap().status, TaskStatus::Active);
+        assert!(svc.tasks_for_menu().unwrap().iter().any(|t| t.id == task.id));
     }
 
     #[test]

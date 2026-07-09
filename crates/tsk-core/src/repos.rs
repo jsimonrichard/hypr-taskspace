@@ -25,6 +25,9 @@ CREATE TABLE IF NOT EXISTS repos (
 );
 "#;
 
+/// Default relative path to the shared create/restore hook script.
+pub const DEFAULT_ON_START_SCRIPT: &str = ".tsk/on-start.sh";
+
 /// Checkout-local settings persisted in `.tsk/repo.toml`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RepoConfig {
@@ -35,12 +38,54 @@ pub struct RepoConfig {
     pub url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vcs: Option<VcsKind>,
-    /// Script path relative to the checkout root, run when a task is created from this repo.
+    /// Script run when a task is created or restored (unless overridden below).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub on_start: Option<String>,
-    /// Optional Hyprland monitor name to focus before running `on_start`.
+    /// Optional create-only hook; falls back to `on_start`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_create: Option<String>,
+    /// Optional restore-only hook; falls back to `on_start`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on_restore: Option<String>,
+    /// Optional Hyprland monitor name to focus before running hooks.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub on_start_monitor: Option<String>,
+}
+
+impl RepoConfig {
+    /// Resolved create hook (`on_create`, else `on_start`, else default script when present).
+    pub fn on_create_script_at(&self, source_root: &Path) -> Option<&str> {
+        if let Some(path) = self
+            .on_create
+            .as_deref()
+            .or(self.on_start.as_deref())
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+        {
+            return Some(path);
+        }
+        if source_root.join(DEFAULT_ON_START_SCRIPT).is_file() {
+            return Some(DEFAULT_ON_START_SCRIPT);
+        }
+        None
+    }
+
+    /// Resolved restore hook (`on_restore`, else `on_start`, else default script when present).
+    pub fn on_restore_script_at(&self, source_root: &Path) -> Option<&str> {
+        if let Some(path) = self
+            .on_restore
+            .as_deref()
+            .or(self.on_start.as_deref())
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+        {
+            return Some(path);
+        }
+        if source_root.join(DEFAULT_ON_START_SCRIPT).is_file() {
+            return Some(DEFAULT_ON_START_SCRIPT);
+        }
+        None
+    }
 }
 
 /// Runtime view of a registered checkout (path and id come from `state.db`).
@@ -108,6 +153,10 @@ struct RepoConfigFile {
     #[serde(default)]
     vcs: Option<VcsKind>,
     #[serde(default)]
+    on_create: Option<String>,
+    #[serde(default)]
+    on_restore: Option<String>,
+    #[serde(default)]
     on_start: Option<String>,
     #[serde(default)]
     on_start_monitor: Option<String>,
@@ -132,6 +181,8 @@ pub fn load_repo_config(vcs_root: &Path) -> Result<Option<RepoConfig>> {
         name: file.name,
         url: file.url,
         vcs: file.vcs,
+        on_create: file.on_create,
+        on_restore: file.on_restore,
         on_start: file.on_start,
         on_start_monitor: file.on_start_monitor,
     };
@@ -338,14 +389,6 @@ pub fn unregister_repo(path: &Path) -> Result<()> {
     let root = normalize_repo_path(path);
     let conn = repos_db_conn()?;
     delete_repo_record(&conn, &root)?;
-
-    let config_path = repo_config_path(&root);
-    if config_path.is_file() {
-        std::fs::remove_file(&config_path).map_err(|source| TskError::Write {
-            path: config_path,
-            source,
-        })?;
-    }
     Ok(())
 }
 
@@ -420,6 +463,35 @@ mod tests {
     }
 
     #[test]
+    fn default_on_start_script_used_when_file_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let checkout = dir.path().join("my-app");
+        std::fs::create_dir_all(checkout.join(".tsk")).unwrap();
+        std::fs::write(checkout.join(".tsk/on-start.sh"), "#!/bin/sh\n").unwrap();
+
+        let config = RepoConfig::default();
+        assert_eq!(
+            config.on_create_script_at(&checkout),
+            Some(DEFAULT_ON_START_SCRIPT)
+        );
+        assert_eq!(
+            config.on_restore_script_at(&checkout),
+            Some(DEFAULT_ON_START_SCRIPT)
+        );
+    }
+
+    #[test]
+    fn default_on_start_script_skipped_when_file_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let checkout = dir.path().join("my-app");
+        std::fs::create_dir_all(&checkout).unwrap();
+
+        let config = RepoConfig::default();
+        assert!(config.on_create_script_at(&checkout).is_none());
+        assert!(config.on_restore_script_at(&checkout).is_none());
+    }
+
+    #[test]
     fn repo_config_roundtrip_in_checkout() {
         let dir = tempfile::tempdir().unwrap();
         let checkout = dir.path().join("my-app");
@@ -429,6 +501,8 @@ mod tests {
             url: Some("https://example.com/app.git".into()),
             vcs: Some(VcsKind::Git),
             on_start: Some(".tsk/on-start.sh".into()),
+            on_create: None,
+            on_restore: None,
             on_start_monitor: Some("eDP-1".into()),
         };
         save_repo_config(&checkout, &config).unwrap();

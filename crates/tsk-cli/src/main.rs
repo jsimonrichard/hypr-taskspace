@@ -247,6 +247,9 @@ enum TaskCommands {
     Archive {
         name_or_id: String,
     },
+    Restore {
+        name_or_id: String,
+    },
     Delete {
         name_or_id: String,
     },
@@ -275,7 +278,7 @@ enum RepoCommands {
     },
     /// List registered repos
     List,
-    /// Remove a repo from bookmarks (deletes `.tsk/repo.toml` in the checkout)
+    /// Remove a repo from tsk bookmarks (does not modify the checkout)
     Remove {
         id_or_path: String,
     },
@@ -469,6 +472,7 @@ fn run() -> Result<()> {
             TaskCommands::Switch { name_or_id } => cmd_task_switch(&name_or_id),
             TaskCommands::Current => cmd_task_current(),
             TaskCommands::Archive { name_or_id } => cmd_task_archive(&name_or_id),
+            TaskCommands::Restore { name_or_id } => cmd_task_restore(&name_or_id),
             TaskCommands::Delete { name_or_id } => cmd_task_delete(&name_or_id),
             TaskCommands::Menu | TaskCommands::TuiLaunch => cmd_task_tui_launch(),
             TaskCommands::Tui => cmd_task_tui(),
@@ -1061,6 +1065,19 @@ fn cmd_task_archive(name_or_id: &str) -> Result<()> {
         println!("Stopped container {}.", preview.container_name);
     }
     println!("Task files kept at {}.", preview.data_dir.display());
+    Ok(())
+}
+
+fn cmd_task_restore(name_or_id: &str) -> Result<()> {
+    let svc = client()?;
+    let task = svc.resolve_task(name_or_id)?;
+    let preview = svc.preview_task_teardown(&task.id)?;
+    svc.restore_task(&task.id)?;
+    println!("Restored {}", task.id);
+    if preview.container_exists {
+        println!("Started container {}.", preview.container_name);
+    }
+    println!("Task files at {}.", preview.data_dir.display());
     Ok(())
 }
 
