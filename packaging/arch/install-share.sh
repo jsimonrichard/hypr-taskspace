@@ -12,7 +12,6 @@ sub() {
 }
 
 install -d "${pkgdir}${share}/hypr/integrations"
-install -d "${pkgdir}${share}/bin"
 install -d "${pkgdir}${share}/waybar"
 install -d "${pkgdir}${share}/lib"
 
@@ -23,12 +22,6 @@ while IFS= read -r -d '' file; do
   install -d "$(dirname "$dest")"
   sub "$file" >"$dest"
 done < <(find "${repo_share}/hypr" -type f -print0)
-
-# Shell helpers
-for file in "${repo_share}/bin/"*; do
-  [[ -f "$file" ]] || continue
-  install -m755 "$file" "${pkgdir}${share}/bin/$(basename "$file")"
-done
 
 # Waybar snippets
 for file in "${repo_share}/waybar/"*; do

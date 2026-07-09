@@ -3,6 +3,43 @@ use std::path::{Path, PathBuf};
 
 use crate::error::{TskError, Result};
 
+/// Hyprland `exec` bindings may run without `XDG_RUNTIME_DIR` or `HOME`.
+/// Fill sensible defaults before any subcommand touches runtime paths or config.
+pub fn normalize_desktop_env() {
+    if env::var_os("XDG_RUNTIME_DIR").is_none() {
+        let uid = unsafe { libc::getuid() };
+        let runtime = format!("/run/user/{uid}");
+        if Path::new(&runtime).is_dir() {
+            env::set_var("XDG_RUNTIME_DIR", &runtime);
+        }
+    }
+    if env::var_os("HOME").is_none() {
+        if let Some(home) = passwd_home_for_uid(unsafe { libc::getuid() }) {
+            env::set_var("HOME", home);
+        }
+    }
+}
+
+fn passwd_home_for_uid(uid: u32) -> Option<String> {
+    let mut pwd: libc::passwd = unsafe { std::mem::zeroed() };
+    let mut result: *mut libc::passwd = std::ptr::null_mut();
+    let mut buf = vec![0u8; 16_384];
+    let rc = unsafe {
+        libc::getpwuid_r(
+            uid as libc::uid_t,
+            &mut pwd,
+            buf.as_mut_ptr().cast(),
+            buf.len(),
+            &mut result,
+        )
+    };
+    if rc != 0 || result.is_null() {
+        return None;
+    }
+    let dir = unsafe { std::ffi::CStr::from_ptr(pwd.pw_dir) };
+    dir.to_str().ok().map(str::to_owned)
+}
+
 pub fn expand(path: impl AsRef<Path>) -> PathBuf {
     let s = path.as_ref().to_string_lossy();
     if s.starts_with('~') {
@@ -92,6 +129,23 @@ pub fn ensure_parent(path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn normalize_desktop_env_sets_runtime_dir_when_missing() {
+        let uid = unsafe { libc::getuid() };
+        let expected = format!("/run/user/{uid}");
+        if !Path::new(&expected).is_dir() {
+            return;
+        }
+        let saved = env::var_os("XDG_RUNTIME_DIR");
+        env::remove_var("XDG_RUNTIME_DIR");
+        normalize_desktop_env();
+        assert_eq!(env::var_os("XDG_RUNTIME_DIR").as_deref(), Some(expected.as_ref()));
+        match saved {
+            Some(v) => env::set_var("XDG_RUNTIME_DIR", v),
+            None => env::remove_var("XDG_RUNTIME_DIR"),
+        }
+    }
 
     #[test]
     fn tsk_config_path_ignores_tsk_config_env_without_active_session() {

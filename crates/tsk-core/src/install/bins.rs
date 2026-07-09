@@ -108,7 +108,6 @@ pub fn install_bins(cfg: &TskConfig, options: &InstallBinsOptions) -> Result<Vec
             options.omarchy_integration,
             &resolve_tsk_command(cfg),
         )?;
-        copy_bin_helpers(cfg, &share_src)?;
         install_tsk_wrapper(cfg, &tsk_bin)?;
         if !options.skip_waybar {
             install_waybar_module(cfg, options)?;
@@ -429,56 +428,6 @@ fn copy_dir_files_flat(src: &Path, dest: &Path, share_str: &str) -> Result<()> {
             path: target,
             source,
         })?;
-    }
-    Ok(())
-}
-
-fn copy_bin_helpers(cfg: &TskConfig, share_src: &Path) -> Result<()> {
-    let src = share_src.join("bin");
-    let dest = cfg.install_hypr_share_dir.join("bin");
-    if !src.is_dir() {
-        return Ok(());
-    }
-    ensure_parent(&dest.join("_"))?;
-    fs::create_dir_all(&dest).map_err(|source| TskError::Write {
-        path: dest.clone(),
-        source,
-    })?;
-    for entry in fs::read_dir(&src).map_err(|source| TskError::Read {
-        path: src.clone(),
-        source,
-    })? {
-        let entry = entry.map_err(|source| TskError::Read {
-            path: src.clone(),
-            source,
-        })?;
-        if !entry.file_type().map_err(|source| TskError::Read {
-            path: entry.path(),
-            source,
-        })?.is_file()
-        {
-            continue;
-        }
-        let target = dest.join(entry.file_name());
-        fs::copy(entry.path(), &target).map_err(|source| TskError::Write {
-            path: target.clone(),
-            source,
-        })?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perms = fs::metadata(&target)
-                .map_err(|source| TskError::Read {
-                    path: target.clone(),
-                    source,
-                })?
-                .permissions();
-            perms.set_mode(0o755);
-            fs::set_permissions(&target, perms).map_err(|source| TskError::Write {
-                path: target,
-                source,
-            })?;
-        }
     }
     Ok(())
 }

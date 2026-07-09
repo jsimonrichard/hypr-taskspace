@@ -40,15 +40,6 @@ pub fn run_doctor_checks(cfg: &TskConfig) -> Result<Vec<DoctorCheck>> {
     });
 
     checks.push(DoctorCheck {
-        label: "Task manager launcher installed".into(),
-        passed: hypr
-            .get("tui_helper_exist")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false),
-        detail: share.join("bin/tsk-task-tui").display().to_string(),
-    });
-
-    checks.push(DoctorCheck {
         label: "hyprland.conf contains tsk source line".into(),
         passed: hypr
             .get("source_line_present")
@@ -123,7 +114,7 @@ pub fn run_doctor_checks(cfg: &TskConfig) -> Result<Vec<DoctorCheck>> {
     });
 
     checks.push(DoctorCheck {
-        label: "SUPER+1 runs tsk workspace go (not Omarchy)".into(),
+        label: "SUPER+1 runs tsk workspace switch (not Omarchy)".into(),
         passed: super_one_is_tsk(),
         detail: "hyprctl binds -j".into(),
     });
@@ -239,7 +230,8 @@ fn bind_runs_tsk_workspace_go(bind: &Value) -> bool {
             .get("arg")
             .and_then(|v| v.as_str())
             .is_some_and(|arg| {
-                arg.contains("tsk-workspace-switch")
+                arg.contains("workspace switch")
+                    || arg.contains("tsk-workspace-switch")
                     || arg.contains("tsk workspace go")
             })
 }

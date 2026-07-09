@@ -59,7 +59,6 @@ This copies `share/` templates to `~/.local/share/tsk/`, builds `libtsk_waybar.s
 | CLI | on `PATH` (`~/.cargo/bin/tsk` or `/usr/bin/tsk`) |
 | Waybar module | `~/.local/share/tsk/lib/` (cargo) or `/usr/share/tsk/lib/` (pacman) |
 | Hypr templates | same share tree as the module |
-| Shell helpers | `…/bin/tsk-*` under that share tree |
 
 ### Waybar module (`.so`)
 

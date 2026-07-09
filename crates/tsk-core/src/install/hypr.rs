@@ -46,7 +46,6 @@ pub fn install_hypr_status(cfg: &TskConfig) -> Result<Value> {
     let m = manifest::load_manifest(&metadata_dir, "hypr")?;
     let share = effective_share_dir(cfg);
     let bindings = share.join("hypr/bindings.conf");
-    let tui_helper = share.join("bin/tsk-task-tui");
     let has_source = cfg.install_hypr_config_path.is_file()
         && fs::read_to_string(&cfg.install_hypr_config_path)
             .map(|s| s.contains(marker))
@@ -55,7 +54,6 @@ pub fn install_hypr_status(cfg: &TskConfig) -> Result<Value> {
         "installed": m.is_some(),
         "profile": format!("{:?}", profile).to_lowercase(),
         "bindings_exist": bindings.is_file(),
-        "tui_helper_exist": tui_helper.is_file(),
         "source_line_present": has_source,
         "config_path": cfg.install_hypr_config_path,
         "bindings_path": bindings,

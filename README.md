@@ -211,7 +211,7 @@ tsk taskspace default        # SUPER+H
 | Action | Binding |
 |--------|---------|
 | Task manager (TUI) | Click task name in Waybar, **SUPER+Tab**, or `tsk task tui-launch` |
-| Workspace 1–9 / 10 within current taskspace | **SUPER+1..9**, **SUPER+0** (= workspace 10) — `hyprctl dispatch` via `tsk-workspace-switch`, then async state sync |
+| Workspace 1–9 / 10 within current taskspace | **SUPER+1..9**, **SUPER+0** (= workspace 10) — `tsk workspace switch` (hyprctl dispatch, then async state sync) |
 | Default / host taskspace | **SUPER+H** or TUI → **host** |
 | Task-aware terminal | **SUPER+Return** (override/remove in `bindings.conf` if you prefer your existing bind) |
 
@@ -275,7 +275,7 @@ sqlite3 ~/.local/share/tsk/state.db "SELECT context_mode, current_task_id FROM s
 **Task manager does not open**
 
 ```bash
-tsk-task-tui                     # or /usr/share/tsk/bin/tsk-task-tui (pacman)
+tsk task tui-launch
 tsk doctor
 ```
 

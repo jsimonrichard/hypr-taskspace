@@ -6,7 +6,8 @@ use tsk_core::{
     hyprland, install_hypr,
     install_hypr_status, install_omarchy_prod, install_systemd_status, install_waybar,
     install_waybar_status, is_dev_config, is_daemon_running, is_systemd_unit_installed, launch_task_tui,
-    load_config, load_dev_config, maybe_reexec_dev_session, ping_daemon, profile_for_config,
+    load_config, load_dev_config, maybe_reexec_dev_session, normalize_desktop_env, ping_daemon,
+    profile_for_config,
     run_doctor_checks, stop_daemon,
     systemd_restart, systemd_start, systemd_stop, systemctl_is_active, tail_hypr_log, tail_raw,
     trace_path, uninstall_hypr, uninstall_waybar, version_info, workspace_module_key, DaemonClient,
@@ -190,8 +191,13 @@ enum WorkspaceCommands {
         #[arg(value_parser = clap::value_parser!(i32).range(1..=10))]
         index: i32,
     },
-    /// Persist the active slot after a direct hyprctl switch (used by keybind helper).
+    /// Persist the active slot after a direct hyprctl switch (used by `workspace switch`).
     Remember {
+        #[arg(value_parser = clap::value_parser!(i32).range(1..=10))]
+        index: i32,
+    },
+    /// Hyprland switch then async state sync (keybind hot path).
+    Switch {
         #[arg(value_parser = clap::value_parser!(i32).range(1..=10))]
         index: i32,
     },
@@ -369,6 +375,7 @@ fn main() {
 }
 
 fn run() -> Result<()> {
+    normalize_desktop_env();
     maybe_reexec_dev_session()?;
     let cli = Cli::parse();
     if cli.version {
@@ -443,6 +450,7 @@ fn run() -> Result<()> {
         Commands::Workspace(command) => match command {
             WorkspaceCommands::Go { index } => cmd_workspace_go(index),
             WorkspaceCommands::Remember { index } => cmd_workspace_remember(index),
+            WorkspaceCommands::Switch { index } => cmd_workspace_switch(index),
             WorkspaceCommands::Dispatch { index } => cmd_workspace_dispatch(index),
             WorkspaceCommands::MoveDispatch { index } => cmd_workspace_move_dispatch(index),
             WorkspaceCommands::Next => cmd_workspace_next(),
@@ -758,9 +766,8 @@ fn cmd_dev_install_hypr(dry_run: bool, workspace: Option<std::path::PathBuf>) ->
             println!("Applied: {}.", actions.join(", "));
         }
         println!(
-            "CLI: use `tsk` on PATH ({}); share helpers in {}",
+            "CLI: use `tsk` on PATH ({})",
             tsk_core::path_tsk_is_usable(&cfg).1,
-            cfg.install_hypr_share_dir.join("bin").display()
         );
         println!("Start the dev daemon manually: scripts/dev.sh daemon");
         TaskService::with_config(cfg)?.reset_navigation_layout()?;
@@ -897,6 +904,15 @@ fn cmd_workspace_remember(index: i32) -> Result<()> {
 
 fn cmd_workspace_dispatch(index: i32) -> Result<()> {
     TaskService::with_defaults()?.workspace_dispatch(index)?;
+    Ok(())
+}
+
+fn cmd_workspace_switch(index: i32) -> Result<()> {
+    let svc = TaskService::with_defaults()?;
+    svc.workspace_dispatch(index)?;
+    std::thread::spawn(move || {
+        let _ = TaskService::with_defaults().and_then(|s| s.remember_workspace_go(index));
+    });
     Ok(())
 }
 

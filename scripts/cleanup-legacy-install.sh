@@ -35,7 +35,7 @@ if [[ -f "$SYSTEM_SHARE/hypr/bindings.conf" ]]; then
   for dir in hypr lib waybar; do
     [[ -e "$DATA/$dir" ]] && run "$DATA/$dir"
   done
-  # Helpers shipped in /usr/share/tsk/bin/
+  # Legacy shell helpers (pre-2026) when system package is installed
   if [[ -d "$DATA/bin" ]]; then
     for helper in "$DATA/bin"/tsk-*; do
       [[ -e "$helper" ]] || continue

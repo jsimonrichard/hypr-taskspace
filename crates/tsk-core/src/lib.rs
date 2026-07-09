@@ -93,6 +93,7 @@ pub use binary::{
     peel_tsk_wrapper, resolve_tsk_binary, resolve_tsk_command, resolve_tsk_spawn_binary,
     waybar_module_path,
 };
+pub use xdg::normalize_desktop_env;
 pub use terminal::{launch_host_terminal, launch_task_terminal, launch_task_tui};
 pub use version::{
     build_version_info, format_version_long, format_version_short, version_info, VersionInfo,

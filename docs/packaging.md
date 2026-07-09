@@ -13,7 +13,6 @@ This installs:
 |------|---------|
 | `/usr/bin/tsk` | CLI |
 | `/usr/share/tsk/hypr/` | Hyprland bindings + window rules |
-| `/usr/share/tsk/bin/` | Shell helpers (`tsk-workspace-switch`, …) |
 | `/usr/share/tsk/waybar/` | Waybar CFFI snippet + styles |
 | `/usr/share/tsk/lib/libtsk_waybar.so` | Waybar module |
 | `/usr/lib/systemd/user/tskd.service` | User daemon unit |
