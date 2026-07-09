@@ -8,6 +8,9 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use crate::config::load_dev_config;
+use crate::config::load_prod_config;
+use crate::daemon::ping_daemon_at;
 use crate::error::{Result, TskError};
 use crate::install::profile::dev_share_dir;
 use crate::xdg::{ensure_parent, expand, tsk_data_dir};
@@ -82,6 +85,36 @@ pub fn stop_dev_session() -> Result<()> {
     Ok(())
 }
 
+/// Drop a leftover `dev-session` marker when prod `tskd` is up but the dev socket is not.
+///
+/// This happens when `scripts/dev.sh enter` is interrupted after the session file is written
+/// (e.g. Ctrl+C during install) but before teardown runs — clients would otherwise keep
+/// re-execing the dev build and pinging `~/.local/share/tsk-dev/daemon.sock` while systemd
+/// serves prod on `~/.local/share/tsk/daemon.sock`.
+pub fn reconcile_stale_dev_session() -> Result<()> {
+    if !dev_session_active() {
+        return Ok(());
+    }
+
+    let dev_cfg = load_dev_config()?;
+    let dev_socket = dev_cfg.daemon_socket_path();
+    if ping_daemon_at(&dev_socket)? {
+        return Ok(());
+    }
+
+    let prod_cfg = load_prod_config()?;
+    let prod_socket = prod_cfg.daemon_socket_path();
+    if !ping_daemon_at(&prod_socket)? {
+        return Ok(());
+    }
+
+    eprintln!(
+        "note: clearing stale dev session — prod daemon is running at {}",
+        prod_socket.display()
+    );
+    stop_dev_session()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -113,6 +146,26 @@ mod tests {
 
         stop_dev_session().unwrap();
         assert!(!dev_session_active());
+    }
+
+    #[test]
+    fn reconcile_keeps_session_without_reachable_daemons() {
+        let _lock = env_lock();
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let share = home.join(".local/share/tsk");
+        fs::create_dir_all(&share).unwrap();
+        let bin = share.join("dev-build");
+        fs::write(&bin, b"").unwrap();
+
+        std::env::set_var("HOME", home);
+        stop_dev_session().ok();
+        start_dev_session(&bin).unwrap();
+
+        reconcile_stale_dev_session().unwrap();
+        assert!(dev_session_active());
+
+        stop_dev_session().ok();
     }
 
     #[test]

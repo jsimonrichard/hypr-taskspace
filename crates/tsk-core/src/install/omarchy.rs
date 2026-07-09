@@ -25,6 +25,8 @@ pub fn install_omarchy_prod(cfg: &TskConfig, options: &OmarchyInstallOptions) ->
             profile: Some(profile),
             omarchy_integration: true,
             skip_waybar: false,
+            skip_reload: false,
+            quiet: false,
             bundled_waybar_source: None,
         },
     )?;
@@ -37,6 +39,8 @@ pub fn install_omarchy_prod(cfg: &TskConfig, options: &OmarchyInstallOptions) ->
             profile: Some(profile),
             omarchy_integration: true,
             skip_bins_install: true,
+            skip_reload: true,
+            quiet: false,
         },
     )?;
     actions.extend(hypr);
@@ -47,6 +51,8 @@ pub fn install_omarchy_prod(cfg: &TskConfig, options: &OmarchyInstallOptions) ->
             dry_run: options.dry_run,
             workspace_root: options.workspace_root.clone(),
             skip_module_build: true,
+            skip_reload: true,
+            quiet: false,
         },
     )?;
     actions.extend(waybar);

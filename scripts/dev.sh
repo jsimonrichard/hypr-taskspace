@@ -11,22 +11,107 @@ PROD_DB="$PROD_DATA/state.db"
 DEV_DB="$DEV_DATA/state.db"
 DEV_BUILD="$ROOT/target/release/tsk"
 SESSION_FILE="$PROD_DATA/dev-session"
+PROD_TSKD_MARKER="$PROD_DATA/.dev-prod-tskd-was-active"
 HYPR_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/hyprland.conf"
 
 PROD_TSKD_WAS_ACTIVE=false
 TEARDOWN_DONE=false
+QUIET=true
+
+section() {
+  echo
+  echo "== $* =="
+}
+
+note() {
+  if ! $QUIET; then
+    echo "$@"
+  fi
+}
 
 stop_prod_tskd() {
   if systemctl --user is-active --quiet tskd.service 2>/dev/null; then
     PROD_TSKD_WAS_ACTIVE=true
+    echo "1" >"$PROD_TSKD_MARKER"
     echo "Stopping prod tskd.service for dev session..."
     systemctl --user stop tskd.service
+  else
+    rm -f "$PROD_TSKD_MARKER"
   fi
 }
 
+stop_socket_listener() {
+  local sock="$1"
+  [[ -e "$sock" ]] || return 0
+  if command -v fuser >/dev/null 2>&1; then
+    fuser -k -TERM "$sock" 2>/dev/null || true
+    sleep 0.2
+    fuser -k -KILL "$sock" 2>/dev/null || true
+  fi
+  rm -f "$sock"
+}
+
+stop_pidfile_process() {
+  local pidfile="$1"
+  [[ -f "$pidfile" ]] || return 0
+  local pid
+  pid="$(tr -d '[:space:]' <"$pidfile")"
+  if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+    kill -TERM "$pid" 2>/dev/null || true
+    sleep 0.2
+    kill -KILL "$pid" 2>/dev/null || true
+  fi
+  rm -f "$pidfile"
+}
+
+stop_dev_daemon() {
+  if [[ -x "$DEV_BUILD" ]]; then
+    env TSK_WORKSPACE="$ROOT" "$DEV_BUILD" daemon stop >/dev/null 2>&1 || true
+  fi
+  stop_pidfile_process "$DEV_DATA/daemon.pid"
+  stop_socket_listener "$DEV_DATA/daemon.sock"
+}
+
+cleanup_prod_daemon_orphans() {
+  if systemctl --user is-active --quiet tskd.service 2>/dev/null; then
+    return 0
+  fi
+  stop_pidfile_process "$PROD_DATA/daemon.pid"
+  stop_socket_listener "$PROD_DATA/daemon.sock"
+}
+
+stop_orphan_tsk_daemons() {
+  local systemd_pid=""
+  if systemctl --user is-active --quiet tskd.service 2>/dev/null; then
+    systemd_pid="$(systemctl --user show -p MainPID --value tskd.service 2>/dev/null || true)"
+  fi
+  local line pid cmd
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    pid="${line%% *}"
+    cmd="${line#* }"
+    [[ -z "$pid" || "$pid" == "$systemd_pid" ]] && continue
+    if [[ "$cmd" == *"tsk daemon run"* || "$cmd" == *"tsk daemon"* ]]; then
+      kill -TERM "$pid" 2>/dev/null || true
+    fi
+  done < <(pgrep -af '[/ ]tsk( |$).*daemon' 2>/dev/null || true)
+  sleep 0.2
+}
+
 start_prod_tskd() {
-  if $PROD_TSKD_WAS_ACTIVE; then
-    echo "Restarting prod tskd.service..."
+  local should_start=false
+  if [[ -f "$PROD_TSKD_MARKER" ]]; then
+    should_start=true
+    rm -f "$PROD_TSKD_MARKER"
+  elif $PROD_TSKD_WAS_ACTIVE; then
+    should_start=true
+  elif systemctl --user is-enabled --quiet tskd.service 2>/dev/null \
+    && ! systemctl --user is-active --quiet tskd.service 2>/dev/null; then
+    # dev leave from another shell never saw stop_prod_tskd — restore prod if unit is installed
+    should_start=true
+  fi
+  if $should_start; then
+    echo "Starting prod tskd.service..."
     systemctl --user start tskd.service 2>/dev/null || true
   fi
 }
@@ -34,14 +119,32 @@ start_prod_tskd() {
 cmd="${1:-enter}"
 shift || true
 
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --verbose|-v)
+      QUIET=false
+      shift
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
 build_dev_binary() {
-  echo "Building dev tsk + tsk-waybar (release)..."
-  if [[ ! -x "$DEV_BUILD" ]] \
-    || [[ -z "$(find "$ROOT/target/release/build" -path '*/libsqlite3-sys-*/out/libsqlite3.a' -print -quit 2>/dev/null)" ]]; then
-    echo "Note: bundled SQLite compiles from C on cold builds — libsqlite3-sys(build) may sit ~1 min with no progress bar."
-    echo "      Let it finish once; interrupting forces a full recompile on the next dev enter."
+  local cargo_q=()
+  if $QUIET; then
+    cargo_q=(-q)
   fi
-  cargo build -p tsk-cli -p tsk-waybar --release --target-dir "$ROOT/target"
+  if ! $QUIET; then
+    echo "Building dev tsk + tsk-waybar (release)..."
+    if [[ ! -x "$DEV_BUILD" ]] \
+      || [[ -z "$(find "$ROOT/target/release/build" -path '*/libsqlite3-sys-*/out/libsqlite3.a' -print -quit 2>/dev/null)" ]]; then
+      echo "Note: bundled SQLite compiles from C on cold builds — libsqlite3-sys(build) may sit ~1 min with no progress bar."
+      echo "      Let it finish once; interrupting forces a full recompile on the next dev enter."
+    fi
+  fi
+  cargo build -p tsk-cli -p tsk-waybar --release --target-dir "$ROOT/target" "${cargo_q[@]}"
   if [[ ! -x "$DEV_BUILD" ]]; then
     echo "Dev build missing: $DEV_BUILD" >&2
     exit 1
@@ -49,10 +152,14 @@ build_dev_binary() {
 }
 
 run_cli() {
+  local args=("$@")
+  if $QUIET; then
+    args+=(--quiet)
+  fi
   if [[ -x "$DEV_BUILD" ]]; then
-    env TSK_WORKSPACE="$ROOT" "$DEV_BUILD" "$@"
+    env TSK_WORKSPACE="$ROOT" "$DEV_BUILD" "${args[@]}"
   else
-    cargo run -p tsk-cli --release -- "$@"
+    cargo run -p tsk-cli --release -- "${args[@]}"
   fi
 }
 
@@ -77,19 +184,40 @@ link_dev_state_db() {
   fi
 
   ln -sfn "$PROD_DB" "$DEV_DB"
-  echo "Linked dev state.db → $PROD_DB"
+  note "Linked dev state.db → $PROD_DB"
 }
 
 start_dev_session() {
   mkdir -p "$PROD_DATA"
   echo "$DEV_BUILD" >"$SESSION_FILE"
   rm -f "$DEV_DATA/.session-active"
-  echo "Dev session active → $DEV_BUILD"
-  echo "Session file: $SESSION_FILE"
+  note "Dev session active → $DEV_BUILD"
+  note "Session file: $SESSION_FILE"
 }
 
 stop_dev_session() {
   rm -f "$SESSION_FILE" "$DEV_DATA/.session-active"
+}
+
+dev_daemon_reachable() {
+  [[ -S "$DEV_DATA/daemon.sock" ]] || return 1
+  if [[ -x "$DEV_BUILD" ]]; then
+    env TSK_WORKSPACE="$ROOT" "$DEV_BUILD" daemon status 2>/dev/null | grep -q '^running'
+    return
+  fi
+  return 1
+}
+
+ensure_dev_not_running() {
+  if dev_daemon_reachable; then
+    echo "Dev session already running ($DEV_DATA/daemon.sock is in use)." >&2
+    echo "  Stop it first: Ctrl+C in the dev enter terminal, or run: scripts/dev.sh leave" >&2
+    exit 1
+  fi
+}
+
+ensure_dev_trap() {
+  trap teardown_dev_session EXIT INT TERM
 }
 
 prepare_dev_session() {
@@ -112,6 +240,8 @@ teardown_dev_session() {
   fi
   TEARDOWN_DONE=true
 
+  stop_dev_daemon
+
   if dev_integration_installed || [[ -f "$SESSION_FILE" ]]; then
     echo "Leaving dev mode — restoring prod integration..."
     uninstall_dev_integration || echo "Warning: dev uninstall had errors (continuing cleanup)" >&2
@@ -119,11 +249,16 @@ teardown_dev_session() {
 
   stop_dev_session
   rm -f "$DEV_DATA/bin/tsk"
+  cleanup_prod_daemon_orphans
+  stop_orphan_tsk_daemons
   start_prod_tskd
 }
 
 maybe_teardown_stale_dev() {
   if [[ -f "$SESSION_FILE" || -f "$DEV_DATA/.session-active" ]]; then
+    if dev_daemon_reachable; then
+      return 0
+    fi
     echo "Stale dev session file found (daemon not running) — cleaning up..."
     teardown_dev_session
     return 0
@@ -134,6 +269,11 @@ maybe_teardown_stale_dev() {
   fi
 }
 
+require_dev_not_running() {
+  maybe_teardown_stale_dev
+  ensure_dev_not_running
+}
+
 start_dev_daemon() {
   if [[ ! -x "$DEV_BUILD" ]]; then
     echo "Dev tsk not found — run: $ROOT/scripts/dev.sh enter" >&2
@@ -141,30 +281,41 @@ start_dev_daemon() {
   fi
 
   stop_prod_tskd
+  ensure_dev_trap
 
-  cleanup_on_exit() {
-    teardown_dev_session
-  }
-  trap cleanup_on_exit EXIT INT TERM
-
-  echo "Starting dev daemon (Ctrl+C to exit and restore prod)..."
+  note "Dev daemon (Ctrl+C or scripts/dev.sh leave restores prod)"
+  export TSK_QUIET=1
   "$DEV_BUILD" daemon run
 }
 
 case "$cmd" in
   enter)
-    maybe_teardown_stale_dev
+    require_dev_not_running
+    section "State"
     link_dev_state_db
+    section "Build"
     prepare_dev_session
+    ensure_dev_trap
+    section "Integration"
     stop_prod_tskd
     run_cli dev install all "$@"
-    echo
-    echo "Dev share: ${XDG_DATA_HOME:-$HOME/.local/share}/tsk-dev"
-    echo "Config:   ${XDG_CONFIG_HOME:-$HOME/.config}/tsk-dev/config.toml"
-    echo "State:    $DEV_DB → $PROD_DB"
-    echo "Session:  $SESSION_FILE (prod tsk + Hyprland helpers read this — no env vars)"
-    echo "Session:  active (Ctrl+C or scripts/dev.sh leave restores prod)"
-    echo
+    if $QUIET; then
+      echo
+      echo "Dev paths:"
+      echo "  share:  ${XDG_DATA_HOME:-$HOME/.local/share}/tsk-dev"
+      echo "  config: ${XDG_CONFIG_HOME:-$HOME/.config}/tsk-dev/config.toml"
+      echo "  state:  $DEV_DB → $PROD_DB"
+      echo "  leave:  scripts/dev.sh leave"
+    else
+      echo
+      echo "Dev share: ${XDG_DATA_HOME:-$HOME/.local/share}/tsk-dev"
+      echo "Config:   ${XDG_CONFIG_HOME:-$HOME/.config}/tsk-dev/config.toml"
+      echo "State:    $DEV_DB → $PROD_DB"
+      echo "Session:  $SESSION_FILE (prod tsk + Hyprland helpers read this — no env vars)"
+      echo "Session:  active (Ctrl+C or scripts/dev.sh leave restores prod)"
+      echo
+    fi
+    section "Daemon"
     start_dev_daemon
     ;;
   leave|exit)
@@ -179,7 +330,7 @@ case "$cmd" in
     run_cli dev install "$@"
     ;;
   daemon)
-    maybe_teardown_stale_dev
+    require_dev_not_running
     link_dev_state_db
     prepare_dev_session
     start_dev_daemon
@@ -204,6 +355,7 @@ case "$cmd" in
   *)
     echo "Usage: scripts/dev.sh {enter|leave|install|daemon|uninstall|status}" >&2
     echo "  enter                 — build, write dev-session, install all, start daemon" >&2
+    echo "  enter --verbose       — same, with full cargo/tsk install output" >&2
     echo "  leave                 — uninstall dev integration and restore prod" >&2
     echo "  install               — build + dev-session + dev install subcommand" >&2
     echo "  daemon                — build, dev-session, start dev daemon" >&2

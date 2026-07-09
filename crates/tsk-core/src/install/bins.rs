@@ -24,6 +24,10 @@ pub struct InstallBinsOptions {
     /// Prepend Omarchy unbind sources to installed bindings (prod Omarchy preset).
     pub omarchy_integration: bool,
     pub skip_waybar: bool,
+    /// Skip Hyprland/Waybar reload (caller will apply once at the end).
+    pub skip_reload: bool,
+    /// Suppress progress messages (scripts/dev.sh --quiet).
+    pub quiet: bool,
     /// Path to a pre-built Waybar cdylib (from `cargo` artifact deps / `cargo install` build).
     pub bundled_waybar_source: Option<PathBuf>,
 }
@@ -36,6 +40,8 @@ impl Default for InstallBinsOptions {
             profile: None,
             omarchy_integration: false,
             skip_waybar: false,
+            skip_reload: false,
+            quiet: false,
             bundled_waybar_source: None,
         }
     }
@@ -123,9 +129,11 @@ pub fn install_bins(cfg: &TskConfig, options: &InstallBinsOptions) -> Result<Vec
         format!("using tsk at {path_detail}"),
         format!("runtime data in {}", cfg.data_dir.display()),
     ];
-    actions.extend(reload::apply_after_hypr()?);
-    if !options.skip_waybar {
-        actions.extend(reload::apply_after_waybar());
+    if !options.skip_reload {
+        actions.extend(reload::apply_after_hypr()?);
+        if !options.skip_waybar {
+            actions.extend(reload::apply_after_waybar());
+        }
     }
     Ok(actions)
 }
@@ -171,11 +179,13 @@ pub fn install_waybar_module(cfg: &TskConfig, options: &InstallBinsOptions) -> R
         path: dest.clone(),
         source: source_err,
     })?;
-    eprintln!(
-        "installed Waybar module: {} (from {})",
-        dest.display(),
-        source.display()
-    );
+    if !options.quiet {
+        eprintln!(
+            "installed Waybar module: {} (from {})",
+            dest.display(),
+            source.display()
+        );
+    }
     Ok(dest)
 }
 
@@ -468,11 +478,13 @@ pub fn find_workspace_root() -> Option<PathBuf> {
 pub fn build_and_install_waybar_module(
     cfg: &TskConfig,
     workspace_root: Option<&Path>,
+    quiet: bool,
 ) -> Result<PathBuf> {
     install_waybar_module(
         cfg,
         &InstallBinsOptions {
             workspace_root: workspace_root.map(Path::to_path_buf),
+            quiet,
             ..Default::default()
         },
     )

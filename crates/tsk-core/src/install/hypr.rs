@@ -25,6 +25,10 @@ pub struct InstallHyprOptions {
     pub omarchy_integration: bool,
     /// Skip binary install (caller already ran `install_bins`).
     pub skip_bins_install: bool,
+    /// Skip Hyprland reload (caller will apply once at the end).
+    pub skip_reload: bool,
+    /// Suppress progress messages (scripts/dev.sh --quiet).
+    pub quiet: bool,
 }
 
 impl Default for InstallHyprOptions {
@@ -35,6 +39,8 @@ impl Default for InstallHyprOptions {
             profile: None,
             omarchy_integration: false,
             skip_bins_install: false,
+            skip_reload: false,
+            quiet: false,
         }
     }
 }
@@ -84,6 +90,8 @@ pub fn install_hypr(cfg: &TskConfig, options: &InstallHyprOptions) -> Result<Vec
                     profile: Some(profile),
                     omarchy_integration: options.omarchy_integration,
                     skip_waybar: true,
+                    skip_reload: options.skip_reload,
+                    quiet: options.quiet,
                     bundled_waybar_source: None,
                 },
             )?);
@@ -104,6 +112,8 @@ pub fn install_hypr(cfg: &TskConfig, options: &InstallHyprOptions) -> Result<Vec
                 profile: Some(profile),
                 omarchy_integration: options.omarchy_integration,
                 skip_waybar: true,
+                skip_reload: options.skip_reload,
+                quiet: options.quiet,
                 bundled_waybar_source: None,
             },
         )?;
@@ -173,6 +183,9 @@ pub fn install_hypr(cfg: &TskConfig, options: &InstallHyprOptions) -> Result<Vec
         );
     }
 
+    if options.skip_reload {
+        return Ok(Vec::new());
+    }
     reload::apply_after_hypr()
 }
 

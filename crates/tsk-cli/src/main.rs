@@ -7,6 +7,7 @@ use tsk_core::{
     install_hypr_status, install_omarchy_prod, install_systemd_status, install_waybar,
     install_waybar_status, is_dev_config, is_daemon_running, is_systemd_unit_installed, launch_task_tui,
     load_config, load_dev_config, maybe_reexec_dev_session, normalize_desktop_env, ping_daemon,
+    reconcile_stale_dev_session,
     profile_for_config,
     run_doctor_checks, stop_daemon,
     systemd_restart, systemd_start, systemd_stop, systemctl_is_active, tail_hypr_log, tail_raw,
@@ -147,18 +148,24 @@ enum DevInstallCommands {
     All {
         #[arg(long)]
         dry_run: bool,
+        #[arg(long, help = "Minimal output (for scripts/dev.sh)")]
+        quiet: bool,
         #[arg(long)]
         workspace: Option<std::path::PathBuf>,
     },
     Hypr {
         #[arg(long)]
         dry_run: bool,
+        #[arg(long, help = "Minimal output (for scripts/dev.sh)")]
+        quiet: bool,
         #[arg(long)]
         workspace: Option<std::path::PathBuf>,
     },
     Waybar {
         #[arg(long)]
         dry_run: bool,
+        #[arg(long, help = "Minimal output (for scripts/dev.sh)")]
+        quiet: bool,
         #[arg(long)]
         workspace: Option<std::path::PathBuf>,
     },
@@ -379,6 +386,7 @@ fn main() {
 
 fn run() -> Result<()> {
     normalize_desktop_env();
+    reconcile_stale_dev_session()?;
     maybe_reexec_dev_session()?;
     let cli = Cli::parse();
     if cli.version {
@@ -423,15 +431,21 @@ fn run() -> Result<()> {
                         InstallProfile::Dev
                     },
                 ),
-                Some(DevInstallCommands::All { dry_run, workspace }) => {
-                    cmd_dev_install_all(dry_run, workspace)
-                }
-                Some(DevInstallCommands::Hypr { dry_run, workspace }) => {
-                    cmd_dev_install_hypr(dry_run, workspace)
-                }
-                Some(DevInstallCommands::Waybar { dry_run, workspace }) => {
-                    cmd_dev_install_waybar(dry_run, workspace)
-                }
+                Some(DevInstallCommands::All {
+                    dry_run,
+                    quiet,
+                    workspace,
+                }) => cmd_dev_install_all(dry_run, quiet, workspace),
+                Some(DevInstallCommands::Hypr {
+                    dry_run,
+                    quiet,
+                    workspace,
+                }) => cmd_dev_install_hypr(dry_run, quiet, workspace),
+                Some(DevInstallCommands::Waybar {
+                    dry_run,
+                    quiet,
+                    workspace,
+                }) => cmd_dev_install_waybar(dry_run, quiet, workspace),
                 None => Err(TskError::Other(
                     "dev install requires a subcommand (share, all, hypr, waybar)".into(),
                 )),
@@ -701,6 +715,8 @@ fn cmd_install_bins(
             profile: Some(profile),
             omarchy_integration: false,
             skip_waybar: false,
+            skip_reload: false,
+            quiet: false,
             bundled_waybar_source: bundled_waybar_cdylib(),
         },
     )?;
@@ -742,15 +758,44 @@ fn cmd_install_omarchy(dry_run: bool, workspace: Option<std::path::PathBuf>) -> 
     Ok(())
 }
 
-fn cmd_dev_install_all(dry_run: bool, workspace: Option<std::path::PathBuf>) -> Result<()> {
-    cmd_dev_install_hypr(dry_run, workspace.clone())?;
-    if !dry_run {
-        println!();
+fn cmd_dev_install_all(
+    dry_run: bool,
+    quiet: bool,
+    workspace: Option<std::path::PathBuf>,
+) -> Result<()> {
+    cmd_dev_install_hypr_inner(dry_run, quiet, workspace.clone(), true)?;
+    cmd_dev_install_waybar_inner(dry_run, quiet, workspace, true)?;
+    if dry_run {
+        return Ok(());
     }
-    cmd_dev_install_waybar(dry_run, workspace)
+    let actions = tsk_core::install::reload::apply_after_install(true, true)?;
+    if quiet {
+        if !actions.is_empty() {
+            println!("  {}", actions.join(", "));
+        }
+    } else {
+        println!("Installed dev integration.");
+        if !actions.is_empty() {
+            println!("Applied: {}.", actions.join(", "));
+        }
+    }
+    Ok(())
 }
 
-fn cmd_dev_install_hypr(dry_run: bool, workspace: Option<std::path::PathBuf>) -> Result<()> {
+fn cmd_dev_install_hypr(
+    dry_run: bool,
+    quiet: bool,
+    workspace: Option<std::path::PathBuf>,
+) -> Result<()> {
+    cmd_dev_install_hypr_inner(dry_run, quiet, workspace, false)
+}
+
+fn cmd_dev_install_hypr_inner(
+    dry_run: bool,
+    quiet: bool,
+    workspace: Option<std::path::PathBuf>,
+    skip_reload: bool,
+) -> Result<()> {
     let cfg = load_dev_config()?;
     let options = InstallHyprOptions {
         dry_run,
@@ -758,45 +803,70 @@ fn cmd_dev_install_hypr(dry_run: bool, workspace: Option<std::path::PathBuf>) ->
         profile: Some(InstallProfile::Dev),
         omarchy_integration: true,
         skip_bins_install: false,
+        skip_reload,
+        quiet,
     };
     let actions = install_hypr(&cfg, &options)?;
     if dry_run {
         for line in actions {
             println!("{line}");
         }
-    } else {
-        println!("Installed dev Hyprland integration.");
-        if !actions.is_empty() {
-            println!("Applied: {}.", actions.join(", "));
-        }
-        println!(
-            "CLI: use `tsk` on PATH ({})",
-            tsk_core::path_tsk_is_usable(&cfg).1,
-        );
-        println!("Start the dev daemon manually: scripts/dev.sh daemon");
-        TaskService::with_config(cfg)?.reset_navigation_layout()?;
-        println!("Reset workspace layout memory (per-monitor mappings cleared).");
+        return Ok(());
     }
+    TaskService::with_config(cfg.clone())?.reset_navigation_layout()?;
+    if quiet {
+        println!("  Hyprland integration installed");
+        return Ok(());
+    }
+    println!("Installed dev Hyprland integration.");
+    if !actions.is_empty() {
+        println!("Applied: {}.", actions.join(", "));
+    }
+    println!(
+        "CLI: use `tsk` on PATH ({})",
+        tsk_core::path_tsk_is_usable(&cfg).1,
+    );
+    println!("Start the dev daemon manually: scripts/dev.sh daemon");
+    println!("Reset workspace layout memory (per-monitor mappings cleared).");
     Ok(())
 }
 
-fn cmd_dev_install_waybar(dry_run: bool, workspace: Option<std::path::PathBuf>) -> Result<()> {
+fn cmd_dev_install_waybar(
+    dry_run: bool,
+    quiet: bool,
+    workspace: Option<std::path::PathBuf>,
+) -> Result<()> {
+    cmd_dev_install_waybar_inner(dry_run, quiet, workspace, false)
+}
+
+fn cmd_dev_install_waybar_inner(
+    dry_run: bool,
+    quiet: bool,
+    workspace: Option<std::path::PathBuf>,
+    skip_reload: bool,
+) -> Result<()> {
     let cfg = load_dev_config()?;
     let options = InstallWaybarOptions {
         dry_run,
         workspace_root: workspace,
         skip_module_build: false,
+        skip_reload,
+        quiet,
     };
     let actions = install_waybar(&cfg, &options)?;
     if dry_run {
         for line in actions {
             println!("{line}");
         }
-    } else {
-        println!("Installed dev Waybar integration.");
-        if !actions.is_empty() {
-            println!("Applied: {}.", actions.join(", "));
-        }
+        return Ok(());
+    }
+    if quiet {
+        println!("  Waybar integration installed");
+        return Ok(());
+    }
+    println!("Installed dev Waybar integration.");
+    if !actions.is_empty() {
+        println!("Applied: {}.", actions.join(", "));
     }
     Ok(())
 }
@@ -1436,7 +1506,9 @@ fn spawn_daemon_and_wait() -> Result<()> {
 }
 
 fn cmd_daemon_run() -> Result<()> {
-    eprintln!("Starting tsk daemon (foreground)...");
+    if std::env::var_os("TSK_QUIET").is_none() {
+        eprintln!("Starting tsk daemon (foreground)...");
+    }
     DaemonServer::new()?.run_foreground()
 }
 

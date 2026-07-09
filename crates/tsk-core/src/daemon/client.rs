@@ -2,7 +2,7 @@
 
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde::Deserialize;
@@ -68,14 +68,19 @@ pub fn ensure_daemon() -> Result<()> {
     }
 }
 
-pub fn ping_daemon() -> Result<bool> {
-    if !daemon_socket_path().is_ok_and(|p| p.exists()) {
+pub fn ping_daemon_at(path: &Path) -> Result<bool> {
+    if !path.exists() {
         return Ok(false);
     }
-    match daemon_request_with_timeout("ping", json!({}), PING_TIMEOUT) {
+    match daemon_request_at_with_timeout(path, "ping", json!({}), PING_TIMEOUT) {
         Ok(v) => Ok(v.get("pong").and_then(|p| p.as_bool()).unwrap_or(false)),
         Err(_) => Ok(false),
     }
+}
+
+pub fn ping_daemon() -> Result<bool> {
+    let path = daemon_socket_path()?;
+    ping_daemon_at(&path)
 }
 
 pub fn daemon_request(method: &str, params: Value) -> Result<Value> {
@@ -84,11 +89,20 @@ pub fn daemon_request(method: &str, params: Value) -> Result<Value> {
 
 fn daemon_request_with_timeout(method: &str, params: Value, timeout: Duration) -> Result<Value> {
     let path = daemon_socket_path()?;
+    daemon_request_at_with_timeout(&path, method, params, timeout)
+}
+
+fn daemon_request_at_with_timeout(
+    path: &Path,
+    method: &str,
+    params: Value,
+    timeout: Duration,
+) -> Result<Value> {
     if !path.exists() {
         return Err(TskError::Other("tsk daemon is not running".into()));
     }
 
-    let mut stream = UnixStream::connect(&path).map_err(|e| {
+    let mut stream = UnixStream::connect(path).map_err(|e| {
         TskError::Other(format!(
             "failed to connect to tsk daemon at {}: {e}",
             path.display()

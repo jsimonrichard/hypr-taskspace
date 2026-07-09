@@ -26,6 +26,10 @@ pub struct InstallWaybarOptions {
     pub workspace_root: Option<PathBuf>,
     /// Skip `cargo build` for the CFFI module (caller already installed it).
     pub skip_module_build: bool,
+    /// Skip Hyprland/Waybar reload (caller will apply once at the end).
+    pub skip_reload: bool,
+    /// Suppress progress messages (scripts/dev.sh --quiet).
+    pub quiet: bool,
 }
 
 impl Default for InstallWaybarOptions {
@@ -34,6 +38,8 @@ impl Default for InstallWaybarOptions {
             dry_run: false,
             workspace_root: None,
             skip_module_build: false,
+            skip_reload: false,
+            quiet: false,
         }
     }
 }
@@ -116,11 +122,11 @@ pub fn install_waybar(cfg: &TskConfig, options: &InstallWaybarOptions) -> Result
 
     copy_share_templates(cfg)?;
     if !options.skip_module_build && !uses_packaged_share(cfg) {
-        let built = crate::install::bins::build_and_install_waybar_module(
+        crate::install::bins::build_and_install_waybar_module(
             cfg,
             options.workspace_root.as_deref(),
+            options.quiet,
         )?;
-        eprintln!("installed Waybar module: {}", built.display());
     } else if uses_packaged_share(cfg) {
         crate::install::bins::verify_system_share_for_waybar(cfg)?;
     }
@@ -167,6 +173,9 @@ pub fn install_waybar(cfg: &TskConfig, options: &InstallWaybarOptions) -> Result
     })];
     manifest::save_manifest(&install_metadata_dir(cfg, profile_for_config(cfg)), &m)?;
 
+    if options.skip_reload {
+        return Ok(Vec::new());
+    }
     Ok(reload::apply_after_waybar())
 }
 

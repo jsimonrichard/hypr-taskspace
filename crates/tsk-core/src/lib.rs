@@ -37,13 +37,12 @@ pub mod xdg;
 
 pub use config::{ensure_config, load_config, load_config_at, load_dev_config, load_prod_config, TskConfig};
 pub use dev_session::{
-    dev_session_active, dev_session_binary, dev_session_marker_path, start_dev_session,
-    stop_dev_session,
+    dev_session_active, dev_session_binary, dev_session_marker_path, reconcile_stale_dev_session,
+    start_dev_session, stop_dev_session,
 };
 pub use daemon::{
     daemon_pid_path, daemon_request, daemon_socket_path, ensure_daemon, is_daemon_running,
-    ping_daemon,
-    stop_daemon, DaemonClient, DaemonServer,
+    ping_daemon, ping_daemon_at, stop_daemon, DaemonClient, DaemonServer,
 };
 pub use error::{TskError, Result};
 pub use install::{
