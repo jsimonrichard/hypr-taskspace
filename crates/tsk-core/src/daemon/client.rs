@@ -197,10 +197,14 @@ impl DaemonClient {
         }
     }
 
-    pub fn workspace_next(&self) -> Result<Option<String>> {
+    pub fn workspace_next(&self, wrap: bool) -> Result<Option<String>> {
         let relative = {
             let state = self.direct.load_state()?;
-            workspace_nav::workspace_next_relative(&state)
+            if wrap {
+                workspace_nav::workspace_next_relative(&state)
+            } else {
+                workspace_nav::workspace_next_relative_bounded(&state)
+            }
         };
         let Some(relative) = relative else {
             return Ok(None);
@@ -208,10 +212,14 @@ impl DaemonClient {
         self.hyprctl_then_remember(relative)
     }
 
-    pub fn workspace_prev(&self) -> Result<Option<String>> {
+    pub fn workspace_prev(&self, wrap: bool) -> Result<Option<String>> {
         let relative = {
             let state = self.direct.load_state()?;
-            workspace_nav::workspace_prev_relative(&state)
+            if wrap {
+                workspace_nav::workspace_prev_relative(&state)
+            } else {
+                workspace_nav::workspace_prev_relative_bounded(&state)
+            }
         };
         let Some(relative) = relative else {
             return Ok(None);

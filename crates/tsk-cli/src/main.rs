@@ -218,8 +218,16 @@ enum WorkspaceCommands {
         #[arg(value_parser = clap::value_parser!(i32).range(1..=10))]
         index: i32,
     },
-    Next,
-    Prev,
+    Next {
+        /// Stop at the last workspace instead of wrapping to the first.
+        #[arg(long)]
+        no_wrap: bool,
+    },
+    Prev {
+        /// Stop at the first workspace instead of wrapping to the last.
+        #[arg(long)]
+        no_wrap: bool,
+    },
     Goto {
         name: String,
     },
@@ -470,8 +478,8 @@ fn run() -> Result<()> {
             WorkspaceCommands::Switch { index } => cmd_workspace_switch(index),
             WorkspaceCommands::Dispatch { index } => cmd_workspace_dispatch(index),
             WorkspaceCommands::MoveDispatch { index } => cmd_workspace_move_dispatch(index),
-            WorkspaceCommands::Next => cmd_workspace_next(),
-            WorkspaceCommands::Prev => cmd_workspace_prev(),
+            WorkspaceCommands::Next { no_wrap } => cmd_workspace_next(no_wrap),
+            WorkspaceCommands::Prev { no_wrap } => cmd_workspace_prev(no_wrap),
             WorkspaceCommands::Goto { name } => cmd_workspace_goto(&name),
         },
         Commands::Task { command } => match command {
@@ -995,15 +1003,15 @@ fn cmd_workspace_move_dispatch(index: i32) -> Result<()> {
     Ok(())
 }
 
-fn cmd_workspace_next() -> Result<()> {
-    if let Some(name) = client()?.workspace_next()? {
+fn cmd_workspace_next(no_wrap: bool) -> Result<()> {
+    if let Some(name) = client()?.workspace_next(!no_wrap)? {
         println!("{name}");
     }
     Ok(())
 }
 
-fn cmd_workspace_prev() -> Result<()> {
-    if let Some(name) = client()?.workspace_prev()? {
+fn cmd_workspace_prev(no_wrap: bool) -> Result<()> {
+    if let Some(name) = client()?.workspace_prev(!no_wrap)? {
         println!("{name}");
     }
     Ok(())

@@ -119,25 +119,57 @@ pub fn clear_runtime_slot_cache() {
 }
 
 pub fn workspace_next_relative(state: &SessionState) -> Option<i32> {
+    workspace_next_relative_from(state, active_relative(state), true)
+}
+
+pub fn workspace_prev_relative(state: &SessionState) -> Option<i32> {
+    workspace_prev_relative_from(state, active_relative(state), true)
+}
+
+/// Next workspace slot without wrapping from the last slot back to 1.
+pub fn workspace_next_relative_bounded(state: &SessionState) -> Option<i32> {
+    workspace_next_relative_from(state, active_relative(state), false)
+}
+
+/// Previous workspace slot without wrapping from the first slot back to the last.
+pub fn workspace_prev_relative_bounded(state: &SessionState) -> Option<i32> {
+    workspace_prev_relative_from(state, active_relative(state), false)
+}
+
+fn workspace_next_relative_from(
+    state: &SessionState,
+    current: Option<i32>,
+    wrap: bool,
+) -> Option<i32> {
     let names = allowed_workspace_names(state);
     if names.is_empty() {
         return None;
     }
-    match active_relative(state) {
-        Some(current) => Some((current % names.len() as i32) + 1),
+    let last = names.len() as i32;
+    match current {
+        Some(c) if wrap => Some((c % last) + 1),
+        Some(c) if c < last => Some(c + 1),
+        Some(_) => None,
         None => Some(1),
     }
 }
 
-pub fn workspace_prev_relative(state: &SessionState) -> Option<i32> {
+fn workspace_prev_relative_from(
+    state: &SessionState,
+    current: Option<i32>,
+    wrap: bool,
+) -> Option<i32> {
     let names = allowed_workspace_names(state);
     if names.is_empty() {
         return None;
     }
-    match active_relative(state) {
-        Some(current) if current > 1 => Some(current - 1),
-        Some(_) => Some(names.len() as i32),
-        None => Some(names.len() as i32),
+    let last = names.len() as i32;
+    match current {
+        Some(c) if c > 1 => Some(c - 1),
+        Some(_) if wrap => Some(last),
+        Some(_) => None,
+        None if wrap => Some(last),
+        None => None,
     }
 }
 
@@ -639,6 +671,28 @@ mod tests {
     use super::*;
     use crate::models::SessionState;
     use std::collections::HashMap;
+
+    #[test]
+    fn workspace_next_relative_bounded_stops_at_last_slot() {
+        let state = SessionState {
+            default_workspace_count: 3,
+            ..Default::default()
+        };
+        assert_eq!(workspace_next_relative_from(&state, Some(2), true), Some(3));
+        assert_eq!(workspace_next_relative_from(&state, Some(3), true), Some(1));
+        assert_eq!(workspace_next_relative_from(&state, Some(3), false), None);
+    }
+
+    #[test]
+    fn workspace_prev_relative_bounded_stops_at_first_slot() {
+        let state = SessionState {
+            default_workspace_count: 3,
+            ..Default::default()
+        };
+        assert_eq!(workspace_prev_relative_from(&state, Some(2), true), Some(1));
+        assert_eq!(workspace_prev_relative_from(&state, Some(1), true), Some(3));
+        assert_eq!(workspace_prev_relative_from(&state, Some(1), false), None);
+    }
 
     #[test]
     fn preferred_on_start_monitor_skips_global_workspace_monitor() {
