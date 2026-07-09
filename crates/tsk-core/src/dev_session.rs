@@ -105,14 +105,28 @@ pub fn reconcile_stale_dev_session() -> Result<()> {
     let prod_cfg = load_prod_config()?;
     let prod_socket = prod_cfg.daemon_socket_path();
     if !ping_daemon_at(&prod_socket)? {
-        return Ok(());
+        remove_stale_daemon_runtime(&prod_socket);
     }
 
-    eprintln!(
-        "note: clearing stale dev session — prod daemon is running at {}",
-        prod_socket.display()
-    );
-    stop_dev_session()
+    if ping_daemon_at(&prod_socket)? {
+        eprintln!(
+            "note: clearing stale dev session — prod daemon is running at {}",
+            prod_socket.display()
+        );
+        stop_dev_session()
+    } else {
+        Ok(())
+    }
+}
+
+fn remove_stale_daemon_runtime(socket: &Path) {
+    if socket.exists() {
+        let _ = fs::remove_file(socket);
+    }
+    let pid = socket.with_file_name("daemon.pid");
+    if pid.is_file() {
+        let _ = fs::remove_file(pid);
+    }
 }
 
 #[cfg(test)]

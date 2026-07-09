@@ -3,7 +3,7 @@
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::thread;
 
-use tsk_core::is_daemon_running;
+use tsk_core::{is_daemon_running, reconcile_stale_dev_session};
 
 pub struct AsyncDaemonChecker {
     result_tx: Sender<bool>,
@@ -28,6 +28,7 @@ impl AsyncDaemonChecker {
         self.in_flight = true;
         let tx = self.result_tx.clone();
         thread::spawn(move || {
+            let _ = reconcile_stale_dev_session();
             let _ = tx.send(is_daemon_running());
         });
     }

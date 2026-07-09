@@ -110,6 +110,8 @@ start_prod_tskd() {
     # dev leave from another shell never saw stop_prod_tskd — restore prod if unit is installed
     should_start=true
   fi
+  # Drop orphaned prod socket/pid left when tskd was stopped abruptly (e.g. interrupted teardown).
+  cleanup_prod_daemon_orphans
   if $should_start; then
     echo "Starting prod tskd.service..."
     systemctl --user start tskd.service 2>/dev/null || true
@@ -222,7 +224,6 @@ ensure_dev_trap() {
 
 prepare_dev_session() {
   build_dev_binary
-  start_dev_session
 }
 
 uninstall_dev_integration() {
@@ -239,6 +240,8 @@ teardown_dev_session() {
     return 0
   fi
   TEARDOWN_DONE=true
+  # Ignore further Ctrl+C while cleanup runs (a second interrupt used to abort mid-teardown).
+  trap '' INT TERM
 
   stop_dev_daemon
 
@@ -247,11 +250,13 @@ teardown_dev_session() {
     uninstall_dev_integration || echo "Warning: dev uninstall had errors (continuing cleanup)" >&2
   fi
 
+  # Drop the session marker before restarting prod so systemd does not re-exec the dev build.
   stop_dev_session
   rm -f "$DEV_DATA/bin/tsk"
   cleanup_prod_daemon_orphans
   stop_orphan_tsk_daemons
   start_prod_tskd
+  trap - INT TERM
 }
 
 maybe_teardown_stale_dev() {
@@ -282,6 +287,7 @@ start_dev_daemon() {
 
   stop_prod_tskd
   ensure_dev_trap
+  start_dev_session
 
   note "Dev daemon (Ctrl+C or scripts/dev.sh leave restores prod)"
   export TSK_QUIET=1
@@ -291,11 +297,11 @@ start_dev_daemon() {
 case "$cmd" in
   enter)
     require_dev_not_running
+    ensure_dev_trap
     section "State"
     link_dev_state_db
     section "Build"
     prepare_dev_session
-    ensure_dev_trap
     section "Integration"
     stop_prod_tskd
     run_cli dev install all "$@"
@@ -331,6 +337,7 @@ case "$cmd" in
     ;;
   daemon)
     require_dev_not_running
+    ensure_dev_trap
     link_dev_state_db
     prepare_dev_session
     start_dev_daemon

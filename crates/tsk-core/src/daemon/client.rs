@@ -14,7 +14,8 @@ use crate::hyprland;
 use crate::models::{SessionState, Task, TaskStatus};
 use crate::service::{MenuTask, TaskService};
 use crate::workspace_nav;
-use crate::config::load_config;
+use crate::config::{load_config, load_dev_config, load_prod_config};
+use crate::dev_session::dev_session_active;
 use crate::xdg::resolve_daemon_socket_path;
 
 const RPC_TIMEOUT: Duration = Duration::from_secs(5);
@@ -36,9 +37,33 @@ pub fn daemon_socket_path() -> Result<PathBuf> {
     Ok(resolve_daemon_socket_path(&cfg.daemon_socket))
 }
 
+/// `daemon.pid` beside the configured socket path.
+pub fn daemon_pid_path_for_socket(socket: &Path) -> PathBuf {
+    socket.with_file_name("daemon.pid")
+}
+
 pub fn daemon_pid_path() -> Result<PathBuf> {
     let socket = daemon_socket_path()?;
-    Ok(socket.with_file_name("daemon.pid"))
+    Ok(daemon_pid_path_for_socket(&socket))
+}
+
+/// Prefer the dev socket when a dev session is active and reachable; otherwise prod.
+fn resolve_reachable_daemon_socket() -> Result<PathBuf> {
+    if dev_session_active() {
+        if let Ok(dev_cfg) = load_dev_config() {
+            let dev_socket = dev_cfg.daemon_socket_path();
+            if ping_daemon_at(&dev_socket)? {
+                return Ok(dev_socket);
+            }
+        }
+        if let Ok(prod_cfg) = load_prod_config() {
+            let prod_socket = prod_cfg.daemon_socket_path();
+            if ping_daemon_at(&prod_socket)? {
+                return Ok(prod_socket);
+            }
+        }
+    }
+    daemon_socket_path()
 }
 
 pub fn is_daemon_running() -> bool {
@@ -46,7 +71,11 @@ pub fn is_daemon_running() -> bool {
     const RETRY_DELAY: Duration = Duration::from_millis(50);
 
     for attempt in 0..MAX_ATTEMPTS {
-        if ping_daemon().unwrap_or(false) {
+        if resolve_reachable_daemon_socket()
+            .ok()
+            .and_then(|path| ping_daemon_at(&path).ok())
+            .unwrap_or(false)
+        {
             return true;
         }
         if attempt + 1 < MAX_ATTEMPTS {
@@ -58,7 +87,7 @@ pub fn is_daemon_running() -> bool {
 
 /// Error returned when a state mutation is attempted without the daemon.
 pub fn ensure_daemon() -> Result<()> {
-    if !daemon_socket_path().is_ok_and(|p| p.exists()) {
+    if !resolve_reachable_daemon_socket().is_ok_and(|p| p.exists()) {
         return Err(TskError::Other(DAEMON_REQUIRED_MSG.into()));
     }
     if is_daemon_running() {
@@ -88,7 +117,7 @@ pub fn daemon_request(method: &str, params: Value) -> Result<Value> {
 }
 
 fn daemon_request_with_timeout(method: &str, params: Value, timeout: Duration) -> Result<Value> {
-    let path = daemon_socket_path()?;
+    let path = resolve_reachable_daemon_socket()?;
     daemon_request_at_with_timeout(&path, method, params, timeout)
 }
 
