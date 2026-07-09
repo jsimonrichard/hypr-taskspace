@@ -115,6 +115,17 @@ pub fn task_for_workspace_name<'a>(state: &'a SessionState, name: &str) -> Optio
     })
 }
 
+/// Whether a Hyprland workspace name is owned by TSK (default slots or an active task).
+pub fn is_managed_workspace_name(state: &SessionState, name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    if is_default_taskspace_workspace_name(name, state.default_workspace_count) {
+        return true;
+    }
+    task_for_workspace_name(state, name).is_some()
+}
+
 pub fn allowed_workspace_names(state: &SessionState) -> Vec<String> {
     match state.context_mode {
         ContextMode::Task => state

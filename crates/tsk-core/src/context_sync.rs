@@ -66,6 +66,18 @@ pub fn sync_from_workspace_name(state: &mut SessionState, name: &str) -> bool {
     changed
 }
 
+/// Whether focusing `name` would change context mode or active task.
+pub fn taskspace_would_change(state: &SessionState, name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    let mode_before = state.context_mode;
+    let task_before = state.current_task_id.clone();
+    let mut probe = state.clone();
+    sync_from_workspace_name(&mut probe, name);
+    probe.context_mode != mode_before || probe.current_task_id != task_before
+}
+
 pub fn sync_from_active_workspace(state: &mut SessionState) -> bool {
     if !crate::hyprland::available() {
         return false;
@@ -152,5 +164,19 @@ mod tests {
         assert_eq!(state.context_mode, ContextMode::Task);
         assert_eq!(state.current_task_id.as_deref(), Some("auth-fix"));
         assert_eq!(state.last_workspace.get("task:auth-fix"), Some(&2));
+    }
+
+    #[test]
+    fn taskspace_would_change_detects_cross_task_navigation() {
+        let state = task_state();
+        assert!(taskspace_would_change(&state, "3"));
+        assert!(!taskspace_would_change(&state, "auth-fix-8"));
+    }
+
+    #[test]
+    fn taskspace_would_change_global_slot_stays_in_task() {
+        let mut state = task_state();
+        state.global_workspace_slots = vec![1];
+        assert!(!taskspace_would_change(&state, "1"));
     }
 }

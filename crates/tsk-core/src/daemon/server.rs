@@ -19,7 +19,7 @@ use serde_json::{json, Value};
 
 use crate::daemon::client::{daemon_pid_path, daemon_socket_path};
 use crate::error::{TskError, Result};
-use crate::hyprland_events::HyprlandEventListener;
+use crate::hyprland_events::{parse_workspace_v2, HyprlandEventListener};
 use crate::service::TaskService;
 use crate::xdg::ensure_parent;
 
@@ -92,7 +92,7 @@ impl DaemonServer {
             }
         });
 
-        let _window_listener = start_window_registry_listener(self.service.clone());
+        let _hyprland_listener = start_hyprland_listener(self.service.clone());
         if let Ok(svc) = self.service.lock() {
             if let Err(err) = svc.sync_window_registry() {
                 eprintln!("tsk daemon: window registry sync: {err}");
@@ -143,20 +143,28 @@ fn cleanup_runtime_files() {
     }
 }
 
-fn start_window_registry_listener(
+fn start_hyprland_listener(
     service: Arc<Mutex<TaskService>>,
 ) -> Option<HyprlandEventListener> {
-    HyprlandEventListener::start(Arc::new(move |event, _payload| {
-        if !matches!(
-            event,
-            "openwindow" | "closewindow" | "movewindow" | "movewindowv2"
-        ) {
-            return;
-        }
-        if let Ok(svc) = service.lock() {
-            if let Err(err) = svc.sync_window_registry() {
-                eprintln!("tsk daemon: window registry sync: {err}");
+    HyprlandEventListener::start(Arc::new(move |event, payload| {
+        match event {
+            "openwindow" | "closewindow" | "movewindow" | "movewindowv2" => {
+                if let Ok(svc) = service.lock() {
+                    if let Err(err) = svc.sync_window_registry() {
+                        eprintln!("tsk daemon: window registry sync: {err}");
+                    }
+                }
             }
+            "workspacev2" => {
+                if let Some((_, name)) = parse_workspace_v2(payload) {
+                    if let Ok(svc) = service.lock() {
+                        if let Err(err) = svc.sync_external_workspace(&name) {
+                            eprintln!("tsk daemon: workspace sync: {err}");
+                        }
+                    }
+                }
+            }
+            _ => {}
         }
     }))
 }

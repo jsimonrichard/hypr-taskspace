@@ -70,7 +70,57 @@ impl TaskService {
         let mut state = self.load_state()?;
         state.default_workspace_count = self.config.default_workspace_count;
         state.global_workspace_slots = self.config.global_workspace_slots.clone();
+        if self.config.hyprland_enabled && hyprland::available() {
+            if let Ok(Some(active)) = hyprland::get_active_workspace() {
+                if !active.name.is_empty() {
+                    let _ = self.apply_external_workspace(&mut state, &active.name)?;
+                }
+            }
+        }
         self.commit_state(&state, None)
+    }
+
+    /// Align session state with an external Hyprland workspace focus change.
+    ///
+    /// When the change crosses taskspaces, other monitors are restored to their
+    /// saved slots in the new taskspace and Waybar receives a taskspace update.
+    pub fn sync_external_workspace(&self, workspace_name: &str) -> Result<bool> {
+        let mut state = self.load_state()?;
+        let changed = self.apply_external_workspace(&mut state, workspace_name)?;
+        Ok(changed)
+    }
+
+    fn apply_external_workspace(
+        &self,
+        state: &mut SessionState,
+        workspace_name: &str,
+    ) -> Result<bool> {
+        if !self.config.hyprland_enabled {
+            return Ok(false);
+        }
+        if !crate::workspaces::is_managed_workspace_name(state, workspace_name) {
+            return Ok(false);
+        }
+
+        if crate::context_sync::taskspace_would_change(state, workspace_name) {
+            let old_allowed = crate::workspaces::allowed_workspace_names(state);
+            let old_key = state.taskspace_key();
+            workspace_nav::sync_taskspace_from_external(
+                state,
+                workspace_name,
+                &old_allowed,
+                &old_key,
+            )
+            .map_err(|e| TskError::Other(e))?;
+            self.commit_state(state, Some(StateChangeKind::Taskspace))?;
+            return Ok(true);
+        }
+
+        if crate::context_sync::sync_from_workspace_name(state, workspace_name) {
+            self.persist_workspace_switch(state)?;
+            return Ok(true);
+        }
+        Ok(false)
     }
 
     /// Rename default numeric slots — run once after daemon start (background).

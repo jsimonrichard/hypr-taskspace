@@ -331,6 +331,87 @@ fn sync_monitors_to_taskspace_inner(
         })
 }
 
+/// React to an external Hyprland workspace focus that crosses taskspaces.
+///
+/// Captures the leaving layout, updates context from `workspace_name`, restores
+/// per-monitor slots in the new taskspace, and refreshes slot memory.
+pub fn sync_taskspace_from_external(
+    state: &mut SessionState,
+    workspace_name: &str,
+    old_allowed: &[String],
+    old_key: &str,
+) -> Result<(), String> {
+    hypr_log::scoped(
+        format!("sync_taskspace_from_external {old_key} via {workspace_name}"),
+        || sync_taskspace_from_external_inner(state, workspace_name, old_allowed, old_key),
+    )
+}
+
+fn sync_taskspace_from_external_inner(
+    state: &mut SessionState,
+    workspace_name: &str,
+    old_allowed: &[String],
+    old_key: &str,
+) -> Result<(), String> {
+    if hyprland::available() {
+        hypr_log::scoped(format!("capture layout for leaving taskspace {old_key}"), || {
+            if let Ok(monitors) = hyprland::list_monitors() {
+                capture_monitor_layout(state, old_key, old_allowed, &monitors);
+            }
+        });
+        hyprland::close_tsk_tui_windows();
+    }
+
+    apply_context_from_workspace_name(state, workspace_name)?;
+
+    if hyprland::available() {
+        match state.context_mode {
+            ContextMode::Task => {
+                if let Some(task_id) = state.current_task_id.clone() {
+                    setup_task_workspaces_for_state(&task_id, state);
+                }
+            }
+            ContextMode::Default => {
+                setup_default_taskspace_workspaces(state.default_workspace_count);
+            }
+        }
+    }
+
+    crate::context_sync::sync_from_workspace_name(state, workspace_name);
+
+    if sync_monitors_to_taskspace(old_allowed, state).is_none() {
+        hypr_log::scoped("fallback focus_last_workspace", || {
+            focus_last_workspace(state);
+        });
+    }
+    Ok(())
+}
+
+fn apply_context_from_workspace_name(state: &mut SessionState, name: &str) -> Result<(), String> {
+    use crate::workspaces::{
+        is_default_taskspace_workspace_name, is_global_workspace_name, task_for_workspace_name,
+    };
+
+    if is_default_taskspace_workspace_name(name, state.default_workspace_count) {
+        let visiting_global_from_task = state.context_mode == ContextMode::Task
+            && state.current_task_id.is_some()
+            && is_global_workspace_name(name, state);
+        if !visiting_global_from_task {
+            state.context_mode = ContextMode::Default;
+            state.current_task_id = None;
+        }
+        return Ok(());
+    }
+
+    if let Some(task_id) = task_for_workspace_name(state, name).map(|task| task.id.clone()) {
+        state.context_mode = ContextMode::Task;
+        state.current_task_id = Some(task_id);
+        return Ok(());
+    }
+
+    Err(format!("Unknown workspace: {name}"))
+}
+
 pub fn set_taskspace(
     state: &mut SessionState,
     mode: ContextMode,
