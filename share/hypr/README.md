@@ -16,6 +16,7 @@ Shipped templates install to `@TSK_SHARE@/hypr/` via the **pacman package**, **`
 
 3. Resolve keybind conflicts your way:
    - **Omarchy**: `tsk install omarchy` comments out native `gesture = …, workspace` lines in `~/.config/hypr/input.conf` and sources tsk swipe gestures (`tsk workspace prev/next`) from `bindings.conf`. Omarchy unbinds for keybinds are applied automatically.
+   - **Emergency terminal**: `SUPER+Ctrl+Return` opens a plain `xdg-terminal-exec` shell (no tsk) via `integrations/omarchy-escape-hatch.conf` — use when tsk or tskd is broken.
 
 Because Hyprland uses the **last** matching bind, sourcing `bindings.conf` last overrides earlier workspace keys.
 

@@ -404,11 +404,15 @@ fn copy_hypr_tree(
             let mut out = substitute_share(&raw, share_str);
             out = out.replace(TSK_CMD_PLACEHOLDER, tsk_cmd);
             if profile.include_omarchy_unbinds_for(omarchy_integration) {
-                let integration = format!(
+                let unbinds = format!(
                     "source = {}/hypr/integrations/omarchy-unbind.conf\n\n",
                     share_str
                 );
-                out = format!("{integration}{out}");
+                let escape_hatch = format!(
+                    "\nsource = {}/hypr/integrations/omarchy-escape-hatch.conf\n",
+                    share_str
+                );
+                out = format!("{unbinds}{out}{escape_hatch}");
             }
             remap_packaged_share_paths(&out, share_str)
         } else if raw.contains(TSK_SHARE_PLACEHOLDER) || raw.contains(TSK_CMD_PLACEHOLDER) {
@@ -524,12 +528,13 @@ mod tests {
         let mut out = substitute_share(raw, share);
         out = out.replace(TSK_CMD_PLACEHOLDER, "/usr/bin/tsk");
         if InstallProfile::Prod.include_omarchy_unbinds_for(true) {
-            let integration = format!(
-                "source = {share}/hypr/integrations/omarchy-unbind.conf\n\n"
-            );
-            out = format!("{integration}{out}");
+            let unbinds = format!("source = {share}/hypr/integrations/omarchy-unbind.conf\n\n");
+            let escape_hatch =
+                format!("\nsource = {share}/hypr/integrations/omarchy-escape-hatch.conf\n");
+            out = format!("{unbinds}{out}{escape_hatch}");
         }
         assert!(out.starts_with("source = /home/u/.local/share/tsk/hypr/integrations/omarchy-unbind.conf"));
+        assert!(out.contains("source = /home/u/.local/share/tsk/hypr/integrations/omarchy-escape-hatch.conf"));
     }
 
     #[test]
