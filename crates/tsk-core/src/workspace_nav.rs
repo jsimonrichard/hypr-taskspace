@@ -364,19 +364,9 @@ fn sync_taskspace_from_external_inner(
 
     apply_context_from_workspace_name(state, workspace_name)?;
 
-    if hyprland::available() {
-        match state.context_mode {
-            ContextMode::Task => {
-                if let Some(task_id) = state.current_task_id.clone() {
-                    setup_task_workspaces_for_state(&task_id, state);
-                }
-            }
-            ContextMode::Default => {
-                setup_default_taskspace_workspaces(state.default_workspace_count);
-            }
-        }
-    }
-
+    // External focus already landed on a managed workspace — do not call
+    // `ensure_workspaces` here. Creating named workspaces via switch+restore
+    // re-emits `workspacev2` and can feedback with this same sync path.
     crate::context_sync::sync_from_workspace_name(state, workspace_name);
 
     if sync_monitors_to_taskspace(old_allowed, state).is_none() {

@@ -6,6 +6,7 @@ use chrono::Utc;
 
 use crate::config::TskConfig;
 use crate::error::{TskError, Result};
+use crate::hypr_log;
 use crate::hyprland;
 use crate::models::{ContextMode, SessionState, Task, TaskStatus};
 use crate::registry::Registry;
@@ -100,6 +101,20 @@ impl TaskService {
         }
         if !crate::workspaces::is_managed_workspace_name(state, workspace_name) {
             return Ok(false);
+        }
+
+        // Intentional switches (set_taskspace / ensure_workspaces / monitor restore) emit
+        // intermediate `workspacev2` events that queue behind the service mutex. By the
+        // time we handle them, focus has usually moved on — treating those as external
+        // switches causes bounce-back and taskspace feedback loops.
+        if let Ok(Some(active)) = hyprland::get_active_workspace() {
+            if !active.name.is_empty() && active.name != workspace_name {
+                hypr_log::note(format!(
+                    "skip stale workspace sync: event={workspace_name} active={}",
+                    active.name
+                ));
+                return Ok(false);
+            }
         }
 
         if crate::context_sync::taskspace_would_change(state, workspace_name) {

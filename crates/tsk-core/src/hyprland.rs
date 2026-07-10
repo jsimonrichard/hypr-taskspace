@@ -487,8 +487,10 @@ fn ensure_workspaces_inner(names: &[String]) {
             .flatten()
             .map(|ws| ws.name)
             .unwrap_or_default();
-        // Do not pull the user back onto a workspace outside the set being
-        // provisioned (e.g. a task workspace when ensuring default slots).
+        // Only restore when the previous workspace is in the set we are provisioning.
+        // Restoring across taskspaces emits a `workspacev2` that the daemon later treats
+        // as an external switch (bounce / feedback loop). Callers that need to stay put
+        // while creating outside the current taskspace should save/restore themselves.
         if active != prev && workspace_in_provision_set(&prev, names) {
             hypr_log::scoped(format!("restore active workspace after ensure: {prev}"), || {
                 switch_workspace(&prev);
@@ -510,6 +512,15 @@ fn workspace_in_provision_set(name: &str, names: &[String]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn workspace_in_provision_set_matches_names_and_numeric() {
+        let names = vec!["1".into(), "2".into(), "auth-1".into()];
+        assert!(workspace_in_provision_set("1", &names));
+        assert!(workspace_in_provision_set("auth-1", &names));
+        assert!(!workspace_in_provision_set("3", &names));
+        assert!(!workspace_in_provision_set("other-1", &names));
+    }
 
     #[test]
     fn workspace_dispatch_arg_uses_name_prefix_for_numeric_slots() {
