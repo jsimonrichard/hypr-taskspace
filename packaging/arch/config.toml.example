@@ -27,3 +27,7 @@ switch_task_on_window_focus = false
 [terminal]
 command = "xdg-terminal-exec"
 title_flag = "--title"
+
+[browser]
+command = "chromium"
+user_data_flag = "--user-data-dir"

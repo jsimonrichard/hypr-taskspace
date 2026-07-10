@@ -10,7 +10,8 @@ use crate::error::{Result, TskError};
 use crate::install::profile::{dev_config_path, is_dev_config, InstallProfile, profile_for_config};
 use crate::install::reload;
 use crate::share::{effective_share_dir, uses_packaged_share};
-use crate::xdg::ensure_parent;
+use crate::xdg::{ensure_parent, user_bin_dir};
+use crate::task_env::{ensure_task_bin_dir, task_bin_dir};
 
 const LIB_NAME: &str = "libtsk_waybar.so";
 const TSK_SHARE_PLACEHOLDER: &str = "@TSK_SHARE@";
@@ -92,6 +93,10 @@ pub fn install_bins(cfg: &TskConfig, options: &InstallBinsOptions) -> Result<Vec
             } else {
                 String::new()
             },
+            format!(
+                "would install taskspace xdg-open wrapper at {}",
+                task_bin_dir(cfg).join("xdg-open").display()
+            ),
             "would reload Hyprland config".into(),
             if options.skip_waybar {
                 String::new()
@@ -134,6 +139,8 @@ pub fn install_bins(cfg: &TskConfig, options: &InstallBinsOptions) -> Result<Vec
     } else {
         verify_system_share(cfg, options)?;
     }
+    install_xdg_open_wrapper(&share_src, &resolve_tsk_command(cfg), cfg)?;
+    remove_legacy_global_xdg_open_wrapper()?;
 
     let mut actions = vec![
         if deploy_user_share {
@@ -150,6 +157,10 @@ pub fn install_bins(cfg: &TskConfig, options: &InstallBinsOptions) -> Result<Vec
             )
         },
         format!("using tsk at {path_detail}"),
+        format!(
+            "installed taskspace xdg-open wrapper at {}",
+            task_bin_dir(cfg).join("xdg-open").display()
+        ),
         format!("runtime data in {}", cfg.data_dir.display()),
     ];
     if !options.skip_reload {
@@ -327,6 +338,61 @@ exec \"{}\" \"$@\"\n",
         perms.set_mode(0o755);
         fs::set_permissions(&wrapper, perms).map_err(|source| TskError::Write {
             path: wrapper,
+            source,
+        })?;
+    }
+    Ok(())
+}
+
+fn install_xdg_open_wrapper(share_src: &Path, tsk_cmd: &str, cfg: &TskConfig) -> Result<()> {
+    let mut src = share_src.join("bin/xdg-open");
+    if !src.is_file() {
+        src = effective_share_dir(cfg).join("bin/xdg-open");
+    }
+    if !src.is_file() {
+        return Ok(());
+    }
+    let dest = ensure_task_bin_dir(cfg)?.join("xdg-open");
+    ensure_parent(&dest)?;
+    let raw = fs::read_to_string(&src).map_err(|source| TskError::Read {
+        path: src.clone(),
+        source,
+    })?;
+    let body = raw.replace(TSK_CMD_PLACEHOLDER, tsk_cmd);
+    fs::write(&dest, &body).map_err(|source| TskError::Write {
+        path: dest.clone(),
+        source,
+    })?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(&dest)
+            .map_err(|source| TskError::Read {
+                path: dest.clone(),
+                source,
+            })?
+            .permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&dest, perms).map_err(|source| TskError::Write {
+            path: dest,
+            source,
+        })?;
+    }
+    Ok(())
+}
+
+/// Drop a legacy `~/.local/bin/xdg-open` installed by older tsk versions.
+fn remove_legacy_global_xdg_open_wrapper() -> Result<()> {
+    let legacy = user_bin_dir().join("xdg-open");
+    if !legacy.is_file() {
+        return Ok(());
+    }
+    let Ok(raw) = fs::read_to_string(&legacy) else {
+        return Ok(());
+    };
+    if raw.contains("Taskspace xdg-open") || raw.contains("Taskspace-aware xdg-open") || raw.contains("tsk open") {
+        fs::remove_file(&legacy).map_err(|source| TskError::Write {
+            path: legacy,
             source,
         })?;
     }

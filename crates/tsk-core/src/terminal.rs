@@ -154,10 +154,11 @@ fn spawn_host_shell(
     title: &str,
     env: &[(String, String)],
 ) -> Result<()> {
+    let cfg = load_config()?;
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".into());
     let base = terminal_base_name(term);
     let mut cmd = Command::new(term);
-    task_env::apply_env(&mut cmd, env);
+    task_env::apply_task_process_env(&mut cmd, env, &cfg);
 
     match base {
         "xdg-terminal-exec" => {
@@ -218,7 +219,8 @@ pub fn spawn_terminal_command(
     if let Ok(config) = std::env::var("TSK_CONFIG") {
         cmd.env("TSK_CONFIG", config);
     }
-    task_env::apply_env(&mut cmd, env);
+    let cfg = load_config()?;
+    task_env::apply_task_process_env(&mut cmd, env, &cfg);
     // Avoid passing the Hyprland wrapper path through to the spawned TUI process.
     cmd.env_remove("TSK");
     match base {

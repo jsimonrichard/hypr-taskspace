@@ -3,13 +3,44 @@
 //! These vars snapshot the taskspace context at spawn time so long-running
 //! processes do not depend on global CLI/daemon state that may change later.
 
-use std::path::Path;
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use crate::config::TskConfig;
+use crate::error::Result;
 use crate::models::{ContextMode, SessionState, Task};
 use crate::repos::normalize_repo_path;
 use crate::task_paths::is_managed_task_checkout;
 use crate::workspaces::primary_task_workspace;
+use crate::xdg::ensure_parent;
+
+/// Taskspace-only executables (e.g. `xdg-open` wrapper). Prepended to `PATH` in task spawns only.
+pub fn task_bin_dir(cfg: &TskConfig) -> PathBuf {
+    cfg.data_dir.join("task-bin")
+}
+
+/// Build `PATH` with [`task_bin_dir`] first. Returns `None` when the task bin dir is missing.
+pub fn task_path(cfg: &TskConfig, base: Option<&OsStr>) -> Option<String> {
+    let task_bin = task_bin_dir(cfg);
+    if !task_bin.is_dir() {
+        return None;
+    }
+    let base = base
+        .map(|p| p.to_string_lossy().into_owned())
+        .or_else(|| std::env::var("PATH").ok())?;
+    Some(format!("{}:{}", task_bin.display(), base))
+}
+
+pub fn ensure_task_bin_dir(cfg: &TskConfig) -> Result<PathBuf> {
+    let dir = task_bin_dir(cfg);
+    ensure_parent(&dir.join("_"))?;
+    std::fs::create_dir_all(&dir).map_err(|source| crate::error::TskError::Write {
+        path: dir.clone(),
+        source,
+    })?;
+    Ok(dir)
+}
 
 /// Environment for the default taskspace.
 pub fn build_default_taskspace_env() -> Vec<(String, String)> {
@@ -92,12 +123,31 @@ pub fn apply_env(cmd: &mut Command, env: &[(String, String)]) {
     }
 }
 
+/// Apply taskspace env vars and prepend [`task_bin_dir`] to `PATH` for task-context spawns.
+pub fn apply_task_process_env(cmd: &mut Command, env: &[(String, String)], cfg: &TskConfig) {
+    apply_env(cmd, env);
+    let is_task = env
+        .iter()
+        .any(|(k, v)| k == "TSK_CONTEXT_MODE" && v == ContextMode::Task.as_str());
+    if !is_task {
+        return;
+    }
+    if let Some(path) = task_path(cfg, std::env::var_os("PATH").as_deref()) {
+        cmd.env("PATH", path);
+    }
+    cmd.env(
+        "TSK_TASK_BIN",
+        task_bin_dir(cfg).to_string_lossy().as_ref(),
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::models::TaskStatus;
     use chrono::Utc;
     use std::collections::HashMap;
+    use std::fs;
     use std::path::PathBuf;
 
     fn env_map(vars: &[(String, String)]) -> HashMap<String, String> {
@@ -184,5 +234,19 @@ mod tests {
         };
         let env = env_map(&build_taskspace_env(&state, Path::new("/tmp/tsk-tasks")));
         assert_eq!(env["TSK_TASKSPACE"], "default");
+    }
+
+    #[test]
+    fn task_path_prepends_task_bin() {
+        let dir = tempfile::tempdir().unwrap();
+        let task_bin = dir.path().join("task-bin");
+        fs::create_dir_all(&task_bin).unwrap();
+        let cfg = TskConfig {
+            data_dir: dir.path().to_path_buf(),
+            ..TskConfig::default()
+        };
+        let path = task_path(&cfg, Some(OsStr::new("/usr/bin"))).unwrap();
+        assert!(path.starts_with(&format!("{}:", task_bin.display())));
+        assert!(path.ends_with(":/usr/bin"));
     }
 }

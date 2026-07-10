@@ -398,8 +398,16 @@ impl DaemonClient {
     }
 
     /// Spawn-only — reads state locally; no daemon RPC.
-    pub fn open_browser(&self, task_id: Option<&str>) -> Result<()> {
-        self.direct.open_browser(task_id)
+    pub fn open_browser(&self, task_id: Option<&str>, host: bool) -> Result<()> {
+        if is_daemon_running() {
+            let mut body = json!({ "host": host });
+            if let Some(task_id) = task_id {
+                body["task_id"] = json!(task_id);
+            }
+            daemon_request("open_browser", body).map(|_| ())
+        } else {
+            self.direct.open_browser(task_id, host)
+        }
     }
 
     pub fn run_on_create_hook(&self, task_id: &str) -> Result<()> {
@@ -407,6 +415,21 @@ impl DaemonClient {
             daemon_request("run_on_create_hook", json!({ "task_id": task_id })).map(|_| ())
         } else {
             self.direct.run_on_create_hook(task_id)
+        }
+    }
+
+    pub fn open_url(&self, urls: &[&str], task_id: Option<&str>, host: bool) -> Result<()> {
+        if is_daemon_running() {
+            let mut body = json!({
+                "urls": urls,
+                "host": host,
+            });
+            if let Some(task_id) = task_id {
+                body["task_id"] = json!(task_id);
+            }
+            daemon_request("open_url", body).map(|_| ())
+        } else {
+            self.direct.open_url(urls, task_id, host)
         }
     }
 

@@ -31,6 +31,10 @@ container_prefix = "tsk-dev"
 command = "xdg-terminal-exec"
 title_flag = "--title"
 
+[browser]
+command = "chromium"
+user_data_flag = "--user-data-dir"
+
 [hyprland]
 enabled = true
 auto_move_tagged_windows = true
@@ -74,6 +78,10 @@ container_prefix = "tsk"
 [terminal]
 command = "xdg-terminal-exec"
 title_flag = "--title"
+
+[browser]
+command = "chromium"
+user_data_flag = "--user-data-dir"
 
 [hyprland]
 enabled = true
@@ -119,6 +127,8 @@ pub struct TskConfig {
     pub install_hypr_config_path: PathBuf,
     pub install_hypr_source_line: String,
     pub terminal_command: String,
+    pub browser_command: String,
+    pub browser_user_data_flag: String,
 }
 
 impl Default for TskConfig {
@@ -141,6 +151,8 @@ impl Default for TskConfig {
                 .to_string_lossy()
                 .into_owned(),
             terminal_command: "xdg-terminal-exec".into(),
+            browser_command: "chromium".into(),
+            browser_user_data_flag: "--user-data-dir".into(),
         }
     }
 }
@@ -309,6 +321,8 @@ struct RawConfig {
     #[serde(default)]
     terminal: RawTerminal,
     #[serde(default)]
+    browser: RawBrowser,
+    #[serde(default)]
     data: RawData,
     #[serde(default)]
     install: RawInstall,
@@ -352,6 +366,12 @@ struct RawDaemon {
 #[derive(Debug, Default, Deserialize)]
 struct RawTerminal {
     command: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawBrowser {
+    command: Option<String>,
+    user_data_flag: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -459,6 +479,12 @@ fn parse_config(raw: RawConfig) -> TskConfig {
     }
     if let Some(cmd) = raw.terminal.command {
         cfg.terminal_command = cmd;
+    }
+    if let Some(cmd) = raw.browser.command {
+        cfg.browser_command = cmd;
+    }
+    if let Some(flag) = raw.browser.user_data_flag {
+        cfg.browser_user_data_flag = flag;
     }
     cfg
 }

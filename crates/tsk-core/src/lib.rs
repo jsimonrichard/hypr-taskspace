@@ -29,6 +29,7 @@ pub mod taskspaces;
 pub mod terminal;
 pub mod trace;
 pub mod binary;
+pub mod browser;
 pub mod version;
 pub mod waybar;
 pub mod walker;
@@ -96,11 +97,16 @@ pub use binary::{
     waybar_module_path,
 };
 pub use xdg::normalize_desktop_env;
-pub use apps::{launch_task_browser, launch_task_editor};
+pub use apps::{launch_task_editor};
 pub use distrobox::create_container_with_progress;
 pub use task_cleanup::task_data_dir;
 pub use terminal::{launch_host_terminal, launch_task_terminal, launch_task_tui};
 pub use walker::{walker_exec, walker_launch_prefix, walker_terminal, walker_terminal_cmd};
+pub use browser::{
+    default_browser_profile_dir, delegate_to_system_xdg_open, is_http_url, launch_task_browser,
+    open_urls, resolve_system_xdg_open,
+};
+pub use task_env::{apply_task_process_env, ensure_task_bin_dir, task_bin_dir, task_path};
 pub use version::{
     build_version_info, format_version_long, format_version_short, version_info, VersionInfo,
 };

@@ -16,7 +16,7 @@ use tsk_core::{
     InstallWaybarOptions, InstallWalkerOptions, OmarchyInstallOptions, TskError, Registry, Result, TaskService, TaskStatus,
     walker_exec, walker_terminal,
     TaskRepoSource, detect_vcs_root, find_repo, find_repo_by_path, load_repos, register_repo, repo_label,
-    ensure_repo_removable, unregister_repo, clear_hypr_log,
+    ensure_repo_removable, unregister_repo, clear_hypr_log, is_http_url,
 };
 
 #[derive(Parser)]
@@ -87,6 +87,15 @@ enum Commands {
     Reset {
         #[command(subcommand)]
         command: ResetCommands,
+    },
+    /// Open http(s) links in the current taskspace browser (xdg-open wrapper entry point)
+    Open {
+        #[arg(value_name = "URL", required = true)]
+        urls: Vec<String>,
+        #[arg(long, help = "Open in the system default handler instead of the task browser")]
+        host: bool,
+        #[arg(long, help = "Target a specific task by name or id")]
+        task: Option<String>,
     },
 }
 
@@ -319,10 +328,15 @@ enum TaskCommands {
         #[arg(value_name = "NAME_OR_ID")]
         name_or_id: Option<String>,
     },
-    /// Open Chromium/browser for the current (or named) task
+    /// Open or focus the Chromium browser for the current taskspace
     Browser {
         #[arg(value_name = "NAME_OR_ID")]
         name_or_id: Option<String>,
+        #[arg(long, help = "Open the system default browser instead")]
+        host: bool,
+        /// Optional URL to open after focusing the task browser
+        #[arg(value_name = "URL")]
+        url: Option<String>,
     },
 }
 
@@ -553,7 +567,11 @@ fn run() -> Result<()> {
                 cmd_task_terminal(name_or_id.as_deref(), host)
             }
             TaskCommands::Editor { name_or_id } => cmd_task_editor(name_or_id.as_deref()),
-            TaskCommands::Browser { name_or_id } => cmd_task_browser(name_or_id.as_deref()),
+            TaskCommands::Browser {
+                name_or_id,
+                host,
+                url,
+            } => cmd_task_browser(name_or_id.as_deref(), host, url.as_deref()),
         },
         Commands::Repo { command } => match command {
             RepoCommands::Add { dir } => cmd_repo_add(dir.as_deref()),
@@ -606,6 +624,7 @@ fn run() -> Result<()> {
         Commands::Reset { command } => match command {
             ResetCommands::Layout => cmd_reset_layout(),
         },
+        Commands::Open { urls, host, task } => cmd_open(&urls, host, task.as_deref()),
     }
 }
 
@@ -1442,14 +1461,40 @@ fn cmd_task_editor(name_or_id: Option<&str>) -> Result<()> {
     svc.open_editor(task_id.as_deref())
 }
 
-fn cmd_task_browser(name_or_id: Option<&str>) -> Result<()> {
-    let svc = client()?;
-    let task_id = if let Some(name) = name_or_id {
-        Some(svc.direct().resolve_task(name)?.id)
+fn cmd_task_browser(name_or_id: Option<&str>, host: bool, url: Option<&str>) -> Result<()> {
+    let task_id = if host {
+        None
+    } else if let Some(name) = name_or_id {
+        Some(client()?.resolve_task(name)?.id)
     } else {
         None
     };
-    svc.open_browser(task_id.as_deref())
+    if let Some(url) = url {
+        let refs = [url];
+        return client()?.open_url(&refs, task_id.as_deref(), host);
+    }
+    client()?.open_browser(task_id.as_deref(), host)
+}
+
+fn cmd_open(urls: &[String], host: bool, task: Option<&str>) -> Result<()> {
+    let task_id = if host {
+        None
+    } else if let Some(name) = task {
+        Some(client()?.resolve_task(name)?.id)
+    } else {
+        None
+    };
+
+    let http_urls: Vec<&str> = urls
+        .iter()
+        .map(String::as_str)
+        .filter(|url| is_http_url(url))
+        .collect();
+    if http_urls.is_empty() && !host {
+        let refs: Vec<&str> = urls.iter().map(String::as_str).collect();
+        return client()?.open_url(&refs, task_id.as_deref(), true);
+    }
+    client()?.open_url(&http_urls, task_id.as_deref(), host)
 }
 
 fn cmd_task_tui() -> Result<()> {

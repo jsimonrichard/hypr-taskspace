@@ -14,6 +14,7 @@ sub() {
 install -d "${pkgdir}${share}/hypr/integrations"
 install -d "${pkgdir}${share}/waybar"
 install -d "${pkgdir}${share}/lib"
+install -d "${pkgdir}${share}/bin"
 
 # Hypr templates (recursive)
 while IFS= read -r -d '' file; do
@@ -22,6 +23,11 @@ while IFS= read -r -d '' file; do
   install -d "$(dirname "$dest")"
   sub "$file" >"$dest"
 done < <(find "${repo_share}/hypr" -type f -print0)
+
+if [[ -f "${repo_share}/bin/xdg-open" ]]; then
+  sub "${repo_share}/bin/xdg-open" >"${pkgdir}${share}/bin/xdg-open"
+  chmod 755 "${pkgdir}${share}/bin/xdg-open"
+fi
 
 # Waybar snippets
 for file in "${repo_share}/waybar/"*; do

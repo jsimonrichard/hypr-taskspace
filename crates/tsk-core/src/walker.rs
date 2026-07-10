@@ -154,7 +154,7 @@ fn walker_open_terminal(_ctx: &WalkerLaunchContext, target: &LaunchTarget) -> Re
 
 fn walker_open_browser(_ctx: &WalkerLaunchContext, target: &LaunchTarget) -> Result<()> {
     if target.opens_browser_app() {
-        return TaskService::with_defaults()?.open_browser(None);
+        return TaskService::with_defaults()?.open_browser(None, false);
     }
     let browser = resolve_browser_command().ok_or_else(|| {
         TskError::Other("walker exec: browser not found".into())

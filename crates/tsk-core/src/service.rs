@@ -313,6 +313,7 @@ impl TaskService {
         };
 
         let now = Utc::now();
+        let browser_profile = crate::browser::default_browser_profile_dir(&self.config, &task_id);
         let mut task = Task {
             id: task_id.clone(),
             name: name.to_string(),
@@ -324,7 +325,7 @@ impl TaskService {
             container_name: format!("{}-{task_id}", self.config.container_prefix),
             container_isolation: repo_options.container_isolation,
             workspace_count: self.config.default_workspace_count,
-            browser_profile: None,
+            browser_profile: Some(browser_profile.to_string_lossy().into_owned()),
             created_at: now,
             last_active_at: now,
             agent_notes_path: Some(notes_path),
@@ -370,6 +371,7 @@ impl TaskService {
                     &resolved.setup,
                     self.config.hyprland_enabled,
                     &state,
+                    &self.config,
                 ) {
                     eprintln!("tsk: on_create hook: {err}");
                 }
@@ -383,6 +385,7 @@ impl TaskService {
                     &resolved.setup,
                     self.config.hyprland_enabled,
                     &state,
+                    &self.config,
                 ) {
                     eprintln!("tsk: on_create hook: {err}");
                 }
@@ -405,6 +408,7 @@ impl TaskService {
             &setup,
             self.config.hyprland_enabled,
             &state,
+            &self.config,
         )
     }
 
@@ -609,31 +613,6 @@ impl TaskService {
         crate::terminal::launch_host_terminal(None, &env)
     }
 
-    fn resolve_task_for_launch(
-        &self,
-        state: &mut SessionState,
-        task_id: Option<&str>,
-    ) -> Result<Task> {
-        if let Some(tid) = task_id {
-            return state
-                .tasks
-                .get(tid)
-                .cloned()
-                .ok_or_else(|| TskError::Other(format!("Unknown task: {tid}")));
-        }
-        crate::context_sync::sync_from_active_workspace(state);
-        if state.context_mode == ContextMode::Task {
-            if let Some(tid) = state.current_task_id.as_deref() {
-                if let Some(task) = state.tasks.get(tid) {
-                    return Ok(task.clone());
-                }
-            }
-        }
-        Err(TskError::Other(
-            "not in a task taskspace — switch to a task first or pass a task id".into(),
-        ))
-    }
-
     pub fn open_editor(&self, task_id: Option<&str>) -> Result<()> {
         let mut state = self.load_state()?;
 
@@ -659,16 +638,19 @@ impl TaskService {
         crate::apps::launch_taskspace_editor(&state, &self.config.tasks_base_dir, None)
     }
 
-    pub fn open_browser(&self, task_id: Option<&str>) -> Result<()> {
-        let mut state = self.load_state()?;
+    pub fn open_browser(&self, task_id: Option<&str>, host: bool) -> Result<()> {
+        if host {
+            return crate::browser::delegate_to_system_xdg_open(&[]);
+        }
 
+        let mut state = self.load_state()?;
         if let Some(tid) = task_id {
             let task = state
                 .tasks
                 .get(tid)
                 .cloned()
                 .ok_or_else(|| TskError::Other(format!("Unknown task: {tid}")))?;
-            return crate::apps::launch_task_browser(&task, &state);
+            return crate::browser::launch_task_browser(&task);
         }
 
         crate::context_sync::sync_from_active_workspace(&mut state);
@@ -676,12 +658,16 @@ impl TaskService {
         if state.context_mode == ContextMode::Task {
             if let Some(tid) = state.current_task_id.as_deref() {
                 if let Some(task) = state.tasks.get(tid) {
-                    return crate::apps::launch_task_browser(task, &state);
+                    return crate::browser::launch_task_browser(task);
                 }
             }
         }
 
         crate::apps::launch_taskspace_browser(&state, &self.config.tasks_base_dir)
+    }
+
+    pub fn open_url(&self, urls: &[&str], task_id: Option<&str>, host: bool) -> Result<()> {
+        crate::browser::open_urls(urls, task_id, host)
     }
 
     pub fn switch_task(&self, task_id: &str) -> Result<Task> {

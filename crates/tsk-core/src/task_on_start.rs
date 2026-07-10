@@ -4,7 +4,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use crate::config::{load_config, TskConfig};
+use crate::config::TskConfig;
 use crate::error::Result;
 use crate::hyprland;
 use crate::models::{SessionState, Task};
@@ -37,8 +37,9 @@ pub fn run_on_create_after_create(
     setup: &TaskRepoSetup,
     hyprland_enabled: bool,
     state: &SessionState,
+    config: &TskConfig,
 ) -> Result<()> {
-    run_task_hook(TaskHook::Create, task, setup, hyprland_enabled, state)
+    run_task_hook(TaskHook::Create, task, setup, hyprland_enabled, state, config)
 }
 
 /// Run the restore hook after an archived task is reactivated.
@@ -49,7 +50,7 @@ pub fn run_on_restore_after_restore(
     state: &SessionState,
 ) -> Result<()> {
     let setup = setup_for_restored_task(task, config);
-    run_task_hook(TaskHook::Restore, task, &setup, hyprland_enabled, state)
+    run_task_hook(TaskHook::Restore, task, &setup, hyprland_enabled, state, config)
 }
 
 fn run_task_hook(
@@ -58,6 +59,7 @@ fn run_task_hook(
     setup: &TaskRepoSetup,
     hyprland_enabled: bool,
     state: &SessionState,
+    config: &TskConfig,
 ) -> Result<()> {
     if !hooks_enabled() {
         return Ok(());
@@ -90,6 +92,7 @@ fn run_task_hook(
         &repo_config,
         state,
         monitor.as_deref(),
+        config,
     )
 }
 
@@ -151,6 +154,7 @@ fn run_hook_script(
     config: &RepoConfig,
     state: &SessionState,
     monitor: Option<&str>,
+    tsk_config: &TskConfig,
 ) -> Result<()> {
     let script_rel = match hook {
         TaskHook::Create => config.on_create_script_at(source_root),
@@ -170,16 +174,13 @@ fn run_hook_script(
     let is_worktree = matches!(_setup, TaskRepoSetup::Linked { .. });
     let mut cmd = command_for_script(&script_path);
     cmd.current_dir(&task.repo_path);
-    let tsk_config = load_config()?;
-    task_env::apply_env(
-        &mut cmd,
-        &task_env::build_task_env(
-            state,
-            task,
-            &tsk_config.tasks_base_dir,
-            Some(is_worktree),
-        ),
+    let env = task_env::build_task_env(
+        state,
+        task,
+        &tsk_config.tasks_base_dir,
+        Some(is_worktree),
     );
+    task_env::apply_task_process_env(&mut cmd, &env, tsk_config);
     cmd.env("TSK_TASK_HOOK", hook.env_name());
     if let Some(monitor) = monitor {
         cmd.env("TSK_ON_START_MONITOR", monitor);
@@ -330,7 +331,7 @@ mod tests {
                 source_root: source.clone(),
                 kind: crate::vcs::VcsKind::Git,
             };
-            run_on_create_after_create(&task, &setup, false, &test_state(vec![1])).unwrap();
+            run_on_create_after_create(&task, &setup, false, &test_state(vec![1]), &test_config(dir.path())).unwrap();
 
             for _ in 0..50 {
                 if marker.is_file() {
@@ -373,7 +374,7 @@ mod tests {
                 source_root: source.clone(),
                 kind: crate::vcs::VcsKind::Git,
             };
-            run_on_create_after_create(&task, &setup, false, &test_state(vec![])).unwrap();
+            run_on_create_after_create(&task, &setup, false, &test_state(vec![]), &test_config(dir.path())).unwrap();
 
             for _ in 0..50 {
                 if marker.is_file() {
@@ -414,7 +415,7 @@ mod tests {
                 source_root: source.clone(),
                 kind: crate::vcs::VcsKind::Git,
             };
-            run_on_create_after_create(&task, &setup, false, &test_state(vec![])).unwrap();
+            run_on_create_after_create(&task, &setup, false, &test_state(vec![]), &test_config(dir.path())).unwrap();
 
             for _ in 0..50 {
                 if marker.is_file() {
@@ -452,7 +453,7 @@ mod tests {
                 source_root: source.clone(),
                 kind: crate::vcs::VcsKind::Git,
             };
-            run_on_create_after_create(&task, &setup, false, &test_state(vec![])).unwrap();
+            run_on_create_after_create(&task, &setup, false, &test_state(vec![]), &test_config(dir.path())).unwrap();
 
             for _ in 0..50 {
                 if marker.is_file() {
@@ -638,8 +639,14 @@ mod tests {
             .unwrap();
 
             let task = test_task(&source, "tscratch", dir.path().join("scratch"));
-            run_on_create_after_create(&task, &TaskRepoSetup::Scratch, false, &test_state(vec![]))
-                .unwrap();
+            run_on_create_after_create(
+                &task,
+                &TaskRepoSetup::Scratch,
+                false,
+                &test_state(vec![]),
+                &test_config(dir.path()),
+            )
+            .unwrap();
             std::thread::sleep(std::time::Duration::from_millis(100));
             assert!(!marker.exists());
         });

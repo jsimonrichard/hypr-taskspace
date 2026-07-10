@@ -417,6 +417,16 @@ pub fn close_window(address: &str) {
     });
 }
 
+pub fn focus_window(address: &str) {
+    if !available() {
+        return;
+    }
+    let addr = address.strip_prefix("0x").unwrap_or(address);
+    hypr_log::scoped(format!("focus_window 0x{addr}"), || {
+        dispatch_sync(&["focuswindow", &format!("address:0x{addr}")]);
+    });
+}
+
 pub fn keyword(args: &[&str]) {
     if !available() {
         return;

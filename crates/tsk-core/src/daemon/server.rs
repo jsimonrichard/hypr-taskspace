@@ -447,7 +447,11 @@ fn dispatch(
         }
         "open_browser" => {
             let task_id = params.get("task_id").and_then(|v| v.as_str());
-            svc.open_browser(task_id)?;
+            let host = params
+                .get("host")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            svc.open_browser(task_id, host)?;
             Ok(json!({ "ok": true }))
         }
         "run_on_create_hook" => {
@@ -456,6 +460,26 @@ fn dispatch(
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| TskError::Other("task_id required".into()))?;
             svc.run_on_create_hook(task_id)?;
+            Ok(json!({ "ok": true }))
+        }
+
+        "open_url" => {
+            let urls: Vec<String> = params
+                .get("urls")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let url_refs: Vec<&str> = urls.iter().map(String::as_str).collect();
+            let task_id = params.get("task_id").and_then(|v| v.as_str());
+            let host = params
+                .get("host")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            svc.open_url(&url_refs, task_id, host)?;
             Ok(json!({ "ok": true }))
         }
 

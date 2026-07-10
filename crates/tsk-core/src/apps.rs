@@ -106,8 +106,9 @@ pub fn launch_taskspace_editor(
 }
 
 fn spawn_with_env(program: &str, args: &[&str], env: &[(String, String)]) -> Result<()> {
+    let cfg = load_config()?;
     let mut cmd = Command::new(program);
-    task_env::apply_env(&mut cmd, env);
+    task_env::apply_task_process_env(&mut cmd, env, &cfg);
     cmd.args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -136,7 +137,7 @@ fn spawn_task_command(
     }
 
     let mut cmd = Command::new(program);
-    task_env::apply_env(&mut cmd, &env);
+    task_env::apply_task_process_env(&mut cmd, &env, &cfg);
     cmd.args(args)
         .stdin(Stdio::null())
         .stdout(Stdio::null())

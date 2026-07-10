@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# Taskspace xdg-open — installed under ~/.local/share/tsk/task-bin; prepended to PATH in task spawns only.
+set -euo pipefail
+
+if [[ "${TSK_XDG_OPEN:-}" == "1" ]]; then
+  exec "${TSK_REAL_XDG_OPEN:-/usr/bin/xdg-open}" "$@"
+fi
+
+has_http_url=0
+for arg in "$@"; do
+  case "$arg" in
+    http://*|https://*)
+      has_http_url=1
+      break
+      ;;
+  esac
+done
+
+if [[ "$has_http_url" -eq 0 ]]; then
+  exec "${TSK_REAL_XDG_OPEN:-/usr/bin/xdg-open}" "$@"
+fi
+
+runtime_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
+context_file="$runtime_dir/tsk/context"
+if [[ ! -f "$context_file" ]]; then
+  exec "${TSK_REAL_XDG_OPEN:-/usr/bin/xdg-open}" "$@"
+fi
+
+context="$(tr -d '\n' <"$context_file")"
+if [[ "$context" != task:* ]]; then
+  exec "${TSK_REAL_XDG_OPEN:-/usr/bin/xdg-open}" "$@"
+fi
+
+TSK_CMD="${TSK:-@TSK_CMD@}"
+if [[ "$TSK_CMD" == "@TSK_CMD@" ]]; then
+  TSK_CMD="$(command -v tsk 2>/dev/null || true)"
+fi
+if [[ -z "$TSK_CMD" && -x /usr/bin/tsk ]]; then
+  TSK_CMD=/usr/bin/tsk
+fi
+if [[ -z "$TSK_CMD" ]]; then
+  exec "${TSK_REAL_XDG_OPEN:-/usr/bin/xdg-open}" "$@"
+fi
+
+export TSK_XDG_OPEN=1
+exec "$TSK_CMD" open "$@"
