@@ -68,6 +68,8 @@ Waybar loads the module from a path under the share tree (see `share/waybar/cffi
 
 ### 3. Hyprland integration
 
+`bindings.conf` defines the default Hyprland keybinds documented in the [README](../README.md#keybindings-hyprland) (**SUPER+Tab**, **SUPER+H**, workspace digits, etc.). `tsk install omarchy` sources this file for you; on other setups you add it yourself and remap as needed.
+
 Add **as the last line** of `~/.config/hypr/hyprland.conf`:
 
 ```ini

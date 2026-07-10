@@ -2,7 +2,7 @@
 
 Task-centric Hyprland control plane. Each task gets its own **taskspace** with named workspaces (`auth-fix-1`, `auth-fix-2`, …). The **default** (host) taskspace uses plain Hyprland workspaces **`1`–`10`** for everyday work.
 
-Keybinds call `tsk` on your PATH. Runtime state lives in `~/.local/share/tsk/`. Templates and the Waybar module live under `/usr/share/tsk/` (pacman) or `~/.local/share/tsk/` (cargo / from source).
+Keybinds call `tsk` on your PATH. **Hyprland bindings** shown in this doc match the shipped `bindings.conf` that `tsk install omarchy` wires in; if you integrate manually or remap keys, yours are whatever you configure (see [Keybindings](#keybindings-hyprland)). Runtime state lives in `~/.local/share/tsk/`. Templates and the Waybar module live under `/usr/share/tsk/` (pacman) or `~/.local/share/tsk/` (cargo / from source).
 
 ## Prerequisites
 
@@ -52,9 +52,60 @@ Full steps, config examples, and uninstall: **[docs/install.md](docs/install.md)
 
 ## Daily use
 
-### Task manager
+### Task manager (TUI)
 
-Open with **SUPER+Tab**, the Waybar task label, or `tsk task tui-launch`. Create, switch, and archive tasks there — or from the CLI:
+The task manager is a **ratatui** terminal UI for creating, switching, and archiving tasks without memorizing CLI flags.
+
+**Open it:**
+
+| Method | Command / binding |
+|--------|-------------------|
+| Hyprland keybind | **SUPER+Tab** (default in shipped `bindings.conf`) |
+| Waybar | click the task label |
+| New terminal window | `tsk task tui-launch` |
+| Current terminal | `tsk task tui` |
+
+`tsk task tui-launch` (and **SUPER+Tab**) spawn a floating terminal (`org.tsk.task-tui`). `tsk task tui` runs in whatever terminal you are already in.
+
+**Panels** — use **Tab** / **Shift+Tab**, or **h** / **l** / arrow keys to move between:
+
+| Panel | Purpose |
+|-------|---------|
+| **Tasks** | Active tasks grouped by repo, plus **host → default taskspace** at the top |
+| **Repos** | Registered git/jj checkouts used when creating tasks |
+| **Archived** | Archived tasks (restore or delete) |
+
+The current task is marked with **●**. Select **default taskspace** under **host** and press **Enter** to return to everyday Hyprland workspaces `1`–`10` (same as **SUPER+H** when using the default bindings).
+
+**Tasks panel**
+
+| Key | Action |
+|-----|--------|
+| ↑ / ↓ or **j** / **k** | Move selection |
+| **Enter** | Switch to selected task (or default taskspace) |
+| **n** | New task |
+| **d** | Archive selected task |
+| **D** | Delete selected task (with confirmation) |
+| **R** | Refresh list |
+| **q** / **Esc** | Quit |
+
+**Archived panel** — **r** restore, **D** delete; other keys same as Tasks (except **d** / **n**).
+
+**Repos panel**
+
+| Key | Action |
+|-----|--------|
+| **n** | Browse directories and register a checkout at the current path (**Ctrl+Enter** / **Ctrl+y** to register) |
+| **d** | Remove selected repo from the registry |
+| **R** | Refresh |
+
+**New task flow** — **n** on Tasks → pick a registered repo or **No repo (scratch workspace)** → enter a name → optionally toggle **worktree** (linked repos) and **Distrobox isolation** with **Space** → **Tab** between fields → confirm. Container tasks show setup progress in the TUI; on success the TUI switches to the new task and closes.
+
+Creating, switching, and archiving tasks requires `tskd` to be running (`systemctl --user status tskd.service`). The TUI shows a warning banner when the daemon is down.
+
+### CLI
+
+Most task operations are also available from the CLI:
 
 ```bash
 tsk task new my-feature              # git/jj from cwd (or scratch if none)
@@ -71,7 +122,7 @@ tsk task editor                      # Cursor/VS Code (Distrobox when isolation 
 tsk task browser                     # browser (Distrobox when isolation is on)
 ```
 
-There is **experimental** support for container isolation with Distrobox: pass `--container` (or use the TUI checkbox) at create time. Terminals, editor, and browser then launch via `distrobox enter`. Image defaults live under `[distrobox]` in `~/.config/tsk/config.toml`.
+There is **experimental** support for container isolation with Distrobox: pass `--container` on the CLI or enable **Distrobox isolation** in the new-task form. Terminals, editor, and browser then launch via `distrobox enter`. Image defaults live under `[distrobox]` in `~/.config/tsk/config.toml`.
 
 Task homes live under `~/tsk-tasks/<id>/`. Linked checkouts are at `~/tsk-tasks/<id>/workspace/<repo-name>` (scratch tasks use the `workspace/` directory itself). Optional checkout settings live in `.tsk/repo.toml`.
 
@@ -83,15 +134,17 @@ tsk repo list
 tsk repo root                        # detected git/jj root for cwd
 ```
 
-### Keybindings (after Hyprland integration)
+### Keybindings (Hyprland)
 
-| Action | Binding |
+These match the defaults in `share/hypr/bindings.conf` — what `tsk install omarchy` sources into Hyprland (with Omarchy conflict unbinds). Pacman and manual installs use the same template from `/usr/share/tsk/hypr/` or `~/.local/share/tsk/hypr/`; remap freely in your config, but the underlying commands stay the same (`tsk task tui-launch`, `tsk workspace switch 3`, …).
+
+| Action | Default binding |
 |--------|---------|
 | Task manager | **SUPER+Tab** (or Waybar task label) |
 | Workspace 1–9 / 10 in current taskspace | **SUPER+1..9**, **SUPER+0** |
 | Move window to workspace 1–10 | **SUPER+Shift+1..9 / 0** |
 | Previous / next workspace | **SUPER+[** / **SUPER+]** (also trackpad swipe) |
-| Default / host taskspace | **SUPER+H** or TUI → **host** |
+| Default / host taskspace | **SUPER+H** or TUI → **host → default taskspace** |
 | Task-aware terminal | **SUPER+Return** |
 | Editor / browser | **SUPER+E** / **SUPER+B** |
 
@@ -102,7 +155,7 @@ Default and task taskspaces both use **10** slots so keybinds feel the same. Cha
 ```bash
 tsk doctor
 tsk status
-tsk taskspace default                # same as SUPER+H
+tsk taskspace default                # same as SUPER+H (default bindings)
 tsk windows                          # list windows + task association
 tsk windows restore                  # move windows back to home workspaces
 tsk daemon status
