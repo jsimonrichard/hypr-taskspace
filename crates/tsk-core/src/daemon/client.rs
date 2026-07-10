@@ -3,7 +3,8 @@
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -11,7 +12,7 @@ use serde_json::{json, Value};
 use crate::error::{TskError, Result};
 use crate::hypr_log;
 use crate::hyprland;
-use crate::models::{SessionState, Task, TaskStatus};
+use crate::models::{SessionState, Task};
 use crate::service::{MenuTask, TaskService};
 use crate::workspace_nav;
 use crate::config::{load_config, load_dev_config, load_prod_config};
@@ -54,13 +55,17 @@ fn resolve_reachable_daemon_socket() -> Result<PathBuf> {
     if dev_session_active() {
         if let Ok(dev_cfg) = load_dev_config() {
             let dev_socket = dev_cfg.daemon_socket_path();
-            if ping_daemon_at(&dev_socket)? {
+            if dev_socket.exists()
+                && (daemon_recently_reachable(&dev_socket) || ping_daemon_at(&dev_socket)?)
+            {
                 return Ok(dev_socket);
             }
         }
         if let Ok(prod_cfg) = load_prod_config() {
             let prod_socket = prod_cfg.daemon_socket_path();
-            if ping_daemon_at(&prod_socket)? {
+            if prod_socket.exists()
+                && (daemon_recently_reachable(&prod_socket) || ping_daemon_at(&prod_socket)?)
+            {
                 return Ok(prod_socket);
             }
         }
@@ -68,18 +73,57 @@ fn resolve_reachable_daemon_socket() -> Result<PathBuf> {
     daemon_socket_path()
 }
 
+const REACHABILITY_TTL: Duration = Duration::from_secs(2);
+
+struct ReachabilityCache {
+    socket: PathBuf,
+    ok_until: Instant,
+}
+
+fn reachability_cache() -> &'static Mutex<Option<ReachabilityCache>> {
+    static CACHE: OnceLock<Mutex<Option<ReachabilityCache>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(None))
+}
+
+fn mark_daemon_reachable(socket: &Path) {
+    if let Ok(mut cache) = reachability_cache().lock() {
+        *cache = Some(ReachabilityCache {
+            socket: socket.to_path_buf(),
+            ok_until: Instant::now() + REACHABILITY_TTL,
+        });
+    }
+}
+
+fn mark_daemon_unreachable() {
+    if let Ok(mut cache) = reachability_cache().lock() {
+        *cache = None;
+    }
+}
+
+fn daemon_recently_reachable(socket: &Path) -> bool {
+    reachability_cache()
+        .lock()
+        .ok()
+        .and_then(|cache| cache.as_ref().map(|c| c.socket == socket && Instant::now() < c.ok_until))
+        .unwrap_or(false)
+}
+
 pub fn is_daemon_running() -> bool {
     const MAX_ATTEMPTS: u32 = 3;
     const RETRY_DELAY: Duration = Duration::from_millis(50);
 
     for attempt in 0..MAX_ATTEMPTS {
-        if resolve_reachable_daemon_socket()
-            .ok()
-            .and_then(|path| ping_daemon_at(&path).ok())
-            .unwrap_or(false)
-        {
+        let Ok(socket) = resolve_reachable_daemon_socket() else {
+            mark_daemon_unreachable();
+            return false;
+        };
+        if daemon_recently_reachable(&socket) {
             return true;
         }
+        if ping_daemon_at(&socket).ok().unwrap_or(false) {
+            return true;
+        }
+        mark_daemon_unreachable();
         if attempt + 1 < MAX_ATTEMPTS {
             std::thread::sleep(RETRY_DELAY);
         }
@@ -104,7 +148,13 @@ pub fn ping_daemon_at(path: &Path) -> Result<bool> {
         return Ok(false);
     }
     match daemon_request_at_with_timeout(path, "ping", json!({}), PING_TIMEOUT) {
-        Ok(v) => Ok(v.get("pong").and_then(|p| p.as_bool()).unwrap_or(false)),
+        Ok(v) => {
+            let ok = v.get("pong").and_then(|p| p.as_bool()).unwrap_or(false);
+            if ok {
+                mark_daemon_reachable(path);
+            }
+            Ok(ok)
+        }
         Err(_) => Ok(false),
     }
 }
@@ -130,10 +180,12 @@ fn daemon_request_at_with_timeout(
     timeout: Duration,
 ) -> Result<Value> {
     if !path.exists() {
+        mark_daemon_unreachable();
         return Err(TskError::Other("tsk daemon is not running".into()));
     }
 
     let mut stream = UnixStream::connect(path).map_err(|e| {
+        mark_daemon_unreachable();
         TskError::Other(format!(
             "failed to connect to tsk daemon at {}: {e}",
             path.display()
@@ -156,6 +208,7 @@ fn daemon_request_at_with_timeout(
     let parsed: DaemonResponse =
         serde_json::from_str(&response).map_err(|e| TskError::Other(e.to_string()))?;
     if parsed.ok {
+        mark_daemon_reachable(path);
         Ok(parsed.result)
     } else {
         Err(TskError::Other(
@@ -199,13 +252,9 @@ impl DaemonClient {
         &self.direct
     }
 
+    /// Read-only — SQLite is the source of truth; skip daemon RPC.
     pub fn load_state(&self) -> Result<SessionState> {
-        if is_daemon_running() {
-            let v = daemon_request("get_state", json!({}))?;
-            serde_json::from_value(v).map_err(|e| TskError::Other(e.to_string()))
-        } else {
-            self.direct.load_state()
-        }
+        self.direct.load_state()
     }
 
     pub fn context_default(&self) -> Result<()> {
@@ -338,40 +387,19 @@ impl DaemonClient {
         daemon_request("delete_task", json!({ "task_id": task_id })).map(|_| ())
     }
 
+    /// Spawn-only — reads state locally; no daemon RPC (avoids accept + lock latency).
     pub fn open_terminal(&self, task_id: Option<&str>, host: bool) -> Result<()> {
-        if is_daemon_running() {
-            let mut body = json!({ "host": host });
-            if let Some(task_id) = task_id {
-                body["task_id"] = json!(task_id);
-            }
-            daemon_request("open_terminal", body).map(|_| ())
-        } else {
-            self.direct.open_terminal(task_id, host)
-        }
+        self.direct.open_terminal(task_id, host)
     }
 
+    /// Spawn-only — reads state locally; no daemon RPC.
     pub fn open_editor(&self, task_id: Option<&str>) -> Result<()> {
-        if is_daemon_running() {
-            let mut body = json!({});
-            if let Some(task_id) = task_id {
-                body["task_id"] = json!(task_id);
-            }
-            daemon_request("open_editor", body).map(|_| ())
-        } else {
-            self.direct.open_editor(task_id)
-        }
+        self.direct.open_editor(task_id)
     }
 
+    /// Spawn-only — reads state locally; no daemon RPC.
     pub fn open_browser(&self, task_id: Option<&str>) -> Result<()> {
-        if is_daemon_running() {
-            let mut body = json!({});
-            if let Some(task_id) = task_id {
-                body["task_id"] = json!(task_id);
-            }
-            daemon_request("open_browser", body).map(|_| ())
-        } else {
-            self.direct.open_browser(task_id)
-        }
+        self.direct.open_browser(task_id)
     }
 
     pub fn run_on_create_hook(&self, task_id: &str) -> Result<()> {
@@ -392,61 +420,23 @@ impl DaemonClient {
     }
 
     pub fn resolve_task(&self, name_or_id: &str) -> Result<Task> {
-        if is_daemon_running() {
-            let v = daemon_request("resolve_task", json!({ "name_or_id": name_or_id }))?;
-            serde_json::from_value(v).map_err(|e| TskError::Other(e.to_string()))
-        } else {
-            self.direct.resolve_task(name_or_id)
-        }
+        self.direct.resolve_task(name_or_id)
     }
 
     pub fn tasks_for_menu(&self) -> Result<Vec<MenuTask>> {
-        if is_daemon_running() {
-            let v = daemon_request("tasks_for_menu", json!({}))?;
-            serde_json::from_value(v).map_err(|e| TskError::Other(e.to_string()))
-        } else {
-            self.direct.tasks_for_menu()
-        }
+        self.direct.tasks_for_menu()
     }
 
     pub fn taskspace_label(&self) -> Result<String> {
-        if is_daemon_running() {
-            let v = daemon_request("taskspace_label", json!({}))?;
-            Ok(v.get("label")
-                .and_then(|l| l.as_str())
-                .unwrap_or("default")
-                .to_string())
-        } else {
-            self.direct.taskspace_label()
-        }
+        self.direct.taskspace_label()
     }
 
     pub fn list_active_tasks(&self) -> Result<Vec<Task>> {
-        if is_daemon_running() {
-            let state = self.load_state()?;
-            Ok(state
-                .tasks
-                .values()
-                .filter(|t| t.status != TaskStatus::Archived)
-                .cloned()
-                .collect())
-        } else {
-            self.direct.list_active_tasks()
-        }
+        self.direct.list_active_tasks()
     }
 
     pub fn list_archived_tasks(&self) -> Result<Vec<Task>> {
-        if is_daemon_running() {
-            let state = self.load_state()?;
-            Ok(state
-                .tasks
-                .values()
-                .filter(|t| t.status == TaskStatus::Archived)
-                .cloned()
-                .collect())
-        } else {
-            self.direct.list_archived_tasks()
-        }
+        self.direct.list_archived_tasks()
     }
 }
 

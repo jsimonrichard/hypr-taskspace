@@ -58,9 +58,6 @@ impl DaemonServer {
                 source,
             },
         )?;
-        listener
-            .set_nonblocking(true)
-            .map_err(|e| TskError::Other(e.to_string()))?;
 
         eprintln!("tsk daemon listening on {}", socket_path.display());
 
@@ -99,16 +96,16 @@ impl DaemonServer {
             }
         }
 
+        // Blocking accept — wakes immediately on connect.
         while !self.stop.load(Ordering::Relaxed) && !SHUTDOWN.load(Ordering::Relaxed) {
             match listener.accept() {
                 Ok((stream, _)) => {
                     let service = self.service.clone();
-                    thread::spawn(move || handle_client(stream, service));
+                    handle_connection(stream, service);
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    thread::sleep(Duration::from_millis(50));
+                Err(_e) if self.stop.load(Ordering::Relaxed) || SHUTDOWN.load(Ordering::Relaxed) => {
+                    break;
                 }
-                Err(_e) if self.stop.load(Ordering::Relaxed) => break,
                 Err(e) => {
                     eprintln!("tsk daemon accept error: {e}");
                     thread::sleep(Duration::from_millis(200));
@@ -169,7 +166,8 @@ fn start_hyprland_listener(
     }))
 }
 
-fn handle_client(mut stream: UnixStream, service: Arc<Mutex<TaskService>>) {
+/// Read one request; fast read-only RPCs run inline on the accept thread.
+fn handle_connection(mut stream: UnixStream, service: Arc<Mutex<TaskService>>) {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
 
@@ -181,22 +179,39 @@ fn handle_client(mut stream: UnixStream, service: Arc<Mutex<TaskService>>) {
     let method = request
         .get("method")
         .and_then(|m| m.as_str())
-        .unwrap_or("");
+        .unwrap_or("")
+        .to_string();
     let params = request
         .get("params")
         .cloned()
         .unwrap_or_else(|| json!({}));
 
-    let response = match dispatch(service, method, params) {
+    if is_inline_method(&method) {
+        let response = dispatch(service, &method, params);
+        let _ = write_response(&mut stream, response);
+        return;
+    }
+
+    thread::spawn(move || {
+        let response = dispatch(service, &method, params);
+        let _ = write_response(&mut stream, response);
+    });
+}
+
+fn is_inline_method(method: &str) -> bool {
+    method == "ping"
+}
+
+fn write_response(stream: &mut UnixStream, response: Result<Value>) -> std::io::Result<()> {
+    let body = match response {
         Ok(result) => json!({ "ok": true, "result": result }),
         Err(err) => json!({ "ok": false, "error": err.to_string() }),
     };
-
-    let line = match serde_json::to_string(&response) {
+    let line = match serde_json::to_string(&body) {
         Ok(s) => format!("{s}\n"),
-        Err(_) => return,
+        Err(_) => return Ok(()),
     };
-    let _ = stream.write_all(line.as_bytes());
+    stream.write_all(line.as_bytes())
 }
 
 fn read_request(stream: &mut UnixStream) -> Option<Value> {
@@ -471,8 +486,9 @@ pub fn stop_daemon() -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::os::unix::net::UnixStream;
     use std::io::Write;
+    use std::os::unix::net::UnixStream;
+    use std::time::{Duration, Instant};
 
     #[test]
     fn dispatch_ping() {
@@ -491,5 +507,27 @@ mod tests {
         });
         let req = read_request(&mut server).expect("request");
         assert_eq!(req["method"], "ping");
+    }
+
+    #[test]
+    fn ping_roundtrip_under_10ms() {
+        let server = DaemonServer::new().unwrap();
+        let (mut client, server_stream) = UnixStream::pair().unwrap();
+        let service = server.service.clone();
+        let start = Instant::now();
+        let server = std::thread::spawn(move || handle_connection(server_stream, service));
+        client
+            .write_all(b"{\"method\":\"ping\",\"params\":{}}\n")
+            .unwrap();
+        let mut buf = [0u8; 4096];
+        let n = client.read(&mut buf).unwrap();
+        server.join().unwrap();
+        let line = std::str::from_utf8(&buf[..n]).unwrap();
+        assert!(line.contains("\"pong\":true"));
+        assert!(
+            start.elapsed() < Duration::from_millis(10),
+            "ping roundtrip took {:?}",
+            start.elapsed()
+        );
     }
 }

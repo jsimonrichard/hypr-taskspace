@@ -1310,32 +1310,35 @@ fn cmd_task_current() -> Result<()> {
 }
 
 fn cmd_task_terminal(name_or_id: Option<&str>, host: bool) -> Result<()> {
+    let svc = client()?;
     let task_id = if host {
         None
     } else if let Some(name) = name_or_id {
-        Some(client()?.resolve_task(name)?.id)
+        Some(svc.direct().resolve_task(name)?.id)
     } else {
         None
     };
-    client()?.open_terminal(task_id.as_deref(), host)
+    svc.open_terminal(task_id.as_deref(), host)
 }
 
 fn cmd_task_editor(name_or_id: Option<&str>) -> Result<()> {
+    let svc = client()?;
     let task_id = if let Some(name) = name_or_id {
-        Some(client()?.resolve_task(name)?.id)
+        Some(svc.direct().resolve_task(name)?.id)
     } else {
         None
     };
-    client()?.open_editor(task_id.as_deref())
+    svc.open_editor(task_id.as_deref())
 }
 
 fn cmd_task_browser(name_or_id: Option<&str>) -> Result<()> {
+    let svc = client()?;
     let task_id = if let Some(name) = name_or_id {
-        Some(client()?.resolve_task(name)?.id)
+        Some(svc.direct().resolve_task(name)?.id)
     } else {
         None
     };
-    client()?.open_browser(task_id.as_deref())
+    svc.open_browser(task_id.as_deref())
 }
 
 fn cmd_task_tui() -> Result<()> {
