@@ -13,7 +13,7 @@ systemctl --user enable --now tskd.service
 
 Templates live under `/usr/share/tsk/`; runtime data (`state.db`, `daemon.sock`) stays in `~/.local/share/tsk/`. Wire Hyprland and Waybar yourself.
 
-See **[docs/packaging.md](packaging.md)** for paths and manual integration steps.
+See **[packaging.md](packaging.md)** for paths and manual integration steps.
 
 ---
 
@@ -55,6 +55,8 @@ scripts/install-user-share.sh
 
 This copies `share/` templates to `~/.local/share/tsk/`, builds `libtsk_waybar.so`, and reloads Hyprland/Waybar.
 
+| | Path |
+|---|------|
 | Runtime data | `~/.local/share/tsk/` (`state.db`, `daemon.sock`) |
 | CLI | on `PATH` (`~/.cargo/bin/tsk` or `/usr/bin/tsk`) |
 | Waybar module | `~/.local/share/tsk/lib/` (cargo) or `/usr/share/tsk/lib/` (pacman) |
@@ -64,7 +66,7 @@ This copies `share/` templates to `~/.local/share/tsk/`, builds `libtsk_waybar.s
 
 Waybar loads the module from a path under the share tree (see `share/waybar/cffi-module.jsonc`). The install script or package places `libtsk_waybar.so` there.
 
-## 3. Hyprland integration
+### 3. Hyprland integration
 
 Add **as the last line** of `~/.config/hypr/hyprland.conf`:
 
@@ -79,11 +81,11 @@ Resolve keybind conflicts your way. Omarchy users may source `…/hypr/integrati
 
 Run `hyprctl reload` after editing.
 
-## 4. Waybar integration
+### 4. Waybar integration
 
 Merge the CFFI snippet from your share tree (`waybar/cffi-module.jsonc`) into `~/.config/waybar/config.jsonc`. Append `waybar/tsk-style.css` to your Waybar `style.css`.
 
-## 5. Daemon (systemd)
+### 5. Daemon (systemd)
 
 ```bash
 scripts/install-systemd.sh
@@ -93,12 +95,25 @@ Pacman installs the unit to `/usr/lib/systemd/user/tskd.service`; the script ena
 
 Manage with `systemctl --user status tskd.service` or `tsk daemon start|stop|restart`.
 
-## 6. Verify
+### 6. Verify
 
 ```bash
 tsk doctor
 tsk integration status
 tsk daemon status
+```
+
+## Suggested config
+
+On first run, `tsk` creates `~/.config/tsk/config.toml`. For pacman installs, set share paths explicitly (or copy `/usr/share/tsk/config.toml.example`):
+
+```toml
+[data]
+dir = "~/.local/share/tsk"
+
+[install.hypr]
+share_dir = "/usr/share/tsk"
+source_line = "/usr/share/tsk/hypr/bindings.conf"
 ```
 
 ## Update after pulling
@@ -107,6 +122,15 @@ tsk daemon status
 scripts/install-user-share.sh          # cargo / source: refresh share + .so
 tsk install omarchy                    # Omarchy: re-patch configs
 # pacman: cd packaging/arch && makepkg -si
+systemctl --user restart tskd.service
+```
+
+## Migrating from a legacy cargo install
+
+If you previously copied everything into `~/.local/share/tsk/` and switch to pacman:
+
+```bash
+scripts/cleanup-legacy-install.sh    # removes duplicate templates; keeps state.db
 ```
 
 ## Uninstall
@@ -119,4 +143,4 @@ systemctl --user disable --now tskd.service
 # optional: rm -rf ~/.local/share/tsk/   # removes state.db
 ```
 
-For automated rollback (dev install only), see [dev.md](dev.md).
+For automated rollback of **dev** integration only, see [dev.md](dev.md).

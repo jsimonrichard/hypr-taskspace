@@ -59,7 +59,7 @@ Or copy `/usr/share/tsk/config.toml.example` to `~/.config/tsk/config.toml`.
 systemctl --user enable --now tskd.service
 ```
 
-The packaged unit uses `ExecStart=/usr/bin/tsk daemon run`. Enable it with `systemctl --user enable --now tskd.service` or `scripts/install-systemd.sh`.
+The packaged unit uses `ExecStart=/usr/bin/tsk daemon run`. You can also enable it with `scripts/install-systemd.sh`.
 
 ### Verify
 
@@ -84,12 +84,10 @@ cargo install --path crates/tsk-cli
 scripts/install-user-share.sh
 ```
 
-That copies templates to `~/.local/share/tsk/` instead of `/usr/share/tsk`.
+That copies templates to `~/.local/share/tsk/` instead of `/usr/share/tsk`. See [install.md](install.md).
 
 ## AUR publish
 
 1. Tag a release and set `source` + `sha512sums` in `PKGBUILD`.
 2. Copy `packaging/arch/PKGBUILD` to the AUR repo.
 3. Run `makepkg --printsrcinfo > .SRCINFO`.
-
-See also [docs/install.md](../install.md) for integration details.
