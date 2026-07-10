@@ -5,7 +5,7 @@ use tsk_core::{
     format_version_long, install_bins, diagnose_socket2, enable_for_process, format_report, hypr_log_path,
     hyprland, install_hypr,
     install_hypr_status, install_omarchy_prod, install_systemd_status, install_waybar,
-    install_waybar_status, is_dev_config, is_daemon_running, is_systemd_unit_installed, launch_task_tui,
+    install_walker, install_walker_status, install_waybar_status, is_dev_config, is_daemon_running, is_systemd_unit_installed, launch_task_tui,
     load_config, load_dev_config, maybe_reexec_dev_session, normalize_desktop_env, ping_daemon,
     reconcile_stale_dev_session,
     profile_for_config,
@@ -13,7 +13,8 @@ use tsk_core::{
     systemd_restart, systemd_start, systemd_stop, systemctl_is_active, tail_hypr_log, tail_raw,
     trace_path, uninstall_hypr, uninstall_waybar, version_info, workspace_module_key, DaemonClient,
     DaemonServer, InstallBinsOptions, InstallHyprOptions, InstallProfile,
-    InstallWaybarOptions, OmarchyInstallOptions, TskError, Registry, Result, TaskService, TaskStatus,
+    InstallWaybarOptions, InstallWalkerOptions, OmarchyInstallOptions, TskError, Registry, Result, TaskService, TaskStatus,
+    walker_exec, walker_terminal,
     TaskRepoSource, detect_vcs_root, find_repo, find_repo_by_path, load_repos, register_repo, repo_label,
     ensure_repo_removable, unregister_repo, clear_hypr_log,
 };
@@ -77,6 +78,11 @@ enum Commands {
     },
     #[command(subcommand)]
     Daemon(DaemonCommands),
+    /// Walker / Elephant launch integration (used as Elephant launch_prefix)
+    Walker {
+        #[command(subcommand)]
+        command: WalkerCommands,
+    },
     /// Clear session navigation memory (workspace layout per monitor)
     Reset {
         #[command(subcommand)]
@@ -112,6 +118,27 @@ enum ProdInstallCommands {
         dry_run: bool,
         #[arg(long)]
         workspace: Option<std::path::PathBuf>,
+    },
+    /// Walker / Elephant launch_prefix integration (prod)
+    Walker {
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long, help = "Minimal output")]
+        quiet: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum WalkerCommands {
+    /// Launch an application with taskspace env (Elephant `launch_prefix` target)
+    Exec {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Open task terminal or run a command in one (Elephant `terminal_cmd` target)
+    Terminal {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
     },
 }
 
@@ -434,6 +461,7 @@ fn run() -> Result<()> {
             ProdInstallCommands::Omarchy { dry_run, workspace } => {
                 cmd_install_omarchy(dry_run, workspace)
             }
+            ProdInstallCommands::Walker { dry_run, quiet } => cmd_install_walker(dry_run, quiet),
         },
         Commands::Dev { command } => match command {
             DevCommands::Install {
@@ -564,6 +592,16 @@ fn run() -> Result<()> {
             DaemonCommands::Stop => cmd_daemon_stop(),
             DaemonCommands::Restart => cmd_daemon_restart(),
             DaemonCommands::Status => cmd_daemon_status(),
+        },
+        Commands::Walker { command } => match command {
+            WalkerCommands::Exec { args } => {
+                let argv: Vec<&str> = args.iter().map(String::as_str).collect();
+                walker_exec(&argv)
+            }
+            WalkerCommands::Terminal { args } => {
+                let argv: Vec<&str> = args.iter().map(String::as_str).collect();
+                walker_terminal(&argv)
+            }
         },
         Commands::Reset { command } => match command {
             ResetCommands::Layout => cmd_reset_layout(),
@@ -787,7 +825,29 @@ fn cmd_install_omarchy(dry_run: bool, workspace: Option<std::path::PathBuf>) -> 
     println!("Omarchy prod integration installed to {}.", cfg.install_hypr_share_dir.display());
     println!("  Hyprland: source line + Omarchy unbinds");
     println!("  Waybar: cffi/tsk module, styles, restart");
+    println!("  Walker: Elephant launch_prefix + terminal_cmd");
     println!("Next: scripts/install-systemd.sh  (or systemctl --user enable --now tskd.service when using the pacman package)");
+    Ok(())
+}
+
+fn cmd_install_walker(dry_run: bool, quiet: bool) -> Result<()> {
+    let cfg = load_config()?;
+    let actions = install_walker(
+        &cfg,
+        &InstallWalkerOptions {
+            dry_run,
+            quiet,
+            skip_if_missing: false,
+        },
+    )?;
+    if dry_run || !quiet {
+        for line in actions {
+            println!("{line}");
+        }
+    }
+    if !dry_run && !quiet {
+        println!("Walker integration installed — restart Walker if apps still launch without task env.");
+    }
     Ok(())
 }
 
@@ -797,7 +857,8 @@ fn cmd_dev_install_all(
     workspace: Option<std::path::PathBuf>,
 ) -> Result<()> {
     cmd_dev_install_hypr_inner(dry_run, quiet, workspace.clone(), true)?;
-    cmd_dev_install_waybar_inner(dry_run, quiet, workspace, true)?;
+    cmd_dev_install_waybar_inner(dry_run, quiet, workspace.clone(), true)?;
+    cmd_dev_install_walker_inner(dry_run, quiet)?;
     if dry_run {
         return Ok(());
     }
@@ -811,6 +872,37 @@ fn cmd_dev_install_all(
         if !actions.is_empty() {
             println!("Applied: {}.", actions.join(", "));
         }
+    }
+    Ok(())
+}
+
+fn cmd_dev_install_walker_inner(dry_run: bool, quiet: bool) -> Result<()> {
+    let cfg = load_dev_config()?;
+    let actions = install_walker(
+        &cfg,
+        &InstallWalkerOptions {
+            dry_run,
+            quiet,
+            skip_if_missing: true,
+        },
+    )?;
+    if dry_run {
+        for line in actions {
+            println!("{line}");
+        }
+        return Ok(());
+    }
+    if quiet {
+        for line in actions {
+            if line.starts_with("Walker: skipped") {
+                continue;
+            }
+            println!("  {line}");
+        }
+        return Ok(());
+    }
+    for line in actions {
+        println!("{line}");
     }
     Ok(())
 }
@@ -961,6 +1053,25 @@ fn cmd_integration_status(cfg: tsk_core::TskConfig) -> Result<()> {
         println!("Waybar integration: installed");
     } else {
         println!("Waybar integration: not installed");
+    }
+    let walker = install_walker_status(&cfg)?;
+    if walker.get("installed").and_then(|v| v.as_bool()).unwrap_or(false) {
+        println!("Walker integration: installed");
+        if let Some(p) = walker.get("config_path").and_then(|v| v.as_str()) {
+            println!("  elephant: {p}");
+        }
+        let prefix_ok = walker
+            .get("launch_prefix_set")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let terminal_ok = walker
+            .get("terminal_cmd_set")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        println!("  launch_prefix: {}", if prefix_ok { "ok" } else { "missing" });
+        println!("  terminal_cmd: {}", if terminal_ok { "ok" } else { "missing" });
+    } else {
+        println!("Walker integration: not installed");
     }
     if profile.install_systemd() {
         let s = install_systemd_status(&cfg)?;

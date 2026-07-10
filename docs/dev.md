@@ -25,7 +25,7 @@ This:
 
 1. Symlinks `~/.local/share/tsk-dev/state.db` → prod `state.db` (so existing tasks, repos, and window registry stay visible)
 2. Builds `target/release/tsk` and writes `~/.local/share/tsk/dev-session` with the dev binary path
-3. Runs `tsk dev install all` (share assets, Hyprland, Waybar)
+3. Runs `tsk dev install all` (share assets, Hyprland, Waybar, Walker/Elephant)
 4. Stops prod `tskd.service` if running, starts the **dev daemon** in the foreground
 
 When you exit the dev daemon (Ctrl+C) or run `scripts/dev.sh leave`, dev integration is **fully removed**: Hyprland and Waybar are restored to prod, the session file is deleted, and prod `tskd.service` is restarted if it was running before.

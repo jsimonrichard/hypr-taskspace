@@ -10,8 +10,8 @@ use crate::error::{TskError, Result};
 use crate::models::{SessionState, Task};
 use crate::task_env;
 
-const EDITOR_CANDIDATES: &[&str] = &["cursor", "code"];
-const BROWSER_CANDIDATES: &[&str] = &[
+pub const EDITOR_CANDIDATES: &[&str] = &["cursor", "code"];
+pub const BROWSER_CANDIDATES: &[&str] = &[
     "chromium",
     "chromium-browser",
     "google-chrome-stable",
@@ -71,6 +71,50 @@ pub fn launch_task_browser(task: &Task, state: &SessionState) -> Result<()> {
         )
     })?;
     spawn_task_command(task, state, &browser, &[])
+}
+
+/// Browser in default taskspace — taskspace env only (no Distrobox).
+pub fn launch_taskspace_browser(state: &SessionState, tasks_base_dir: &Path) -> Result<()> {
+    let browser = resolve_browser_command().ok_or_else(|| {
+        TskError::Other(
+            "no browser found (looked for chromium, chrome, brave, firefox) — set $BROWSER"
+                .into(),
+        )
+    })?;
+    let env = task_env::build_taskspace_env(state, tasks_base_dir);
+    spawn_with_env(&browser, &[], &env)
+}
+
+/// Editor in default taskspace — opens cwd or home with taskspace env.
+pub fn launch_taskspace_editor(
+    state: &SessionState,
+    tasks_base_dir: &Path,
+    path: Option<&str>,
+) -> Result<()> {
+    let editor = resolve_editor_command().ok_or_else(|| {
+        TskError::Other(
+            "no editor found (looked for cursor, code) — install Cursor/VS Code or launch manually"
+                .into(),
+        )
+    })?;
+    let env = task_env::build_taskspace_env(state, tasks_base_dir);
+    let path = path
+        .map(str::to_string)
+        .or_else(|| std::env::current_dir().ok().map(|p| p.to_string_lossy().into_owned()))
+        .unwrap_or_else(|| ".".into());
+    spawn_with_env(&editor, &[&path], &env)
+}
+
+fn spawn_with_env(program: &str, args: &[&str], env: &[(String, String)]) -> Result<()> {
+    let mut cmd = Command::new(program);
+    task_env::apply_env(&mut cmd, env);
+    cmd.args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    cmd.spawn()
+        .map_err(|e| TskError::Other(format!("failed to launch `{program}`: {e}")))?;
+    Ok(())
 }
 
 fn spawn_task_command(

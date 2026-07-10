@@ -16,6 +16,7 @@ HYPR_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/hyprland.conf"
 
 PROD_TSKD_WAS_ACTIVE=false
 TEARDOWN_DONE=false
+DEV_DAEMON_PID=""
 QUIET=true
 
 section() {
@@ -65,11 +66,21 @@ stop_pidfile_process() {
 }
 
 stop_dev_daemon() {
+  local pid="${DEV_DAEMON_PID:-}"
+  if [[ -z "$pid" && -f "$DEV_DATA/daemon.pid" ]]; then
+    pid="$(tr -d '[:space:]' <"$DEV_DATA/daemon.pid")"
+  fi
   if [[ -x "$DEV_BUILD" ]]; then
     env TSK_WORKSPACE="$ROOT" "$DEV_BUILD" daemon stop >/dev/null 2>&1 || true
   fi
   stop_pidfile_process "$DEV_DATA/daemon.pid"
   stop_socket_listener "$DEV_DATA/daemon.sock"
+  if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+    kill -TERM "$pid" 2>/dev/null || true
+    sleep 0.2
+    kill -KILL "$pid" 2>/dev/null || true
+  fi
+  DEV_DAEMON_PID=""
 }
 
 cleanup_prod_daemon_orphans() {
@@ -114,7 +125,11 @@ start_prod_tskd() {
   cleanup_prod_daemon_orphans
   if $should_start; then
     echo "Starting prod tskd.service..."
-    systemctl --user start tskd.service 2>/dev/null || true
+    if command -v timeout >/dev/null 2>&1; then
+      timeout 10 systemctl --user start tskd.service 2>/dev/null || true
+    else
+      systemctl --user start tskd.service 2>/dev/null || true
+    fi
   fi
 }
 
@@ -240,10 +255,11 @@ teardown_dev_session() {
     return 0
   fi
   TEARDOWN_DONE=true
-  # Ignore further Ctrl+C while cleanup runs (a second interrupt used to abort mid-teardown).
-  trap '' INT TERM
 
   stop_dev_daemon
+
+  # Ignore further Ctrl+C while cleanup runs (a second interrupt used to abort mid-teardown).
+  trap '' INT TERM
 
   if dev_integration_installed || [[ -f "$SESSION_FILE" ]]; then
     echo "Leaving dev mode — restoring prod integration..."
@@ -291,7 +307,12 @@ start_dev_daemon() {
 
   note "Dev daemon (Ctrl+C or scripts/dev.sh leave restores prod)"
   export TSK_QUIET=1
-  "$DEV_BUILD" daemon run
+  "$DEV_BUILD" daemon run &
+  DEV_DAEMON_PID=$!
+  wait "$DEV_DAEMON_PID"
+  local status=$?
+  DEV_DAEMON_PID=""
+  return "$status"
 }
 
 case "$cmd" in
@@ -365,6 +386,7 @@ case "$cmd" in
     echo "  enter --verbose       — same, with full cargo/tsk install output" >&2
     echo "  leave                 — uninstall dev integration and restore prod" >&2
     echo "  install               — build + dev-session + dev install subcommand" >&2
+    echo "  install all           — Hyprland + Waybar + Walker (Elephant) integration" >&2
     echo "  daemon                — build, dev-session, start dev daemon" >&2
     echo "  TSK_DEV_ISOLATED=1    — skip prod state.db symlink (CI/e2e)" >&2
     exit 1

@@ -12,6 +12,7 @@ pub mod profile;
 pub mod reload;
 pub mod systemd;
 pub mod waybar;
+pub mod walker;
 
 pub use bins::{install_bins, InstallBinsOptions};
 pub use hypr::{
@@ -29,4 +30,7 @@ pub use systemd::{
     uninstall_systemd, InstallSystemdOptions,
 };
 pub use omarchy::{install_omarchy_prod, OmarchyInstallOptions};
+pub use walker::{
+    install_walker, install_walker_status, uninstall_walker, InstallWalkerOptions,
+};
 pub use waybar::{install_waybar, install_waybar_status, uninstall_waybar, InstallWaybarOptions};

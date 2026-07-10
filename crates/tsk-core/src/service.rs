@@ -636,14 +636,52 @@ impl TaskService {
 
     pub fn open_editor(&self, task_id: Option<&str>) -> Result<()> {
         let mut state = self.load_state()?;
-        let task = self.resolve_task_for_launch(&mut state, task_id)?;
-        crate::apps::launch_task_editor(&task, &state)
+
+        if let Some(tid) = task_id {
+            let task = state
+                .tasks
+                .get(tid)
+                .cloned()
+                .ok_or_else(|| TskError::Other(format!("Unknown task: {tid}")))?;
+            return crate::apps::launch_task_editor(&task, &state);
+        }
+
+        crate::context_sync::sync_from_active_workspace(&mut state);
+
+        if state.context_mode == ContextMode::Task {
+            if let Some(tid) = state.current_task_id.as_deref() {
+                if let Some(task) = state.tasks.get(tid) {
+                    return crate::apps::launch_task_editor(task, &state);
+                }
+            }
+        }
+
+        crate::apps::launch_taskspace_editor(&state, &self.config.tasks_base_dir, None)
     }
 
     pub fn open_browser(&self, task_id: Option<&str>) -> Result<()> {
         let mut state = self.load_state()?;
-        let task = self.resolve_task_for_launch(&mut state, task_id)?;
-        crate::apps::launch_task_browser(&task, &state)
+
+        if let Some(tid) = task_id {
+            let task = state
+                .tasks
+                .get(tid)
+                .cloned()
+                .ok_or_else(|| TskError::Other(format!("Unknown task: {tid}")))?;
+            return crate::apps::launch_task_browser(&task, &state);
+        }
+
+        crate::context_sync::sync_from_active_workspace(&mut state);
+
+        if state.context_mode == ContextMode::Task {
+            if let Some(tid) = state.current_task_id.as_deref() {
+                if let Some(task) = state.tasks.get(tid) {
+                    return crate::apps::launch_task_browser(task, &state);
+                }
+            }
+        }
+
+        crate::apps::launch_taskspace_browser(&state, &self.config.tasks_base_dir)
     }
 
     pub fn switch_task(&self, task_id: &str) -> Result<Task> {

@@ -1,16 +1,10 @@
 //! Unix-socket RPC server — single owner of session state.
 
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::atomic::{AtomicBool, Ordering};
-
-static SHUTDOWN: AtomicBool = AtomicBool::new(false);
-
-extern "C" fn handle_shutdown(_: i32) {
-    SHUTDOWN.store(true, Ordering::Relaxed);
-}
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -22,6 +16,10 @@ use crate::error::{TskError, Result};
 use crate::hyprland_events::{parse_workspace_v2, HyprlandEventListener};
 use crate::service::TaskService;
 use crate::xdg::ensure_parent;
+
+fn shutdown_requested(server: &DaemonServer) -> bool {
+    server.stop.load(Ordering::SeqCst)
+}
 
 pub struct DaemonServer {
     service: Arc<Mutex<TaskService>>,
@@ -52,6 +50,10 @@ impl DaemonServer {
             path: socket_path.clone(),
             source,
         })?;
+        listener.set_nonblocking(true).map_err(|source| TskError::Write {
+            path: socket_path.clone(),
+            source,
+        })?;
         fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600)).map_err(
             |source| TskError::Write {
                 path: socket_path.clone(),
@@ -61,17 +63,6 @@ impl DaemonServer {
 
         eprintln!("tsk daemon listening on {}", socket_path.display());
 
-        unsafe {
-            libc::signal(
-                libc::SIGTERM,
-                handle_shutdown as *const () as libc::sighandler_t,
-            );
-            libc::signal(
-                libc::SIGINT,
-                handle_shutdown as *const () as libc::sighandler_t,
-            );
-        }
-
         // Fast DB sync first; Hyprland slot rename runs in the background.
         {
             let svc = self
@@ -80,8 +71,13 @@ impl DaemonServer {
                 .map_err(|e| TskError::Other(e.to_string()))?;
             svc.initialize()?;
         }
+        if shutdown_requested(&self) {
+            cleanup_runtime_files();
+            return Ok(());
+        }
+
         let service = self.service.clone();
-        thread::spawn(move || {
+        let provision = thread::spawn(move || {
             if let Ok(svc) = service.lock() {
                 if let Err(err) = svc.provision_default_workspaces() {
                     eprintln!("tsk daemon: workspace provision: {err}");
@@ -90,20 +86,34 @@ impl DaemonServer {
         });
 
         let _hyprland_listener = start_hyprland_listener(self.service.clone());
+        if shutdown_requested(&self) {
+            let _ = provision.join();
+            cleanup_runtime_files();
+            return Ok(());
+        }
+
         if let Ok(svc) = self.service.lock() {
             if let Err(err) = svc.sync_window_registry() {
                 eprintln!("tsk daemon: window registry sync: {err}");
             }
         }
+        if shutdown_requested(&self) {
+            let _ = provision.join();
+            cleanup_runtime_files();
+            return Ok(());
+        }
 
-        // Blocking accept — wakes immediately on connect.
-        while !self.stop.load(Ordering::Relaxed) && !SHUTDOWN.load(Ordering::Relaxed) {
+        // Nonblocking accept — SIGINT/SIGTERM use the default disposition (terminate).
+        while !shutdown_requested(&self) {
             match listener.accept() {
                 Ok((stream, _)) => {
                     let service = self.service.clone();
                     handle_connection(stream, service);
                 }
-                Err(_e) if self.stop.load(Ordering::Relaxed) || SHUTDOWN.load(Ordering::Relaxed) => {
+                Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(50));
+                }
+                Err(_) if shutdown_requested(&self) => {
                     break;
                 }
                 Err(e) => {
@@ -113,12 +123,13 @@ impl DaemonServer {
             }
         }
 
+        let _ = provision.join();
         cleanup_runtime_files();
         Ok(())
     }
 
     pub fn stop(&self) {
-        self.stop.store(true, Ordering::Relaxed);
+        self.stop.store(true, Ordering::SeqCst);
     }
 }
 
@@ -476,11 +487,31 @@ pub fn stop_daemon() -> Result<bool> {
         if !path.is_file() {
             return Ok(true);
         }
+        if !process_alive(pid) {
+            cleanup_runtime_files();
+            return Ok(true);
+        }
         thread::sleep(Duration::from_millis(100));
+    }
+
+    if process_alive(pid) {
+        unsafe {
+            libc::kill(pid, libc::SIGKILL);
+        }
+        for _ in 0..20 {
+            if !process_alive(pid) {
+                break;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
     }
 
     cleanup_runtime_files();
     Ok(true)
+}
+
+fn process_alive(pid: i32) -> bool {
+    unsafe { libc::kill(pid, 0) == 0 }
 }
 
 #[cfg(test)]

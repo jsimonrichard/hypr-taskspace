@@ -12,7 +12,7 @@ use crate::is_daemon_running;
 use crate::hyprland;
 use crate::hyprland_events::diagnose_socket2;
 use crate::install::{
-    install_hypr_status, install_systemd_status, install_waybar_status, manifest,
+    install_hypr_status, install_systemd_status, install_walker_status, install_waybar_status, manifest,
 };
 use crate::install::waybar::CFFI_MODULE;
 use crate::share::{effective_share_dir, uses_packaged_share};
@@ -111,6 +111,24 @@ pub fn run_doctor_checks(cfg: &TskConfig) -> Result<Vec<DoctorCheck>> {
                 module_path.display()
             )
         },
+    });
+
+    let walker = install_walker_status(cfg)?;
+    checks.push(DoctorCheck {
+        label: "Walker Elephant launch_prefix".into(),
+        passed: walker
+            .get("installed")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+            && walker
+                .get("launch_prefix_set")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+        detail: walker
+            .get("config_path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
     });
 
     checks.push(DoctorCheck {

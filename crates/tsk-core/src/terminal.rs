@@ -11,7 +11,7 @@ use crate::models::Task;
 use crate::registry::Registry;
 use crate::task_env;
 
-const TERMINAL_FALLBACKS: &[&str] = &[
+pub const TERMINAL_FALLBACKS: &[&str] = &[
     "xdg-terminal-exec",
     "alacritty",
     "ghostty",
@@ -118,7 +118,7 @@ fn shell_single_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
-fn resolve_terminal_command(cfg: &TskConfig) -> Result<String> {
+pub fn resolve_terminal_command(cfg: &TskConfig) -> Result<String> {
     if let Some(path) = command_v_login(&cfg.terminal_command) {
         return Ok(path);
     }
@@ -204,7 +204,7 @@ fn spawn_host_shell(
     Ok(())
 }
 
-fn spawn_terminal_command(
+pub fn spawn_terminal_command(
     term: &str,
     program: &Path,
     args: &[&str],
@@ -247,7 +247,11 @@ fn spawn_terminal_command(
             cmd.args(args);
         }
         "alacritty" => {
-            cmd.args(["--class", class, "-t", title, "-e"]);
+            cmd.args(["--class", class, "-t", title]);
+            if let Some(cwd) = cwd {
+                cmd.args(["--working-directory", &cwd.display().to_string()]);
+            }
+            cmd.args(["-e"]);
             cmd.arg(program);
             cmd.args(args);
         }

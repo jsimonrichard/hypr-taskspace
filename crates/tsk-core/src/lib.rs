@@ -31,6 +31,7 @@ pub mod trace;
 pub mod binary;
 pub mod version;
 pub mod waybar;
+pub mod walker;
 pub mod workspace_nav;
 pub mod workspace_slots;
 pub mod window_registry;
@@ -49,13 +50,13 @@ pub use daemon::{
 pub use error::{TskError, Result};
 pub use install::{
     install_bins, install_hypr, install_hypr_status, install_systemd, install_systemd_status,
-    install_waybar, install_waybar_status, is_systemd_unit_installed, render_service_unit,
-    run_doctor_checks, systemd_restart, systemd_start, systemd_stop, systemctl_is_active,
-    systemctl_is_enabled, uninstall_hypr, uninstall_systemd, uninstall_waybar, InstallBinsOptions,
-    DoctorCheck, InstallHyprOptions, InstallProfile, InstallSystemdOptions, InstallWaybarOptions,
-    dev_config_path, dev_share_dir, install_metadata_dir, install_omarchy_prod, is_dev_config,
-    profile_for_config,
-    OmarchyInstallOptions,
+    install_walker, install_walker_status, install_waybar, install_waybar_status,
+    is_systemd_unit_installed, render_service_unit, run_doctor_checks, systemd_restart,
+    systemd_start, systemd_stop, systemctl_is_active, systemctl_is_enabled, uninstall_hypr,
+    uninstall_systemd, uninstall_walker, uninstall_waybar, InstallBinsOptions, DoctorCheck,
+    InstallHyprOptions, InstallProfile, InstallSystemdOptions, InstallWaybarOptions,
+    InstallWalkerOptions, dev_config_path, dev_share_dir, install_metadata_dir,
+    install_omarchy_prod, is_dev_config, profile_for_config, OmarchyInstallOptions,
 };
 pub use models::{ContextMode, SessionState, Task, TaskStatus};
 pub use repos::{
@@ -99,6 +100,7 @@ pub use apps::{launch_task_browser, launch_task_editor};
 pub use distrobox::create_container_with_progress;
 pub use task_cleanup::task_data_dir;
 pub use terminal::{launch_host_terminal, launch_task_terminal, launch_task_tui};
+pub use walker::{walker_exec, walker_launch_prefix, walker_terminal, walker_terminal_cmd};
 pub use version::{
     build_version_info, format_version_long, format_version_short, version_info, VersionInfo,
 };

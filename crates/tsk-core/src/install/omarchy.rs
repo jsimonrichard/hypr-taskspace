@@ -12,6 +12,7 @@ use crate::install::bins::{install_bins, InstallBinsOptions};
 use crate::install::hypr::{install_hypr, InstallHyprOptions};
 use crate::install::profile::InstallProfile;
 use crate::install::waybar::{install_waybar, InstallWaybarOptions};
+use crate::install::walker::{install_walker, InstallWalkerOptions};
 use crate::xdg::expand;
 
 #[derive(Debug, Clone)]
@@ -61,6 +62,16 @@ pub fn install_omarchy_prod(cfg: &TskConfig, options: &OmarchyInstallOptions) ->
         },
     )?;
     actions.extend(waybar);
+
+    let walker = install_walker(
+        cfg,
+        &InstallWalkerOptions {
+            dry_run: options.dry_run,
+            quiet: false,
+            skip_if_missing: false,
+        },
+    )?;
+    actions.extend(walker);
 
     Ok(actions)
 }
