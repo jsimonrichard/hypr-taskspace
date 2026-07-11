@@ -7,7 +7,6 @@ use crate::hyprland::{self, Monitor};
 use crate::models::{ContextMode, SessionState};
 use crate::workspaces::{
     allowed_workspace_names, default_taskspace_workspace_name, default_taskspace_workspace_names,
-    task_workspace_names,
 };
 
 /// Monitor that should receive a new task's primary workspace during on_start.
@@ -437,7 +436,7 @@ fn set_taskspace_inner(
         hyprland::close_tsk_tui_windows();
     }
 
-    match mode {
+    let dest_task_id = match mode {
         ContextMode::Task => {
             let Some(task_id) = task_id else {
                 return Err("task_id required for task taskspace".into());
@@ -447,16 +446,25 @@ fn set_taskspace_inner(
             }
             state.context_mode = ContextMode::Task;
             state.current_task_id = Some(task_id.to_string());
-            if hyprland::available() {
-                setup_task_workspaces_for_state(task_id, state);
-            }
+            Some(task_id.to_string())
         }
         ContextMode::Default => {
             state.context_mode = ContextMode::Default;
             state.current_task_id = None;
-            if hyprland::available() {
-                setup_default_taskspace_workspaces(state.default_workspace_count);
-            }
+            None
+        }
+    };
+
+    // Hot-path keybinds read slot cache without the daemon lock. Publish the new
+    // mapping before Hyprland restore so SUPER+N targets the destination taskspace.
+    crate::workspace_slots::write_slot_cache(state);
+    adopt_active_slot_for_taskspace_switch(state, old_allowed);
+    crate::taskspace_switch_guard::record(&state.taskspace_key(), old_allowed);
+
+    if hyprland::available() {
+        match dest_task_id.as_deref() {
+            Some(task_id) => setup_task_workspaces_for_state(task_id, state),
+            None => setup_default_taskspace_workspaces(state.default_workspace_count),
         }
     }
 
@@ -468,14 +476,19 @@ fn set_taskspace_inner(
     Ok(())
 }
 
-pub fn setup_task_workspaces(task_id: &str, slot_count: u32) {
-    hypr_log::scoped(format!("setup_task_workspaces {task_id}"), || {
-        hyprland::ensure_workspaces(&task_workspace_names(task_id, slot_count));
-    });
-}
-
 pub fn setup_task_workspaces_for_state(task_id: &str, state: &SessionState) {
-    setup_task_workspaces(task_id, state.default_workspace_count);
+    use crate::workspaces::task_owned_workspace_names;
+    let names = task_owned_workspace_names(
+        task_id,
+        state.default_workspace_count,
+        &state.global_workspace_slots,
+    );
+    if names.is_empty() {
+        return;
+    }
+    hypr_log::scoped(format!("setup_task_workspaces {task_id}"), || {
+        hyprland::ensure_workspaces(&names);
+    });
 }
 
 pub fn setup_default_taskspace_workspaces(count: u32) {
@@ -671,6 +684,9 @@ fn monitor_needs_move(
     let Some(current) = current else {
         return true;
     };
+    if monitor_at_target(Some(current), target, new_allowed) {
+        return false;
+    }
     if old_allowed.iter().any(|name| name == current) {
         return true;
     }
@@ -724,6 +740,41 @@ fn relative_slot_in_allowed(workspace_name: &str, allowed: &[String]) -> Option<
         .iter()
         .position(|n| n == workspace_name)
         .map(|i| (i + 1) as i32)
+}
+
+/// Honor a concurrent workspace keybind during a taskspace switch.
+///
+/// If the user pressed SUPER+N while switching taskspaces, Hyprland may already be on
+/// the leaving taskspace's slot N (stale cache) or the destination slot (fresh cache).
+/// Map that slot onto the destination before monitor restore runs.
+fn adopt_active_slot_for_taskspace_switch(
+    state: &mut SessionState,
+    old_allowed: &[String],
+) {
+    if !hyprland::available() {
+        return;
+    }
+    let Ok(Some(active)) = hyprland::get_active_workspace() else {
+        return;
+    };
+    if active.name.is_empty() {
+        return;
+    }
+
+    let key = state.taskspace_key();
+    let new_allowed = allowed_workspace_names(state);
+    let Some(slot) = relative_slot_in_allowed(&active.name, &new_allowed)
+        .or_else(|| relative_slot_in_allowed(&active.name, old_allowed))
+    else {
+        return;
+    };
+
+    hypr_log::note(format!(
+        "adopt slot {slot} during taskspace switch (active={})",
+        active.name
+    ));
+    state.last_workspace.insert(key.clone(), slot);
+    refresh_monitor_slots(state);
 }
 
 fn active_relative(state: &SessionState) -> Option<i32> {
@@ -1002,5 +1053,17 @@ mod tests {
             &old_allowed,
         ));
         assert!(!monitor_needs_move(Some("2"), "2", &new_allowed, &old_allowed));
+    }
+
+    #[test]
+    fn monitor_needs_move_skips_when_already_on_shared_global_target() {
+        let new_allowed = vec!["1".into(), "auth-fix-2".into()];
+        let old_allowed = vec!["1".into(), "auth-fix-2".into()];
+        assert!(!monitor_needs_move(
+            Some("1"),
+            "1",
+            &new_allowed,
+            &old_allowed,
+        ));
     }
 }

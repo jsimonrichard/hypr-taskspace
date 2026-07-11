@@ -25,6 +25,7 @@ pub mod task_cleanup;
 pub mod task_env;
 pub mod task_ids;
 pub mod task_on_start;
+pub mod taskspace_switch_guard;
 pub mod taskspaces;
 pub mod terminal;
 pub mod trace;

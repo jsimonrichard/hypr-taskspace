@@ -118,6 +118,12 @@ impl TaskService {
         }
 
         if crate::context_sync::taskspace_would_change(state, workspace_name) {
+            if crate::taskspace_switch_guard::should_ignore_external_revert(state, workspace_name) {
+                hypr_log::note(format!(
+                    "skip revert to leaving taskspace workspace: {workspace_name}"
+                ));
+                return Ok(false);
+            }
             let old_allowed = crate::workspaces::allowed_workspace_names(state);
             let old_key = state.taskspace_key();
             workspace_nav::sync_taskspace_from_external(
@@ -184,22 +190,40 @@ impl TaskService {
     }
 
     pub fn remember_workspace_go(&self, relative: i32) -> Result<Option<String>> {
+        let initial_key = self.load_state()?.taskspace_key();
+
         let mut state = self.load_state()?;
-        let name = workspace_nav::sync_workspace_slot(&mut state, relative);
-        if name.is_some() {
+        let Some(name) = workspace_nav::sync_workspace_slot(&mut state, relative) else {
+            return Ok(None);
+        };
+
+        let mut to_save = self.load_state()?;
+        if to_save.taskspace_key() != initial_key {
+            workspace_nav::sync_workspace_slot(&mut to_save, relative);
+            self.persist_workspace_switch(&to_save)?;
+            Ok(workspace_nav::workspace_name_for_relative(&to_save, relative))
+        } else {
             self.persist_workspace_switch(&state)?;
+            Ok(Some(name))
         }
-        Ok(name)
     }
 
     pub fn remember_workspace_goto(&self, name: &str) -> Result<Option<String>> {
+        let initial_key = self.load_state()?.taskspace_key();
         let mut state = self.load_state()?;
         let allowed = crate::workspaces::allowed_workspace_names(&state);
         if !allowed.iter().any(|n| n == name) {
             return Ok(None);
         }
         crate::context_sync::sync_from_workspace_name(&mut state, name);
-        self.persist_workspace_switch(&state)?;
+
+        let mut to_save = self.load_state()?;
+        if to_save.taskspace_key() != initial_key {
+            crate::context_sync::sync_from_workspace_name(&mut to_save, name);
+            self.persist_workspace_switch(&to_save)?;
+        } else {
+            self.persist_workspace_switch(&state)?;
+        }
         Ok(Some(name.to_string()))
     }
 
@@ -1088,6 +1112,46 @@ mod tests {
             .unwrap();
         assert_eq!(task.repo_path, checkout);
         assert_eq!(task.source_repo_path.as_deref(), Some(checkout.as_path()));
+    }
+
+    #[test]
+    fn remember_workspace_go_merges_slot_after_taskspace_switch() {
+        let dir = tempdir().unwrap();
+        let svc = test_service(dir.path());
+        let task_a = svc
+            .create_task(
+                "alpha",
+                true,
+                crate::task_repo::TaskRepoSource::Scratch,
+                None,
+                crate::task_repo::TaskRepoOptions::default(),
+            )
+            .unwrap();
+        let task_b = svc
+            .create_task(
+                "beta",
+                false,
+                crate::task_repo::TaskRepoSource::Scratch,
+                None,
+                crate::task_repo::TaskRepoOptions::default(),
+            )
+            .unwrap();
+
+        svc.switch_task(&task_b.id).unwrap();
+        assert_eq!(
+            svc.load_state().unwrap().current_task_id.as_deref(),
+            Some(task_b.id.as_str())
+        );
+
+        let merged = svc.remember_workspace_go(5).unwrap();
+        assert!(merged.is_some());
+        let state = svc.load_state().unwrap();
+        assert_eq!(state.current_task_id.as_deref(), Some(task_b.id.as_str()));
+        assert_eq!(
+            state.last_workspace.get(&format!("task:{}", task_b.id)),
+            Some(&5)
+        );
+        assert_ne!(task_a.id, task_b.id);
     }
 
     fn run_git_commit(repo: &std::path::Path) {
