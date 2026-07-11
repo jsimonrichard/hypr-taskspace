@@ -18,7 +18,7 @@ use tsk_core::{
     },
     is_global_workspace_name, read_state_rev, sync_from_workspace_name, trace_enabled, trace_event,
     visible_default_workspace_count, launch_task_tui, workspace_display_label,
-    workspace_goto_name, workspace_tooltip_label, ContextMode, Registry, SessionState, StateChangeKind, StateEventListener,
+    workspace_goto_name, workspace_tooltip_label, Registry, SessionState, StateChangeKind, StateEventListener,
     WaybarModuleJson, ACTIVE_WORKSPACE_ICON,
 };
 use serde::Deserialize;
@@ -120,8 +120,14 @@ const BAR_BUTTON_CSS: &str = r#"
 #tsk-workspaces button.empty {
   opacity: 0.5;
 }
-#tsk-workspaces button.global {
-  color: #a6e3a1;
+#tsk-workspaces button.global.empty {
+  opacity: 1;
+}
+#tsk-workspaces label.global {
+  color: #7ab392;
+}
+#tsk-workspaces label.global.empty {
+  color: rgba(122, 179, 146, 0.55);
 }
 "#;
 
@@ -317,21 +323,27 @@ impl Runtime {
         let tooltip = workspace_tooltip_label(state, workspace_name);
         entry.button.set_tooltip_text(Some(&tooltip));
 
-        let ctx = entry.button.style_context();
+        let is_global = state.is_some_and(|s| is_global_workspace_name(workspace_name, s));
+        let button_ctx = entry.button.style_context();
+        let label_ctx = entry.label.style_context();
         for class in BUTTON_CLASSES {
-            ctx.remove_class(class);
+            button_ctx.remove_class(class);
         }
+        label_ctx.remove_class("global");
+        label_ctx.remove_class("empty");
         if active {
-            ctx.add_class("active");
+            button_ctx.add_class("active");
         } else if !occupied.contains(workspace_name) {
-            ctx.add_class("empty");
+            button_ctx.add_class("empty");
+            if is_global {
+                label_ctx.add_class("empty");
+            }
         } else {
-            ctx.add_class("idle");
+            button_ctx.add_class("idle");
         }
-        if state.is_some_and(|state| {
-            state.context_mode == ContextMode::Task && is_global_workspace_name(workspace_name, state)
-        }) {
-            ctx.add_class("global");
+        if is_global {
+            button_ctx.add_class("global");
+            label_ctx.add_class("global");
         }
     }
 

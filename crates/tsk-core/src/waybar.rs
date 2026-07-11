@@ -236,11 +236,10 @@ fn workspace_module(data: &WaybarData, index: usize, state: &SessionState) -> Wa
         .unwrap_or_else(|| index.to_string());
     let occupied: HashSet<i32> = data.occupied_workspace_indices.iter().copied().collect();
     let mut classes = Vec::new();
-    if data.context_mode == "task"
-        && workspace_name
-            .parse::<u32>()
-            .ok()
-            .is_some_and(|slot| data.global_workspace_slots.contains(&slot))
+    if workspace_name
+        .parse::<u32>()
+        .ok()
+        .is_some_and(|slot| data.global_workspace_slots.contains(&slot))
     {
         classes.push("global");
     }

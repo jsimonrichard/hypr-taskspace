@@ -43,6 +43,12 @@
 #cffi-tsk #tsk-workspaces button.empty {
   opacity: 0.5;
 }
-#cffi-tsk #tsk-workspaces button.global {
-  color: #a6e3a1;
+#cffi-tsk #tsk-workspaces button.global.empty {
+  opacity: 1;
+}
+#cffi-tsk #tsk-workspaces label.global {
+  color: #7ab392;
+}
+#cffi-tsk #tsk-workspaces label.global.empty {
+  color: rgba(122, 179, 146, 0.55);
 }
