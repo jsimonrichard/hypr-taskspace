@@ -106,6 +106,12 @@ pub enum Screen {
         is_archived: bool,
         buttons: ModalButtonBar,
     },
+    RenameTask {
+        task_id: String,
+        name: String,
+        buttons: ModalButtonBar,
+        buttons_active: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -422,6 +428,7 @@ impl App {
             Screen::ConfirmArchive { .. } => self.handle_confirm_archive_key(key),
             Screen::ConfirmRestore { .. } => self.handle_confirm_restore_key(key),
             Screen::ConfirmDelete { .. } => self.handle_confirm_delete_key(key),
+            Screen::RenameTask { .. } => self.handle_rename_task_key(key),
             Screen::RepoPicker { .. } => Ok(()),
         }
     }
@@ -464,6 +471,9 @@ impl App {
             KeyCode::Char('j') | KeyCode::Down => self.select_next(),
             KeyCode::Char('k') | KeyCode::Up => self.select_prev(),
             KeyCode::Char('n') => self.begin_new_task()?,
+            KeyCode::Char('e') if self.panel == Panel::Tasks || self.panel == Panel::Archived => {
+                self.begin_rename()?
+            }
             KeyCode::Char('r') if self.panel == Panel::Archived => self.begin_restore()?,
             KeyCode::Char('d') if self.panel == Panel::Tasks => self.begin_archive()?,
             KeyCode::Char('D') => self.begin_delete()?,
@@ -1264,6 +1274,120 @@ impl App {
             is_archived: task.is_archived,
             buttons: ModalButtonBar::confirm_first("Yes"),
         };
+        Ok(())
+    }
+
+    fn begin_rename(&mut self) -> Result<()> {
+        self.require_daemon()?;
+        let Some(task) = self.selected_task().cloned() else {
+            return Ok(());
+        };
+        if task.is_default {
+            self.status = Some((false, "Cannot rename the default taskspace".into()));
+            return Ok(());
+        }
+        self.status = None;
+        self.screen = Screen::RenameTask {
+            task_id: task.id,
+            name: task.name,
+            buttons: ModalButtonBar::cancel_save(),
+            buttons_active: false,
+        };
+        Ok(())
+    }
+
+    fn handle_rename_task_key(&mut self, key: KeyEvent) -> Result<()> {
+        if let Some(delta) = arrow_nav_delta(key) {
+            if let Screen::RenameTask {
+                buttons_active, ..
+            } = &mut self.screen
+            {
+                if !*buttons_active {
+                    *buttons_active = true;
+                    if let Screen::RenameTask { buttons, .. } = &mut self.screen {
+                        buttons.enter_bar();
+                    }
+                    return Ok(());
+                }
+                if let Screen::RenameTask { buttons, .. } = &mut self.screen {
+                    buttons.navigate(delta);
+                }
+                return Ok(());
+            }
+        }
+
+        let Screen::RenameTask {
+            buttons_active, ..
+        } = &self.screen
+        else {
+            return Ok(());
+        };
+
+        if key.code == KeyCode::Esc {
+            self.screen = Screen::Main;
+            return Ok(());
+        }
+
+        if *buttons_active {
+            if let Screen::RenameTask { buttons, .. } = &mut self.screen {
+                match buttons.handle_key(key) {
+                    Some(ModalButtonAction::Cancel) => self.screen = Screen::Main,
+                    Some(ModalButtonAction::Confirm) => self.submit_rename_task()?,
+                    None => {}
+                }
+            }
+            return Ok(());
+        }
+
+        match key.code {
+            KeyCode::Tab | KeyCode::Down => {
+                if let Screen::RenameTask {
+                    buttons_active,
+                    buttons,
+                    ..
+                } = &mut self.screen
+                {
+                    *buttons_active = true;
+                    buttons.enter_bar();
+                }
+            }
+            KeyCode::Enter => self.submit_rename_task()?,
+            KeyCode::Backspace => {
+                if let Screen::RenameTask { name, .. } = &mut self.screen {
+                    name.pop();
+                }
+            }
+            KeyCode::Char(ch) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                if let Screen::RenameTask { name, .. } = &mut self.screen {
+                    name.push(ch);
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn submit_rename_task(&mut self) -> Result<()> {
+        let (task_id, name) = match &self.screen {
+            Screen::RenameTask { task_id, name, .. } => (task_id.clone(), name.trim().to_string()),
+            _ => return Ok(()),
+        };
+        if name.is_empty() {
+            self.status = Some((false, "Task name cannot be empty".into()));
+            self.screen = Screen::Main;
+            return Ok(());
+        }
+        match self.client.rename_task(&task_id, &name) {
+            Ok(task) => {
+                self.reload()?;
+                self.status = Some((true, format!("Renamed to \"{}\"", task.name)));
+                self.screen = Screen::Main;
+            }
+            Err(err) => {
+                self.status = Some((false, err.to_string()));
+                self.screen = Screen::Main;
+            }
+        }
         Ok(())
     }
 

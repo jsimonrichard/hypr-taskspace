@@ -396,6 +396,18 @@ fn dispatch(
             svc.restore_task(task_id)?;
             Ok(json!({ "restored": task_id }))
         }
+        "rename_task" => {
+            let task_id = params
+                .get("task_id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| TskError::Other("task_id required".into()))?;
+            let name = params
+                .get("name")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| TskError::Other("name required".into()))?;
+            let task = svc.rename_task(task_id, name)?;
+            Ok(serde_json::to_value(task).map_err(|e| TskError::Other(e.to_string()))?)
+        }
         "delete_task" => {
             let task_id = params
                 .get("task_id")

@@ -53,6 +53,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         Screen::ConfirmArchive { .. } => draw_confirm_archive(frame, area, app),
         Screen::ConfirmRestore { .. } => draw_confirm_restore(frame, area, app),
         Screen::ConfirmDelete { .. } => draw_confirm_delete(frame, area, app),
+        Screen::RenameTask { .. } => draw_rename_task(frame, area, app),
         Screen::Main | Screen::RepoPicker { .. } => {}
     }
 }
@@ -217,10 +218,10 @@ fn task_line(task: &TaskRow) -> Line<'static> {
 fn draw_help(frame: &mut Frame, area: Rect, app: &App) {
     let text = match &app.screen {
         Screen::Main if app.panel == Panel::Tasks => {
-            "↑/↓ move  Enter switch  n new  d archive  D delete  R refresh  h/l Tab panels  q quit"
+            "↑/↓ move  Enter switch  n new  e rename  d archive  D delete  R refresh  h/l Tab panels  q quit"
         }
         Screen::Main if app.panel == Panel::Archived => {
-            "↑/↓ move  r restore  D delete  R refresh  h/l Tab panels  q quit"
+            "↑/↓ move  r restore  e rename  D delete  R refresh  h/l Tab panels  q quit"
         }
         Screen::Main if app.panel == Panel::Repos => {
             "↑/↓ move  n browse/add  d remove  R refresh  h/l Tab panels  q quit"
@@ -449,6 +450,52 @@ fn field_style(focused: bool) -> Style {
     } else {
         Style::default().fg(Color::Gray)
     }
+}
+
+fn draw_rename_task(frame: &mut Frame, area: Rect, app: &App) {
+    let Screen::RenameTask {
+        name,
+        buttons,
+        buttons_active,
+        ..
+    } = &app.screen
+    else {
+        return;
+    };
+
+    let popup = centered_rect(70, 30, area);
+    frame.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .title(" Rename task ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Green));
+
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    let chunks = Layout::vertical([
+        Constraint::Min(1),
+        Constraint::Length(1),
+    ])
+    .split(inner);
+
+    let name_focused = !buttons_active;
+    let lines = vec![
+        Line::from(vec![
+            Span::raw(if name_focused { "▸ " } else { "  " }),
+            Span::styled("Name  ", Style::default().fg(Color::DarkGray)),
+            Span::styled(format!("{name}_"), field_style(name_focused)),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Tab / ↓ buttons  Esc cancel",
+            Style::default().fg(Color::DarkGray),
+        )),
+    ];
+
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), chunks[0]);
+    draw_button_bar(frame, chunks[1], buttons, *buttons_active);
 }
 
 fn draw_container_setup(frame: &mut Frame, area: Rect, app: &App) {

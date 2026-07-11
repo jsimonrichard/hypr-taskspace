@@ -306,6 +306,10 @@ enum TaskCommands {
     Restore {
         name_or_id: String,
     },
+    Rename {
+        name_or_id: String,
+        new_name: String,
+    },
     Delete {
         name_or_id: String,
     },
@@ -560,6 +564,9 @@ fn run() -> Result<()> {
             TaskCommands::Current => cmd_task_current(),
             TaskCommands::Archive { name_or_id } => cmd_task_archive(&name_or_id),
             TaskCommands::Restore { name_or_id } => cmd_task_restore(&name_or_id),
+            TaskCommands::Rename { name_or_id, new_name } => {
+                cmd_task_rename(&name_or_id, &new_name)
+            }
             TaskCommands::Delete { name_or_id } => cmd_task_delete(&name_or_id),
             TaskCommands::Menu | TaskCommands::TuiLaunch => cmd_task_tui_launch(),
             TaskCommands::Tui => cmd_task_tui(),
@@ -1333,6 +1340,14 @@ fn cmd_task_restore(name_or_id: &str) -> Result<()> {
         println!("Started container {}.", preview.container_name);
     }
     println!("Task files at {}.", preview.data_dir.display());
+    Ok(())
+}
+
+fn cmd_task_rename(name_or_id: &str, new_name: &str) -> Result<()> {
+    let svc = client()?;
+    let task = svc.resolve_task(name_or_id)?;
+    let renamed = svc.rename_task(&task.id, new_name)?;
+    println!("Renamed {} → \"{}\"", renamed.id, renamed.name);
     Ok(())
 }
 

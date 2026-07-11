@@ -84,12 +84,13 @@ The current task is marked with **●**. Select **default taskspace** under **ho
 | ↑ / ↓ or **j** / **k** | Move selection |
 | **Enter** | Switch to selected task (or default taskspace) |
 | **n** | New task |
+| **e** | Rename selected task label |
 | **d** | Archive selected task |
 | **D** | Delete selected task (with confirmation) |
 | **R** | Refresh list |
 | **q** / **Esc** | Quit |
 
-**Archived panel** — **r** restore, **D** delete; other keys same as Tasks (except **d** / **n**).
+**Archived panel** — **r** restore, **e** rename, **D** delete; other keys same as Tasks (except **d** / **n**).
 
 **Repos panel**
 
@@ -115,6 +116,7 @@ tsk task new main --no-worktree      # use the main checkout (no worktree)
 tsk task new iso --container         # experimental Distrobox isolation
 tsk task list
 tsk task switch my-feature
+tsk task rename my-feature "Auth Fix v2"
 tsk task archive my-feature
 tsk task restore my-feature
 tsk task terminal                    # shell in the task checkout (Distrobox when --container)

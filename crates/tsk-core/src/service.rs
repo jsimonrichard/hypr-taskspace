@@ -516,6 +516,47 @@ impl TaskService {
         Ok(())
     }
 
+    pub fn rename_task(&self, task_id: &str, new_name: &str) -> Result<Task> {
+        let name = new_name.trim();
+        if name.is_empty() {
+            return Err(TskError::Other("Task name cannot be empty".into()));
+        }
+
+        let mut state = self.load_state()?;
+        let task = state
+            .tasks
+            .get(task_id)
+            .cloned()
+            .ok_or_else(|| TskError::Other(format!("Unknown task: {task_id}")))?;
+
+        if task.name == name {
+            return Ok(task);
+        }
+
+        if Self::active_task_name_taken(&state, name, Some(task_id)) {
+            return Err(TskError::Other(format!(
+                "Another active task is already named \"{name}\""
+            )));
+        }
+
+        state.tasks.get_mut(task_id).unwrap().name = name.to_string();
+        self.commit_state(&state, Some(StateChangeKind::Full))?;
+        Ok(state.tasks.get(task_id).unwrap().clone())
+    }
+
+    fn active_task_name_taken(
+        state: &SessionState,
+        name: &str,
+        exclude_id: Option<&str>,
+    ) -> bool {
+        state
+            .tasks
+            .values()
+            .filter(|t| t.status != TaskStatus::Archived)
+            .filter(|t| exclude_id.map(|id| t.id != id).unwrap_or(true))
+            .any(|t| t.name.eq_ignore_ascii_case(name))
+    }
+
     pub fn delete_task(&self, task_id: &str) -> Result<()> {
         let mut state = self.load_state()?;
         let task = state
@@ -880,6 +921,50 @@ mod tests {
         let state = svc.load_state().unwrap();
         assert_eq!(state.tasks.get(&task.id).unwrap().status, TaskStatus::Active);
         assert!(svc.tasks_for_menu().unwrap().iter().any(|t| t.id == task.id));
+    }
+
+    #[test]
+    fn rename_task_updates_display_name() {
+        let dir = tempdir().unwrap();
+        let svc = test_service(dir.path());
+        let task = svc
+            .create_task(
+                "old-name",
+                false,
+                crate::task_repo::TaskRepoSource::Scratch,
+                None,
+                crate::task_repo::TaskRepoOptions::default(),
+            )
+            .unwrap();
+        let renamed = svc.rename_task(&task.id, "New Label").unwrap();
+        assert_eq!(renamed.name, "New Label");
+        let state = svc.load_state().unwrap();
+        assert_eq!(state.tasks.get(&task.id).unwrap().name, "New Label");
+    }
+
+    #[test]
+    fn rename_task_rejects_duplicate_active_names() {
+        let dir = tempdir().unwrap();
+        let svc = test_service(dir.path());
+        svc.create_task(
+            "first",
+            false,
+            crate::task_repo::TaskRepoSource::Scratch,
+            None,
+            crate::task_repo::TaskRepoOptions::default(),
+        )
+        .unwrap();
+        let second = svc
+            .create_task(
+                "second",
+                false,
+                crate::task_repo::TaskRepoSource::Scratch,
+                None,
+                crate::task_repo::TaskRepoOptions::default(),
+            )
+            .unwrap();
+        let err = svc.rename_task(&second.id, "first").unwrap_err();
+        assert!(err.to_string().contains("already named"));
     }
 
     #[test]

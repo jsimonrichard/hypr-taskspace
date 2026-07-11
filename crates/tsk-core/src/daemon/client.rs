@@ -382,6 +382,15 @@ impl DaemonClient {
         daemon_request("restore_task", json!({ "task_id": task_id })).map(|_| ())
     }
 
+    pub fn rename_task(&self, task_id: &str, name: &str) -> Result<Task> {
+        ensure_daemon()?;
+        let v = daemon_request(
+            "rename_task",
+            json!({ "task_id": task_id, "name": name }),
+        )?;
+        serde_json::from_value(v).map_err(|e| TskError::Other(e.to_string()))
+    }
+
     pub fn delete_task(&self, task_id: &str) -> Result<()> {
         ensure_daemon()?;
         daemon_request("delete_task", json!({ "task_id": task_id })).map(|_| ())

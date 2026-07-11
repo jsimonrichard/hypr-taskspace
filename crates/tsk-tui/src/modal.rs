@@ -27,6 +27,9 @@ pub enum ModalButtonBar {
     CancelCreate {
         focused: usize,
     },
+    CancelSave {
+        focused: usize,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,6 +54,10 @@ impl ModalButtonBar {
 
     pub fn cancel_create() -> Self {
         Self::CancelCreate { focused: 0 }
+    }
+
+    pub fn cancel_save() -> Self {
+        Self::CancelSave { focused: 0 }
     }
 
     pub fn buttons(&self) -> Vec<ModalButton> {
@@ -95,6 +102,16 @@ impl ModalButtonBar {
                     shortcut: 'n',
                 },
             ],
+            Self::CancelSave { .. } => vec![
+                ModalButton {
+                    label: "Save",
+                    shortcut: 'y',
+                },
+                ModalButton {
+                    label: "Cancel",
+                    shortcut: 'n',
+                },
+            ],
         }
     }
 
@@ -102,7 +119,8 @@ impl ModalButtonBar {
         match self {
             Self::CancelConfirm { focused, .. }
             | Self::CancelContinue { focused, .. }
-            | Self::CancelCreate { focused, .. } => *focused,
+            | Self::CancelCreate { focused, .. }
+            | Self::CancelSave { focused, .. } => *focused,
         }
     }
 
@@ -112,7 +130,8 @@ impl ModalButtonBar {
         match self {
             Self::CancelConfirm { focused, .. }
             | Self::CancelContinue { focused, .. }
-            | Self::CancelCreate { focused, .. } => *focused = index,
+            | Self::CancelCreate { focused, .. }
+            | Self::CancelSave { focused, .. } => *focused = index,
         }
     }
 
@@ -154,7 +173,8 @@ impl ModalButtonBar {
                 confirm_first: true,
                 ..
             }
-            | Self::CancelCreate { .. } => (1, 0),
+            | Self::CancelCreate { .. }
+            | Self::CancelSave { .. } => (1, 0),
             Self::CancelConfirm { .. } | Self::CancelContinue { .. } => (0, 1),
         }
     }
