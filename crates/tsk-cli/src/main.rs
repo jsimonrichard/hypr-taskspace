@@ -14,7 +14,7 @@ use tsk_core::{
     trace_path, uninstall_hypr, uninstall_waybar, version_info, workspace_module_key, DaemonClient,
     DaemonServer, InstallBinsOptions, InstallHyprOptions, InstallProfile,
     InstallWaybarOptions, InstallWalkerOptions, OmarchyInstallOptions, TskError, Registry, Result, TaskService, TaskStatus,
-    walker_exec, walker_terminal,
+    walker_exec, walker_terminal, walker_watch_launch,
     TaskRepoSource, detect_vcs_root, find_repo, find_repo_by_path, load_repos, register_repo, repo_label,
     ensure_repo_removable, unregister_repo, clear_hypr_log, is_http_url,
 };
@@ -146,6 +146,14 @@ enum WalkerCommands {
     },
     /// Open task terminal or run a command in one (Elephant `terminal_cmd` target)
     Terminal {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Internal: run a launch and notify on early failure (used by `walker exec`)
+    #[command(hide = true)]
+    WatchLaunch {
+        #[arg(long)]
+        label: String,
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
@@ -626,6 +634,10 @@ fn run() -> Result<()> {
             WalkerCommands::Terminal { args } => {
                 let argv: Vec<&str> = args.iter().map(String::as_str).collect();
                 walker_terminal(&argv)
+            }
+            WalkerCommands::WatchLaunch { label, args } => {
+                let argv: Vec<&str> = args.iter().map(String::as_str).collect();
+                walker_watch_launch(&label, &argv)
             }
         },
         Commands::Reset { command } => match command {

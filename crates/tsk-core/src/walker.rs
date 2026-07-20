@@ -1,8 +1,10 @@
-//! Walker / Elephant launch integration — taskspace env and tsk launch routing.
+//! Walker / Elephant launch integration — taskspace env and launch failure notifications.
 
 use std::ffi::OsStr;
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
+use std::time::{Duration, Instant};
 
 use crate::apps::{resolve_browser_command, resolve_editor_command, BROWSER_CANDIDATES, EDITOR_CANDIDATES};
 use crate::config::load_config;
@@ -13,6 +15,11 @@ use crate::registry::Registry;
 use crate::service::TaskService;
 use crate::task_env;
 use crate::terminal;
+
+/// How long the detached `watch-launch` helper waits for an early launcher failure.
+/// `uwsm app` returns quickly on both success and desktop-file validation errors.
+const LAUNCH_FAIL_WATCH: Duration = Duration::from_millis(1500);
+const STDERR_NOTIFY_MAX: usize = 280;
 
 const TERMINAL_DESKTOP_IDS: &[&str] = &[
     "Alacritty",
@@ -99,6 +106,8 @@ struct LaunchTarget {
 #[derive(Debug, Clone, Default)]
 struct DesktopEntry {
     id: String,
+    /// `Name=` from the desktop file (preferred for notifications).
+    name: Option<String>,
     exec: Option<String>,
     terminal: bool,
     categories: Vec<String>,
@@ -179,19 +188,14 @@ fn walker_open_editor(ctx: &WalkerLaunchContext, target: &LaunchTarget) -> Resul
 }
 
 fn walker_launch_generic(ctx: &WalkerLaunchContext, target: &LaunchTarget) -> Result<()> {
+    let label = launch_label(target, &target.argv);
     if let Some(uwsm) = command_v("uwsm") {
         let mut cmd = Command::new(&uwsm);
         cmd.arg("app");
         apply_launch_env(&mut cmd, ctx);
         cmd.current_dir(&ctx.cwd);
         push_uwsm_args(&mut cmd, target);
-        cmd.stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-        return cmd
-            .spawn()
-            .map(|_| ())
-            .map_err(|e| TskError::Other(format!("failed to launch via uwsm: {e}")));
+        return spawn_watched(cmd, label);
     }
 
     let (program, program_args) = if target.argv.is_empty() {
@@ -199,7 +203,11 @@ fn walker_launch_generic(ctx: &WalkerLaunchContext, target: &LaunchTarget) -> Re
     } else {
         split_command(target.argv.iter().map(String::as_str).collect::<Vec<_>>().as_slice())?
     };
-    launch_with_env(ctx, Some(&program), &program_args.iter().map(String::as_str).collect::<Vec<_>>())
+    let mut cmd = Command::new(&program);
+    apply_launch_env(&mut cmd, ctx);
+    cmd.current_dir(&ctx.cwd);
+    cmd.args(&program_args);
+    spawn_watched(cmd, label)
 }
 
 fn launch_with_env(ctx: &WalkerLaunchContext, program: Option<&str>, args: &[&str]) -> Result<()> {
@@ -232,6 +240,203 @@ fn push_uwsm_args(cmd: &mut Command, target: &LaunchTarget) {
             cmd.arg(arg);
         }
     }
+}
+
+fn launch_label(target: &LaunchTarget, argv: &[String]) -> String {
+    if let Some(name) = target
+        .desktop
+        .as_ref()
+        .and_then(|d| d.name.as_deref())
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+    {
+        return name.to_string();
+    }
+    if let Some(cmd) = format_command_label(argv) {
+        return cmd;
+    }
+    target
+        .desktop_id
+        .clone()
+        .unwrap_or_else(|| "application".into())
+}
+
+/// Human-readable command for notifications, e.g. `todoist --no-sandbox`.
+fn format_command_label(argv: &[String]) -> Option<String> {
+    if argv.is_empty() {
+        return None;
+    }
+    let mut idx = 0;
+    if argv[0] == "env" {
+        idx = 1;
+        while idx < argv.len() {
+            let arg = &argv[idx];
+            if arg.starts_with('-') {
+                break;
+            }
+            if arg.contains('=') {
+                idx += 1;
+                continue;
+            }
+            break;
+        }
+    }
+    let program = argv.get(idx)?;
+    let base = Path::new(program)
+        .file_name()
+        .and_then(OsStr::to_str)
+        .unwrap_or(program.as_str());
+    let mut out = base.to_string();
+    for arg in argv.iter().skip(idx + 1).take(4) {
+        out.push(' ');
+        out.push_str(arg);
+    }
+    if argv.len() > idx + 1 + 4 {
+        out.push_str(" …");
+    }
+    Some(out)
+}
+
+/// Spawn a detached helper that runs `argv` and notifies on early failure.
+///
+/// The helper is a separate process so it outlives this `tsk walker exec` invocation
+/// (Walker/Elephant does not wait). A same-process thread would be killed on exit.
+fn spawn_watched(cmd: Command, label: String) -> Result<()> {
+    let program = cmd.get_program().to_owned();
+    let args: Vec<_> = cmd.get_args().map(|a| a.to_owned()).collect();
+    let helper = std::env::current_exe().map_err(|e| {
+        TskError::Other(format!("walker exec: current_exe unavailable: {e}"))
+    })?;
+
+    let mut watch = Command::new(&helper);
+    // Inherit process env, then overlay whatever was set on the prepared launch command
+    // (taskspace vars from apply_launch_env).
+    for (key, value) in cmd.get_envs() {
+        match value {
+            Some(v) => {
+                watch.env(key, v);
+            }
+            None => {
+                watch.env_remove(key);
+            }
+        }
+    }
+    if let Some(dir) = cmd.get_current_dir() {
+        watch.current_dir(dir);
+    }
+    // uwsm/GLib log to the console; without this, piped stderr is often empty.
+    watch.env("SYSTEMD_LOG_TARGET", "console");
+    watch.args(["walker", "watch-launch", "--label", &label, "--"]);
+    watch.arg(&program);
+    watch.args(&args);
+    watch
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| TskError::Other(format!("failed to launch `{label}`: {e}")))
+}
+
+/// Internal: run a launch command and notify if it fails quickly.
+pub fn walker_watch_launch(label: &str, args: &[&str]) -> Result<()> {
+    if args.is_empty() {
+        return Err(TskError::Other("walker watch-launch: missing command".into()));
+    }
+    let (program, program_args) = split_command(args)?;
+    let mut cmd = Command::new(&program);
+    cmd.args(&program_args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped());
+    // Prefer console logs from uwsm even if parent forgot to set it.
+    cmd.env("SYSTEMD_LOG_TARGET", "console");
+
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| TskError::Other(format!("failed to launch `{label}`: {e}")))?;
+    let stderr = child.stderr.take();
+    let deadline = Instant::now() + LAUNCH_FAIL_WATCH;
+    match wait_until(&mut child, deadline) {
+        Some(status) if !status.success() => {
+            let detail = read_stderr_snippet(stderr);
+            notify_launch_failure(label, status.code(), &detail);
+        }
+        Some(_) => {}
+        None => {
+            // Still running — assume success. Dropping Child leaves the process reparented
+            // to init when this helper exits (no kill).
+            std::mem::forget(child);
+        }
+    }
+    Ok(())
+}
+
+fn wait_until(child: &mut Child, deadline: Instant) -> Option<ExitStatus> {
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Some(status),
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    return None;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(_) => return None,
+        }
+    }
+}
+
+fn read_stderr_snippet(stderr: Option<std::process::ChildStderr>) -> String {
+    let Some(mut stderr) = stderr else {
+        return String::new();
+    };
+    let mut buf = String::new();
+    let _ = stderr.read_to_string(&mut buf);
+    sanitize_launch_stderr(&buf)
+}
+
+fn sanitize_launch_stderr(raw: &str) -> String {
+    let cleaned = raw
+        .lines()
+        .map(|line| {
+            line.trim()
+                .trim_start_matches("<3>")
+                .trim_start_matches("<4>")
+                .trim()
+        })
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    if cleaned.chars().count() <= STDERR_NOTIFY_MAX {
+        return cleaned;
+    }
+    let truncated: String = cleaned.chars().take(STDERR_NOTIFY_MAX).collect();
+    format!("{truncated}…")
+}
+
+fn notify_launch_failure(label: &str, code: Option<i32>, detail: &str) {
+    let code_text = code
+        .map(|c| format!("exited with code {c}"))
+        .unwrap_or_else(|| "exited with an error".into());
+    let body = if detail.is_empty() {
+        code_text
+    } else {
+        format!("{code_text}\n\n{detail}")
+    };
+    let _ = Command::new("notify-send")
+        .args([
+            "--urgency=critical",
+            "--app-name=tsk",
+            "--icon=dialog-error",
+            "--category=device.error",
+            &format!("Failed to launch {label}"),
+            &body,
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
 }
 
 impl LaunchTarget {
@@ -486,9 +691,19 @@ fn parse_desktop_file(path: &Path, id: &str) -> Option<DesktopEntry> {
         id: id.to_string(),
         ..Default::default()
     };
+    let mut in_desktop_entry = false;
     for line in raw.lines() {
         let line = line.trim();
-        if line.starts_with("Exec=") {
+        if line.starts_with('[') {
+            in_desktop_entry = line == "[Desktop Entry]";
+            continue;
+        }
+        if !in_desktop_entry {
+            continue;
+        }
+        if line.starts_with("Name=") && entry.name.is_none() {
+            entry.name = Some(line.trim_start_matches("Name=").to_string());
+        } else if line.starts_with("Exec=") && entry.exec.is_none() {
             entry.exec = Some(line.trim_start_matches("Exec=").to_string());
         } else if line.starts_with("TryExec=") {
             entry.try_exec = Some(line.trim_start_matches("TryExec=").to_string());
@@ -609,6 +824,7 @@ mod tests {
             desktop_id: Some("Alacritty".into()),
             desktop: Some(DesktopEntry {
                 id: "Alacritty".into(),
+                name: Some("Alacritty".into()),
                 exec: Some("alacritty".into()),
                 terminal: false,
                 categories: vec!["System".into(), "TerminalEmulator".into()],
@@ -626,6 +842,7 @@ mod tests {
             desktop_id: Some("chromium".into()),
             desktop: Some(DesktopEntry {
                 id: "chromium".into(),
+                name: Some("Chromium".into()),
                 exec: Some("/usr/bin/chromium %U".into()),
                 terminal: false,
                 categories: vec!["Network".into(), "WebBrowser".into()],
@@ -643,6 +860,7 @@ mod tests {
             desktop_id: Some("cursor".into()),
             desktop: Some(DesktopEntry {
                 id: "cursor".into(),
+                name: Some("Cursor".into()),
                 exec: Some("cursor %F".into()),
                 terminal: false,
                 categories: vec!["Development".into(), "IDE".into()],
@@ -662,5 +880,45 @@ mod tests {
             argv: vec!["bash".into(), "-lc".into(), "echo hi".into()],
         };
         assert!(!target.opens_terminal_emulator());
+    }
+
+    #[test]
+    fn sanitize_launch_stderr_strips_uwsm_priority_prefixes() {
+        let raw = "<3>Desktop entry has conflicting args: \"%u\", \"%U\"\n";
+        assert_eq!(
+            sanitize_launch_stderr(raw),
+            "Desktop entry has conflicting args: \"%u\", \"%U\""
+        );
+    }
+
+    #[test]
+    fn launch_label_prefers_desktop_name() {
+        let target = LaunchTarget {
+            desktop_id: Some("todoist".into()),
+            desktop: Some(DesktopEntry {
+                id: "todoist".into(),
+                name: Some("Todoist".into()),
+                exec: Some("/usr/bin/todoist".into()),
+                ..Default::default()
+            }),
+            argv: vec!["/usr/bin/todoist".into()],
+        };
+        assert_eq!(launch_label(&target, &target.argv), "Todoist");
+    }
+
+    #[test]
+    fn launch_label_uses_command_when_no_desktop_name() {
+        let argv = vec![
+            "env".into(),
+            "DESKTOPINTEGRATION=false".into(),
+            "/usr/bin/todoist".into(),
+            "--no-sandbox".into(),
+        ];
+        let target = LaunchTarget {
+            desktop_id: None,
+            desktop: None,
+            argv: argv.clone(),
+        };
+        assert_eq!(launch_label(&target, &argv), "todoist --no-sandbox");
     }
 }
