@@ -16,6 +16,9 @@ pub enum VcsKind {
     Jj,
 }
 
+/// Sidecar (relative to checkout) storing the jj working-copy change id across workspace forget.
+const JJ_WORKING_CHANGE_SIDECAR: &str = ".tsk/jj-working-change";
+
 /// Walk upward from `start` (or the process cwd when `None`) looking for a git or jj workspace.
 pub fn detect_vcs_root(start: Option<&Path>) -> Option<PathBuf> {
     let start = start
@@ -337,6 +340,22 @@ pub fn detach_linked_checkout(
                         checkout.display()
                     ))
                 })?;
+            match jj_working_copy_change_id(checkout) {
+                Ok(id) => {
+                    if let Err(err) = write_jj_working_change_id(checkout, &id) {
+                        eprintln!(
+                            "tsk: failed to save jj working change id for {}: {err}",
+                            checkout.display()
+                        );
+                    }
+                }
+                Err(err) => {
+                    eprintln!(
+                        "tsk: failed to read jj working change id for {}: {err}",
+                        checkout.display()
+                    );
+                }
+            }
             forget_jj_workspace(&source, &name)
         }
         None => Ok(()),
@@ -589,6 +608,11 @@ fn relink_detached_git_worktree(
 
 fn relink_forgotten_jj_workspace(source_root: &Path, checkout: &Path, name: &str) -> Result<()> {
     let checkout = expand(checkout);
+    let mut saved_change_id = read_jj_working_change_id(&checkout);
+    if saved_change_id.is_none() {
+        saved_change_id = jj_working_copy_change_id(&checkout).ok();
+    }
+
     let parent = checkout.parent().ok_or_else(|| {
         TskError::Other(format!("Invalid checkout path: {}", checkout.display()))
     })?;
@@ -620,6 +644,20 @@ fn relink_forgotten_jj_workspace(source_root: &Path, checkout: &Path, name: &str
     }
 
     create_jj_workspace(source_root, &checkout, name)?;
+
+    if let Some(change_id) = saved_change_id.as_deref() {
+        let path = checkout.to_str().ok_or_else(|| {
+            TskError::Other(format!("Invalid checkout path: {}", checkout.display()))
+        })?;
+        if let Err(err) = run_checked(
+            Command::new("jj").args(["-R", path, "edit", change_id]),
+            "jj edit",
+        ) {
+            eprintln!(
+                "tsk: jj edit {change_id} after workspace relink failed (continuing): {err}"
+            );
+        }
+    }
 
     for entry in std::fs::read_dir(&backup).map_err(|source| TskError::Read {
         path: backup.clone(),
@@ -653,6 +691,24 @@ fn relink_forgotten_jj_workspace(source_root: &Path, checkout: &Path, name: &str
     }
 
     let _ = std::fs::remove_dir_all(&backup);
+
+    match jj_working_copy_change_id(&checkout) {
+        Ok(id) => {
+            if let Err(err) = write_jj_working_change_id(&checkout, &id) {
+                eprintln!(
+                    "tsk: failed to refresh jj working change id for {}: {err}",
+                    checkout.display()
+                );
+            }
+        }
+        Err(err) => {
+            eprintln!(
+                "tsk: failed to read jj working change id after relink for {}: {err}",
+                checkout.display()
+            );
+        }
+    }
+
     Ok(())
 }
 
@@ -672,6 +728,72 @@ fn jj_workspace_registered_at_source(source_root: &Path, workspace_name: &str) -
     String::from_utf8_lossy(&out.stdout).lines().any(|line| {
         line.split(':').next().map(|n| n.trim()) == Some(workspace_name)
     })
+}
+
+
+fn jj_working_change_sidecar(checkout: &Path) -> PathBuf {
+    expand(checkout).join(JJ_WORKING_CHANGE_SIDECAR)
+}
+
+/// Working-copy change id for a jj checkout (`jj log -r @`), ignoring the working copy snapshot.
+fn jj_working_copy_change_id(checkout: &Path) -> Result<String> {
+    let path = checkout.to_str().ok_or_else(|| {
+        TskError::Other(format!("Invalid checkout path: {}", checkout.display()))
+    })?;
+    let out = Command::new("jj")
+        .args([
+            "--ignore-working-copy",
+            "-R",
+            path,
+            "log",
+            "-r",
+            "@",
+            "-T",
+            "change_id",
+            "--no-graph",
+        ])
+        .output()
+        .map_err(|e| TskError::Other(format!("failed to run jj log: {e}")))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        return Err(TskError::Other(format!(
+            "jj log -r @ failed: {}",
+            stderr.trim()
+        )));
+    }
+    let id = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if id.is_empty() {
+        return Err(TskError::Other(format!(
+            "jj log -r @ returned empty change id for {}",
+            checkout.display()
+        )));
+    }
+    Ok(id)
+}
+
+fn write_jj_working_change_id(checkout: &Path, id: &str) -> Result<()> {
+    let path = jj_working_change_sidecar(checkout);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|source| TskError::Write {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    std::fs::write(&path, format!("{id}\n")).map_err(|source| TskError::Write {
+        path,
+        source,
+    })
+}
+
+fn read_jj_working_change_id(checkout: &Path) -> Option<String> {
+    let path = jj_working_change_sidecar(checkout);
+    let contents = std::fs::read_to_string(path).ok()?;
+    let id = contents.trim().to_string();
+    if id.is_empty() {
+        None
+    } else {
+        Some(id)
+    }
 }
 
 fn forget_jj_workspace(source_root: &Path, workspace_name: &str) -> Result<()> {
@@ -897,6 +1019,83 @@ mod tests {
         assert_eq!(
             current_branch(&dest).as_deref(),
             Some(git_branch_for_task("tabc123").as_str())
+        );
+    }
+
+    #[test]
+    fn jj_workspace_detach_reattach_preserves_change_id() {
+        if Command::new("jj").arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+            == false
+        {
+            eprintln!("skipping jj_workspace_detach_reattach_preserves_change_id: jj not available");
+            return;
+        }
+
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("main");
+        fs::create_dir_all(&source).unwrap();
+        run_checked(
+            Command::new("jj").args([
+                "git",
+                "init",
+                "--colocate",
+                source.to_str().unwrap(),
+            ]),
+            "jj git init",
+        )
+        .unwrap_or_else(|_| {
+            run_checked(
+                Command::new("jj").args(["git", "init", source.to_str().unwrap()]),
+                "jj git init",
+            )
+            .unwrap();
+        });
+
+        let dest = dir
+            .path()
+            .join("tasks")
+            .join("tjj123")
+            .join("workspace")
+            .join("main");
+        create_linked_checkout(&source, &dest, "tjj123", VcsKind::Jj).unwrap();
+
+        fs::write(dest.join("local.txt"), "jj local only").unwrap();
+        run_checked(
+            Command::new("jj").args([
+                "-R",
+                dest.to_str().unwrap(),
+                "describe",
+                "-m",
+                "task work",
+            ]),
+            "jj describe",
+        )
+        .unwrap();
+
+        let original_id = jj_working_copy_change_id(&dest).unwrap();
+
+        detach_linked_checkout(&dest, Some(&source), Some("tjj123")).unwrap();
+        assert!(
+            dest.join(JJ_WORKING_CHANGE_SIDECAR).is_file(),
+            "sidecar should exist after detach"
+        );
+        assert_eq!(
+            read_jj_working_change_id(&dest).as_deref(),
+            Some(original_id.as_str())
+        );
+        assert!(dest.join("local.txt").is_file());
+        assert!(!jj_workspace_registered_at_source(&source, "tjj123"));
+
+        reattach_linked_checkout(&dest, Some(&source), Some("tjj123")).unwrap();
+        assert!(jj_workspace_registered_at_source(&source, "tjj123"));
+        assert_eq!(
+            jj_working_copy_change_id(&dest).unwrap(),
+            original_id,
+            "working-copy change id should be preserved across detach/reattach"
+        );
+        assert_eq!(
+            fs::read_to_string(dest.join("local.txt")).unwrap(),
+            "jj local only"
         );
     }
 }

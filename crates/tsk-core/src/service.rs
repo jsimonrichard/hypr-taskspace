@@ -81,6 +81,58 @@ impl TaskService {
         self.commit_state(&state, None)
     }
 
+    /// After reboot/crash, archive every non-archived task (same teardown as manual archive).
+    ///
+    /// Detects a new boot via `/proc/.../boot_id` vs `last_boot_id` under the data dir.
+    /// Same-boot daemon restarts are a no-op. Missing `last_boot_id` is treated as a new
+    /// boot so upgrade/reinstall after reboot still cleans up leftover active tasks.
+    ///
+    /// Returns the ids that were archived.
+    pub fn archive_active_tasks_after_reboot(&self) -> Result<Vec<String>> {
+        let current = match crate::boot_id::current_boot_id() {
+            Ok(id) => id,
+            Err(err) => {
+                eprintln!("tsk daemon: boot id unavailable, skip reboot archive: {err}");
+                return Ok(Vec::new());
+            }
+        };
+        self.archive_active_tasks_if_new_boot(&current)
+    }
+
+    /// Core of [`Self::archive_active_tasks_after_reboot`] with an injectable boot id (tests).
+    pub fn archive_active_tasks_if_new_boot(&self, current_boot_id: &str) -> Result<Vec<String>> {
+        if !crate::boot_id::is_new_boot(&self.config.data_dir, current_boot_id)? {
+            return Ok(Vec::new());
+        }
+
+        let mut ids: Vec<String> = self
+            .list_active_tasks()?
+            .into_iter()
+            .map(|t| t.id)
+            .collect();
+        // Archive the current task first so we leave its taskspace once, then the rest.
+        if let Ok(state) = self.load_state() {
+            if let Some(current_id) = state.current_task_id.clone() {
+                if let Some(pos) = ids.iter().position(|id| id == &current_id) {
+                    ids.swap(0, pos);
+                }
+            }
+        }
+
+        let mut archived = Vec::new();
+        for task_id in &ids {
+            match self.archive_task(task_id) {
+                Ok(()) => archived.push(task_id.clone()),
+                Err(err) => {
+                    eprintln!("tsk daemon: reboot archive {task_id}: {err}");
+                }
+            }
+        }
+
+        crate::boot_id::write_stored_boot_id(&self.config.data_dir, current_boot_id)?;
+        Ok(archived)
+    }
+
     /// Align session state with an external Hyprland workspace focus change.
     ///
     /// When the change crosses taskspaces, other monitors are restored to their
@@ -846,6 +898,7 @@ mod tests {
 
     fn test_service(dir: &std::path::Path) -> TaskService {
         let mut config = TskConfig::default();
+        config.data_dir = dir.to_path_buf();
         config.tasks_base_dir = dir.join("tasks");
         config.hyprland_enabled = false;
         let db = dir.join("state.db");
@@ -923,6 +976,100 @@ mod tests {
         assert!(state.current_task_id.is_none());
         assert!(svc.tasks_for_menu().unwrap().iter().all(|t| t.id != task.id));
         assert!(dir.path().join("tasks").join(&task.id).is_dir());
+    }
+
+    #[test]
+    fn reboot_archive_archives_when_no_prior_boot_id() {
+        let dir = tempdir().unwrap();
+        let svc = test_service(dir.path());
+        let task = svc
+            .create_task(
+                "leftover",
+                false,
+                crate::task_repo::TaskRepoSource::Scratch,
+                None,
+                crate::task_repo::TaskRepoOptions::default(),
+            )
+            .unwrap();
+
+        let archived = svc.archive_active_tasks_if_new_boot("boot-1").unwrap();
+        assert_eq!(archived, vec![task.id.clone()]);
+        assert_eq!(
+            svc.load_state().unwrap().tasks.get(&task.id).unwrap().status,
+            TaskStatus::Archived
+        );
+        assert_eq!(
+            crate::boot_id::read_stored_boot_id(dir.path())
+                .unwrap()
+                .as_deref(),
+            Some("boot-1")
+        );
+    }
+
+    #[test]
+    fn reboot_archive_skips_same_boot() {
+        let dir = tempdir().unwrap();
+        let svc = test_service(dir.path());
+        crate::boot_id::write_stored_boot_id(dir.path(), "boot-1").unwrap();
+        let task = svc
+            .create_task(
+                "keep",
+                false,
+                crate::task_repo::TaskRepoSource::Scratch,
+                None,
+                crate::task_repo::TaskRepoOptions::default(),
+            )
+            .unwrap();
+
+        let archived = svc.archive_active_tasks_if_new_boot("boot-1").unwrap();
+        assert!(archived.is_empty());
+        assert_eq!(
+            svc.load_state().unwrap().tasks.get(&task.id).unwrap().status,
+            TaskStatus::Active
+        );
+    }
+
+    #[test]
+    fn reboot_archive_archives_active_tasks_on_new_boot() {
+        let dir = tempdir().unwrap();
+        let svc = test_service(dir.path());
+        crate::boot_id::write_stored_boot_id(dir.path(), "boot-old").unwrap();
+        let a = svc
+            .create_task(
+                "one",
+                true,
+                crate::task_repo::TaskRepoSource::Scratch,
+                None,
+                crate::task_repo::TaskRepoOptions::default(),
+            )
+            .unwrap();
+        let b = svc
+            .create_task(
+                "two",
+                false,
+                crate::task_repo::TaskRepoSource::Scratch,
+                None,
+                crate::task_repo::TaskRepoOptions::default(),
+            )
+            .unwrap();
+
+        let archived = svc.archive_active_tasks_if_new_boot("boot-new").unwrap();
+        assert_eq!(archived.len(), 2);
+        assert!(archived.contains(&a.id));
+        assert!(archived.contains(&b.id));
+        // Current task archived first.
+        assert_eq!(archived[0], a.id);
+
+        let state = svc.load_state().unwrap();
+        assert_eq!(state.tasks.get(&a.id).unwrap().status, TaskStatus::Archived);
+        assert_eq!(state.tasks.get(&b.id).unwrap().status, TaskStatus::Archived);
+        assert_eq!(state.context_mode, ContextMode::Default);
+        assert_eq!(
+            crate::boot_id::read_stored_boot_id(dir.path())
+                .unwrap()
+                .as_deref(),
+            Some("boot-new")
+        );
     }
 
     #[test]

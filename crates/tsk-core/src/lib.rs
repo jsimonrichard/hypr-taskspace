@@ -1,6 +1,7 @@
 //! Shared TSK library — models, config, registry, Hyprland, and Waybar export.
 
 pub mod apps;
+pub mod boot_id;
 pub mod config;
 pub mod context_sync;
 pub mod daemon;

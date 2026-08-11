@@ -76,6 +76,31 @@ impl DaemonServer {
             return Ok(());
         }
 
+        // Reboot/crash recovery: archive leftover active tasks (like powering off).
+        {
+            let svc = self
+                .service
+                .lock()
+                .map_err(|e| TskError::Other(e.to_string()))?;
+            match svc.archive_active_tasks_after_reboot() {
+                Ok(archived) if !archived.is_empty() => {
+                    eprintln!(
+                        "tsk daemon: new boot — archived {} active task(s): {}",
+                        archived.len(),
+                        archived.join(", ")
+                    );
+                }
+                Ok(_) => {}
+                Err(err) => {
+                    eprintln!("tsk daemon: reboot archive recovery: {err}");
+                }
+            }
+        }
+        if shutdown_requested(&self) {
+            cleanup_runtime_files();
+            return Ok(());
+        }
+
         let service = self.service.clone();
         let provision = thread::spawn(move || {
             if let Ok(svc) = service.lock() {
