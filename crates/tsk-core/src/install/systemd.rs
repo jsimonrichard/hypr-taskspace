@@ -219,5 +219,8 @@ mod tests {
         assert!(body.contains("ExecStart=tsk daemon run"));
         assert!(body.contains("WantedBy=graphical-session.target"));
         assert!(body.contains("PassEnvironment=WAYLAND_DISPLAY"));
+        // Must not cgroup-kill terminals the daemon spawned.
+        assert!(body.contains("KillMode=process"));
+        assert!(!body.contains("KillMode=mixed"));
     }
 }

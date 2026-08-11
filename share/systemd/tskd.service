@@ -11,7 +11,10 @@ Environment=PATH=%E/.local/bin:/usr/local/bin:/usr/bin:/bin
 Restart=on-failure
 RestartSec=2
 TimeoutStopSec=10
-KillMode=mixed
+# process: only signal the daemon. mixed/control-group also SIGKILLs terminals and
+# other GUI apps the daemon spawned (they stay in this cgroup), which makes
+# `systemctl --user restart tskd` close the terminal that ran the restart.
+KillMode=process
 KillSignal=SIGTERM
 PassEnvironment=WAYLAND_DISPLAY HYPRLAND_INSTANCE_SIGNATURE XDG_RUNTIME_DIR XDG_CURRENT_DESKTOP DISPLAY
 

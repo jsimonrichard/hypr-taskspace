@@ -1,9 +1,11 @@
 //! Unix-socket RPC server — single owner of session state.
 
-use std::fs;
+use std::fs::{self, File, OpenOptions};
 use std::io::{ErrorKind, Read, Write};
+use std::os::fd::AsRawFd;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -11,11 +13,46 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
-use crate::daemon::client::{daemon_pid_path, daemon_socket_path};
+use crate::daemon::client::{daemon_pid_path, daemon_socket_path, ping_daemon_at};
 use crate::error::{TskError, Result};
 use crate::hyprland_events::{parse_workspace_v2, HyprlandEventListener};
 use crate::service::TaskService;
 use crate::xdg::ensure_parent;
+
+/// Exclusive flock held for the lifetime of the daemon process.
+///
+/// Prevents a second `tsk daemon run` from stealing the socket while the first
+/// keeps its Hyprland event listener alive — that dual-listener race reverts
+/// intentional taskspace switches (e.g. TUI → default) by rewriting `state.db`.
+struct DaemonLock {
+    _file: File,
+}
+
+fn daemon_lock_path_for_socket(socket: &Path) -> PathBuf {
+    socket.with_file_name("daemon.lock")
+}
+
+fn acquire_daemon_lock(socket: &Path) -> Result<DaemonLock> {
+    let path = daemon_lock_path_for_socket(socket);
+    ensure_parent(&path)?;
+    let file = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .open(&path)
+        .map_err(|source| TskError::Write {
+            path: path.clone(),
+            source,
+        })?;
+    let rc = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    if rc != 0 {
+        return Err(TskError::Other(
+            "tsk daemon already running (daemon.lock is held) — stop the other instance first"
+                .into(),
+        ));
+    }
+    Ok(DaemonLock { _file: file })
+}
 
 fn shutdown_requested(server: &DaemonServer) -> bool {
     server.stop.load(Ordering::SeqCst)
@@ -37,7 +74,18 @@ impl DaemonServer {
     pub fn run_foreground(self) -> Result<()> {
         let socket_path = daemon_socket_path()?;
         ensure_parent(&socket_path)?;
+
+        // Take the exclusive lock before touching the socket. A second process that
+        // only deletes+rebinds the socket leaves the first process's Hyprland listener
+        // running against the shared DB — that is the dual-daemon revert bug.
+        let _lock = acquire_daemon_lock(&socket_path)?;
+
         if socket_path.exists() {
+            if ping_daemon_at(&socket_path).unwrap_or(false) {
+                return Err(TskError::Other(
+                    "tsk daemon already running (socket responds to ping)".into(),
+                ));
+            }
             fs::remove_file(&socket_path).map_err(|source| TskError::Write {
                 path: socket_path.clone(),
                 source,
@@ -587,6 +635,17 @@ mod tests {
         let server = DaemonServer::new().unwrap();
         let result = dispatch(server.service.clone(), "ping", json!({})).unwrap();
         assert_eq!(result["pong"], true);
+    }
+
+    #[test]
+    fn daemon_lock_is_exclusive() {
+        let dir = tempfile::tempdir().unwrap();
+        let socket = dir.path().join("daemon.sock");
+        let first = acquire_daemon_lock(&socket).expect("first lock");
+        let second = acquire_daemon_lock(&socket);
+        assert!(second.is_err(), "second lock should fail while first is held");
+        drop(first);
+        acquire_daemon_lock(&socket).expect("lock after release");
     }
 
     #[test]

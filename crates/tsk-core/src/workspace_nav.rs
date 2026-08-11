@@ -7,6 +7,7 @@ use crate::hyprland::{self, Monitor};
 use crate::models::{ContextMode, SessionState};
 use crate::workspaces::{
     allowed_workspace_names, default_taskspace_workspace_name, default_taskspace_workspace_names,
+    is_global_workspace_slot, primary_task_workspace_slot,
 };
 
 /// Monitor that should receive a new task's primary workspace during on_start.
@@ -212,13 +213,31 @@ pub fn move_window_to_relative(state: &SessionState, relative: i32) -> Option<St
 }
 
 pub fn focus_last_workspace(state: &mut SessionState) -> Option<String> {
-    let key = state.taskspace_key();
-    let relative = *state.last_workspace.get(&key).unwrap_or(&1);
+    let relative = remembered_focus_slot(state);
     let result = focus_relative_in_taskspace(state, relative);
     if result.is_some() {
         remember_workspace(state, relative);
     }
     result
+}
+
+/// Slot to focus when entering / restoring a taskspace.
+///
+/// In the default taskspace, skip remembered global slots (e.g. `"1"`). Landing on the
+/// shared global workspace after `context_default` looks identical to visiting global
+/// from a task — and with a stale dual-daemon listener it can fail to change context.
+fn remembered_focus_slot(state: &SessionState) -> i32 {
+    let key = state.taskspace_key();
+    let relative = state.last_workspace.get(&key).copied().unwrap_or(1);
+    if state.context_mode == ContextMode::Default
+        && is_global_workspace_slot(relative as u32, &state.global_workspace_slots)
+    {
+        return primary_task_workspace_slot(
+            state.default_workspace_count,
+            &state.global_workspace_slots,
+        ) as i32;
+    }
+    relative
 }
 
 /// Refresh per-monitor slot memory from the current Hyprland layout.
@@ -257,21 +276,13 @@ fn sync_monitors_to_taskspace_inner(
     }
 
     if !hyprland::available() {
-        let relative = state
-            .last_workspace
-            .get(&state.taskspace_key())
-            .copied()
-            .unwrap_or(1);
+        let relative = remembered_focus_slot(state);
         return focus_relative_in_taskspace(state, relative);
     }
 
     let monitors = sort_monitors_by_layout(list_monitors_with_retry());
     if monitors.len() <= 1 {
-        let relative = state
-            .last_workspace
-            .get(&state.taskspace_key())
-            .copied()
-            .unwrap_or(1);
+        let relative = remembered_focus_slot(state);
         return focus_relative_in_taskspace(state, relative);
     }
 
@@ -769,6 +780,17 @@ fn adopt_active_slot_for_taskspace_switch(
         return;
     };
 
+    let slot = if state.context_mode == ContextMode::Default
+        && is_global_workspace_slot(slot as u32, &state.global_workspace_slots)
+    {
+        primary_task_workspace_slot(
+            state.default_workspace_count,
+            &state.global_workspace_slots,
+        ) as i32
+    } else {
+        slot
+    };
+
     hypr_log::note(format!(
         "adopt slot {slot} during taskspace switch (active={})",
         active.name
@@ -952,6 +974,43 @@ mod tests {
         set_taskspace(&mut state, ContextMode::Default, None).unwrap();
         assert_eq!(state.context_mode, ContextMode::Default);
         assert!(state.current_task_id.is_none());
+    }
+
+    #[test]
+    fn remembered_focus_slot_skips_global_in_default_taskspace() {
+        let state = SessionState {
+            context_mode: ContextMode::Default,
+            default_workspace_count: 10,
+            global_workspace_slots: vec![1],
+            last_workspace: HashMap::from([("default".into(), 1)]),
+            ..Default::default()
+        };
+        assert_eq!(remembered_focus_slot(&state), 2);
+    }
+
+    #[test]
+    fn remembered_focus_slot_keeps_non_global_in_default() {
+        let state = SessionState {
+            context_mode: ContextMode::Default,
+            default_workspace_count: 10,
+            global_workspace_slots: vec![1],
+            last_workspace: HashMap::from([("default".into(), 3)]),
+            ..Default::default()
+        };
+        assert_eq!(remembered_focus_slot(&state), 3);
+    }
+
+    #[test]
+    fn remembered_focus_slot_keeps_global_while_in_task() {
+        let state = SessionState {
+            context_mode: ContextMode::Task,
+            current_task_id: Some("auth-fix".into()),
+            default_workspace_count: 10,
+            global_workspace_slots: vec![1],
+            last_workspace: HashMap::from([("task:auth-fix".into(), 1)]),
+            ..Default::default()
+        };
+        assert_eq!(remembered_focus_slot(&state), 1);
     }
 
     #[test]
