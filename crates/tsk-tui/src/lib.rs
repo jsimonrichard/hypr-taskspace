@@ -8,13 +8,16 @@ mod ui;
 use std::io::{self, stdout, ErrorKind, Stdout};
 use std::time::{Duration, Instant};
 
-use crossterm::event::{self, Event, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags};
+use crossterm::event::{
+    self, Event, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+    PushKeyboardEnhancementFlags,
+};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use crossterm::{execute, terminal::ClearType};
-use tsk_core::{DaemonClient, Result};
 use ratatui::prelude::*;
+use tsk_core::{DaemonClient, Result};
 
 use app::App;
 use daemon_check::AsyncDaemonChecker;
@@ -93,7 +96,7 @@ pub fn run() -> Result<()> {
                 app.status = Some((false, err.to_string()));
             }
             if app.daemon_recheck_requested {
-                        app.daemon_recheck_requested = false;
+                app.daemon_recheck_requested = false;
                 daemon_checker.spawn_check();
             }
         }

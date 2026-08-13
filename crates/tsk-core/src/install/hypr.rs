@@ -8,14 +8,14 @@ use chrono::Utc;
 use serde_json::{json, Value};
 
 use crate::config::TskConfig;
-use crate::error::{TskError, Result};
+use crate::error::{Result, TskError};
 use crate::install::backup::{self, backup_timestamp};
 use crate::install::bins::{self, InstallBinsOptions};
 use crate::install::manifest::{self, Manifest};
 use crate::install::omarchy;
-use crate::install::profile::{InstallProfile, install_metadata_dir, profile_for_config};
-use crate::share::{effective_share_dir, uses_packaged_share};
+use crate::install::profile::{install_metadata_dir, profile_for_config, InstallProfile};
 use crate::install::reload;
+use crate::share::{effective_share_dir, uses_packaged_share};
 use crate::xdg::ensure_parent;
 
 #[derive(Debug, Clone)]
@@ -122,11 +122,11 @@ pub fn install_hypr(cfg: &TskConfig, options: &InstallHyprOptions) -> Result<Vec
             source_lines.join("\n  ")
         ));
         if options.omarchy_integration {
-            if let Some(entry) =
-                omarchy::patch_omarchy_input_gestures(cfg, &backup_dir, true)?
-            {
+            if let Some(entry) = omarchy::patch_omarchy_input_gestures(cfg, &backup_dir, true)? {
                 if let Some(path) = entry.get("path").and_then(|v| v.as_str()) {
-                    lines.push(format!("would patch {path} (disable native workspace gestures)"));
+                    lines.push(format!(
+                        "would patch {path} (disable native workspace gestures)"
+                    ));
                 }
             }
         }
@@ -197,10 +197,14 @@ pub fn install_hypr(cfg: &TskConfig, options: &InstallHyprOptions) -> Result<Vec
         integration: "hypr".into(),
         installed_at: Utc::now().to_rfc3339(),
         backup_dir: backup_dir.to_string_lossy().into_owned(),
-        templates_installed: vec![json!({"from": share_src.join("hypr"), "to": cfg.install_hypr_share_dir.join("hypr")})],
+        templates_installed: vec![
+            json!({"from": share_src.join("hypr"), "to": cfg.install_hypr_share_dir.join("hypr")}),
+        ],
         user_files_backed_up: backed_up,
         user_files_modified: if modified {
-            vec![json!({"path": config_path, "actions": [{"type": "append", "line": source_lines.join("\n")}]})]
+            vec![
+                json!({"path": config_path, "actions": [{"type": "append", "line": source_lines.join("\n")}]}),
+            ]
         } else {
             vec![]
         },
@@ -529,7 +533,9 @@ mod tests {
         let paths = hypr_managed_source_paths(&cfg, false);
         assert_eq!(
             paths,
-            vec![std::path::PathBuf::from("/usr/share/tsk/hypr/bindings.conf")]
+            vec![std::path::PathBuf::from(
+                "/usr/share/tsk/hypr/bindings.conf"
+            )]
         );
     }
 
@@ -542,8 +548,11 @@ mod tests {
         let bindings = share.join("hypr/bindings.conf");
         fs::write(&bindings, "bind = SUPER, 1, exec, tsk workspace switch 1\n").unwrap();
         fs::write(hypr.join("omarchy-unbind.conf"), "unbind = SUPER, 1\n").unwrap();
-        fs::write(hypr.join("omarchy-escape-hatch.conf"), "bind = SUPER CTRL, RETURN, exec, true\n")
-            .unwrap();
+        fs::write(
+            hypr.join("omarchy-escape-hatch.conf"),
+            "bind = SUPER CTRL, RETURN, exec, true\n",
+        )
+        .unwrap();
         let paths = omarchy_hypr_source_paths(share, &bindings);
         assert_eq!(
             paths,
@@ -582,7 +591,8 @@ mod tests {
 
     #[test]
     fn resolve_backup_name_parses_legacy_unix_osstr() {
-        let legacy = json!({"Unix": [104, 121, 112, 114, 108, 97, 110, 100, 46, 99, 111, 110, 102]});
+        let legacy =
+            json!({"Unix": [104, 121, 112, 114, 108, 97, 110, 100, 46, 99, 111, 110, 102]});
         assert_eq!(
             resolve_backup_name(Some(&legacy), "/home/u/.config/hypr/hyprland.conf"),
             "hyprland.conf"

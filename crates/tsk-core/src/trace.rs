@@ -70,18 +70,12 @@ pub fn event(component: &str, stage: &str, detail: &str) {
     let wall_ms = chrono::Utc::now().timestamp_millis();
     let mono_us = origin().elapsed().as_micros();
     let pid = std::process::id();
-    let line = format!(
-        "{wall_ms} {mono_us:>12} pid={pid} {component}.{stage} {detail}\n"
-    );
+    let line = format!("{wall_ms} {mono_us:>12} pid={pid} {component}.{stage} {detail}\n");
     let _guard = WRITER.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
     }
-    if let Ok(mut file) = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-    {
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) {
         let _ = file.write_all(line.as_bytes());
     }
 }
@@ -222,7 +216,12 @@ pub fn analyze_recent_latency() -> LatencyReport {
     let markers = [
         ("cli.hyprland dispatch", "cli", "hyprland", "dispatch"),
         ("cli.hyprland dispatch_done", "cli", "hyprland_done", ""),
-        ("waybar.socket workspacev2", "waybar", "socket", "workspacev2"),
+        (
+            "waybar.socket workspacev2",
+            "waybar",
+            "socket",
+            "workspacev2",
+        ),
         ("waybar.flip done", "waybar", "flip", "done"),
         ("waybar.sync poll", "waybar", "sync", "hyprctl"),
     ];
@@ -258,13 +257,17 @@ pub fn analyze_recent_latency() -> LatencyReport {
 fn diagnostic_note(window: &[TraceLine]) -> Option<String> {
     let has_waybar = window.iter().any(|l| l.component == "waybar");
     if !has_waybar {
-        return Some(
-            "No waybar events — restart Waybar with TSK_TRACE=1.".into(),
-        );
+        return Some("No waybar events — restart Waybar with TSK_TRACE=1.".into());
     }
-    let has_socket = window.iter().any(|l| l.component == "waybar" && l.stage == "socket");
-    let has_sync = window.iter().any(|l| l.component == "waybar" && l.stage == "sync");
-    let has_flip = window.iter().any(|l| l.component == "waybar" && l.stage == "flip");
+    let has_socket = window
+        .iter()
+        .any(|l| l.component == "waybar" && l.stage == "socket");
+    let has_sync = window
+        .iter()
+        .any(|l| l.component == "waybar" && l.stage == "sync");
+    let has_flip = window
+        .iter()
+        .any(|l| l.component == "waybar" && l.stage == "flip");
     if has_flip && !has_socket {
         return Some(
             "waybar.flip without waybar.socket — using hyprctl poll fallback; run \
@@ -346,10 +349,8 @@ mod tests {
 
     #[test]
     fn parse_trace_line() {
-        let line = parse_line(
-            "1710000000000 123456 pid=9999 cli.workspace_go start index=3",
-        )
-        .unwrap();
+        let line =
+            parse_line("1710000000000 123456 pid=9999 cli.workspace_go start index=3").unwrap();
         assert_eq!(line.component, "cli");
         assert_eq!(line.stage, "workspace_go");
         assert_eq!(line.pid, 9999);

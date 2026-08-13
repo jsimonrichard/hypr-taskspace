@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -60,6 +61,8 @@ pub struct Task {
     pub browser_profile: Option<String>,
     pub created_at: DateTime<Utc>,
     pub last_active_at: DateTime<Utc>,
+    /// When the task was created or last restored from archive (TUI list order).
+    pub listed_at: DateTime<Utc>,
     pub agent_notes_path: Option<PathBuf>,
     #[serde(default)]
     pub ports: Vec<u16>,
@@ -75,6 +78,15 @@ impl Task {
             .into_iter()
             .next()
             .unwrap_or_else(|| "1".into())
+    }
+
+    /// Newest `listed_at` first; name then id break ties.
+    pub fn cmp_list_order(&self, other: &Self) -> Ordering {
+        other
+            .listed_at
+            .cmp(&self.listed_at)
+            .then_with(|| self.name.to_lowercase().cmp(&other.name.to_lowercase()))
+            .then_with(|| self.id.cmp(&other.id))
     }
 }
 
@@ -143,7 +155,10 @@ pub fn generate_task_id() -> String {
         let mixed = nanos ^ (pid << 32);
         bytes.copy_from_slice(&mixed.to_le_bytes()[..4]);
     }
-    format!("t{}", bytes.iter().map(|b| format!("{b:02x}")).collect::<String>())
+    format!(
+        "t{}",
+        bytes.iter().map(|b| format!("{b:02x}")).collect::<String>()
+    )
 }
 
 pub fn slugify(name: &str) -> String {
@@ -175,5 +190,48 @@ mod tests {
         assert!(id.starts_with('t'));
         assert_eq!(id.len(), 9);
         assert_ne!(id, slugify("Some Name"));
+    }
+
+    fn sample_task(id: &str, name: &str, listed_at: DateTime<Utc>) -> Task {
+        Task {
+            id: id.into(),
+            name: name.into(),
+            status: TaskStatus::Active,
+            repo_url: None,
+            repo_path: PathBuf::from("/tmp"),
+            source_repo_path: None,
+            branch: None,
+            container_name: format!("tsk-{id}"),
+            container_isolation: false,
+            workspace_count: 3,
+            browser_profile: None,
+            created_at: listed_at,
+            last_active_at: listed_at,
+            listed_at,
+            agent_notes_path: None,
+            ports: vec![],
+        }
+    }
+
+    #[test]
+    fn cmp_list_order_newest_listed_first() {
+        let t0 = Utc::now();
+        let older = sample_task("told", "older", t0);
+        let newer = sample_task("tnew", "newer", t0 + chrono::Duration::seconds(1));
+        let mut tasks = [&older, &newer];
+        tasks.sort_by(|a, b| a.cmp_list_order(b));
+        assert_eq!(tasks[0].id, "tnew");
+        assert_eq!(tasks[1].id, "told");
+    }
+
+    #[test]
+    fn cmp_list_order_breaks_ties_by_name() {
+        let t0 = Utc::now();
+        let zeta = sample_task("tz", "zeta", t0);
+        let alpha = sample_task("ta", "alpha", t0);
+        let mut tasks = [&zeta, &alpha];
+        tasks.sort_by(|a, b| a.cmp_list_order(b));
+        assert_eq!(tasks[0].id, "ta");
+        assert_eq!(tasks[1].id, "tz");
     }
 }

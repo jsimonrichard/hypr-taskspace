@@ -193,7 +193,11 @@ mod tests {
         let bin = prod_share.join("dev-build");
         fs::create_dir_all(&prod_share).unwrap();
         fs::write(&bin, b"").unwrap();
-        fs::write(dev_share.join(LEGACY_MARKER_NAME), bin.to_string_lossy().as_bytes()).unwrap();
+        fs::write(
+            dev_share.join(LEGACY_MARKER_NAME),
+            bin.to_string_lossy().as_bytes(),
+        )
+        .unwrap();
 
         std::env::set_var("HOME", home);
         assert_eq!(dev_session_binary(), Some(bin));

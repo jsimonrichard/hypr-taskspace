@@ -71,7 +71,10 @@ pub fn install_systemd(cfg: &TskConfig, options: &InstallSystemdOptions) -> Resu
         if options.start {
             let _ = systemctl(&["start", SERVICE_NAME]);
         }
-        return Ok(vec![format!("using packaged unit at {}", unit_path.display())]);
+        return Ok(vec![format!(
+            "using packaged unit at {}",
+            unit_path.display()
+        )]);
     }
 
     let unit_path = user_service_unit_path();

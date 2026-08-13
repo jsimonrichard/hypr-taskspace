@@ -120,7 +120,9 @@ pub fn install_walker(cfg: &TskConfig, options: &InstallWalkerOptions) -> Result
             "terminal_cmd": terminal_cmd,
         })],
         user_files_backed_up: vec![json!({"path": path, "backup": "elephant.toml"})],
-        user_files_modified: vec![json!({"path": path, "actions": [{"type": "patch", "marker": MANAGED_MARKER}]})],
+        user_files_modified: vec![
+            json!({"path": path, "actions": [{"type": "patch", "marker": MANAGED_MARKER}]}),
+        ],
         module_kind: Some(format!("{profile:?}").to_lowercase()),
     };
     manifest::save_manifest(&metadata_dir, &manifest)?;
@@ -153,7 +155,10 @@ pub fn uninstall_walker(cfg: &TskConfig, restore_backup: bool) -> Result<Vec<Str
                 path: path.clone(),
                 source,
             })?;
-            actions.push(format!("removed tsk walker settings from {}", path.display()));
+            actions.push(format!(
+                "removed tsk walker settings from {}",
+                path.display()
+            ));
         }
     }
 
@@ -255,7 +260,11 @@ mod tests {
     #[test]
     fn patch_inserts_managed_keys() {
         let original = "git_on_demand = true\nlaunch_prefix = ''\n";
-        let out = patch_elephant_toml(original, "/usr/bin/tsk walker exec --", "/usr/bin/tsk walker terminal --");
+        let out = patch_elephant_toml(
+            original,
+            "/usr/bin/tsk walker exec --",
+            "/usr/bin/tsk walker terminal --",
+        );
         assert!(out.contains(MANAGED_MARKER));
         assert!(out.contains("auto_detect_launch_prefix = false"));
         assert!(out.contains("launch_prefix = \"/usr/bin/tsk walker exec --\""));
@@ -266,7 +275,11 @@ mod tests {
     #[test]
     fn patch_keeps_launch_prefix_at_root_not_under_provider_hosts() {
         let original = "git_on_demand = true\n\n[provider_hosts]\n";
-        let out = patch_elephant_toml(original, "/usr/bin/tsk walker exec --", "/usr/bin/tsk walker terminal --");
+        let out = patch_elephant_toml(
+            original,
+            "/usr/bin/tsk walker exec --",
+            "/usr/bin/tsk walker terminal --",
+        );
         let launch = out.find("launch_prefix = ").unwrap();
         let provider_hosts = out.find("[provider_hosts]").unwrap();
         assert!(

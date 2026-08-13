@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use serde_json::{json, Map, Value};
 
 use crate::config::TskConfig;
-use crate::error::{TskError, Result};
+use crate::error::{Result, TskError};
 use crate::install::backup::{self, backup_timestamp};
 use crate::install::jsonc::{dump_jsonc, parse_jsonc};
 use crate::install::manifest::{self, Manifest};
@@ -63,15 +63,14 @@ pub fn install_waybar_status(cfg: &TskConfig) -> Result<Value> {
     let config_path = default_waybar_config();
     let mut has_cffi = false;
     if config_path.is_file() {
-        let data = parse_jsonc(&fs::read_to_string(&config_path).map_err(|source| {
-            TskError::Read {
-                path: config_path.clone(),
-                source,
-            }
-        })?)?;
-        has_cffi = modules_left(&data)
-            .iter()
-            .any(|m| m == CFFI_MODULE);
+        let data =
+            parse_jsonc(
+                &fs::read_to_string(&config_path).map_err(|source| TskError::Read {
+                    path: config_path.clone(),
+                    source,
+                })?,
+            )?;
+        has_cffi = modules_left(&data).iter().any(|m| m == CFFI_MODULE);
     }
     Ok(json!({
         "installed": manifest.is_some(),
@@ -90,12 +89,13 @@ pub fn plan_install(cfg: &TskConfig) -> Result<InstallWaybarPlan> {
         .join(backup_timestamp());
     let module_path = waybar_module_path(cfg);
     let modules_left_before = if config_path.is_file() {
-        let data = parse_jsonc(&fs::read_to_string(&config_path).map_err(|source| {
-            TskError::Read {
-                path: config_path.clone(),
-                source,
-            }
-        })?)?;
+        let data =
+            parse_jsonc(
+                &fs::read_to_string(&config_path).map_err(|source| TskError::Read {
+                    path: config_path.clone(),
+                    source,
+                })?,
+            )?;
         Some(modules_left(&data))
     } else {
         None
@@ -245,9 +245,7 @@ pub fn uninstall_waybar(cfg: &TskConfig) -> Result<Vec<String>> {
             })
             .unwrap_or(false);
         if !has_tsk {
-            return Err(TskError::Other(
-                "No tsk Waybar installation found".into(),
-            ));
+            return Err(TskError::Other("No tsk Waybar installation found".into()));
         }
     }
 
@@ -258,11 +256,8 @@ fn copy_share_templates(cfg: &TskConfig) -> Result<()> {
     if uses_packaged_share(cfg) {
         return Ok(());
     }
-    let share_src = crate::install::bins::resolve_share_templates(
-        None,
-        profile_for_config(cfg),
-    )?
-    .join("waybar");
+    let share_src = crate::install::bins::resolve_share_templates(None, profile_for_config(cfg))?
+        .join("waybar");
     let share_dest = cfg.install_hypr_share_dir.join("waybar");
     let share_str = cfg.install_hypr_share_dir.to_string_lossy();
     ensure_parent(&share_dest.join("_"))?;
@@ -292,15 +287,15 @@ fn copy_share_templates(cfg: &TskConfig) -> Result<()> {
     Ok(())
 }
 
-
 fn patch_config(config_path: &Path, module_path: &Path) -> Result<()> {
     let raw = fs::read_to_string(config_path).map_err(|source| TskError::Read {
         path: config_path.to_path_buf(),
         source,
     })?;
-    let mut data = parse_jsonc(&raw)?.as_object().cloned().ok_or_else(|| {
-        TskError::Other("waybar config root must be a JSON object".into())
-    })?;
+    let mut data = parse_jsonc(&raw)?
+        .as_object()
+        .cloned()
+        .ok_or_else(|| TskError::Other("waybar config root must be a JSON object".into()))?;
 
     remove_tsk_keys(&mut data);
     data.remove(HYPR_WORKSPACES_MODULE);
@@ -310,7 +305,10 @@ fn patch_config(config_path: &Path, module_path: &Path) -> Result<()> {
         .filter(|m| !is_tsk_module(m) && !is_replaced_workspace_module(m))
         .collect::<Vec<_>>();
 
-    let insert_at = if left.first().is_some_and(|m| m.starts_with("custom/omarchy")) {
+    let insert_at = if left
+        .first()
+        .is_some_and(|m| m.starts_with("custom/omarchy"))
+    {
         1
     } else {
         0
@@ -318,7 +316,10 @@ fn patch_config(config_path: &Path, module_path: &Path) -> Result<()> {
     if !left.iter().any(|m| m == CFFI_MODULE) {
         left.insert(insert_at, CFFI_MODULE.into());
     }
-    data.insert("modules-left".into(), Value::Array(left.into_iter().map(Value::String).collect()));
+    data.insert(
+        "modules-left".into(),
+        Value::Array(left.into_iter().map(Value::String).collect()),
+    );
 
     let module_path_str = module_path.to_string_lossy().replace('\\', "/");
     data.insert(
@@ -326,11 +327,9 @@ fn patch_config(config_path: &Path, module_path: &Path) -> Result<()> {
         json!({ "module_path": module_path_str }),
     );
 
-    fs::write(config_path, dump_jsonc(&Value::Object(data))).map_err(|source| {
-        TskError::Write {
-            path: config_path.to_path_buf(),
-            source,
-        }
+    fs::write(config_path, dump_jsonc(&Value::Object(data))).map_err(|source| TskError::Write {
+        path: config_path.to_path_buf(),
+        source,
     })?;
     Ok(())
 }
@@ -356,7 +355,10 @@ fn unpatch_config(config_path: &Path) -> Result<bool> {
         .collect::<Vec<_>>();
 
     if !left.iter().any(|m| m == HYPR_WORKSPACES_MODULE) {
-        let insert_at = if left.first().is_some_and(|m| m.starts_with("custom/omarchy")) {
+        let insert_at = if left
+            .first()
+            .is_some_and(|m| m.starts_with("custom/omarchy"))
+        {
             1
         } else {
             0
@@ -402,7 +404,10 @@ fn patch_style(config_dir: &Path, cfg: &TskConfig) -> Result<()> {
         content = content[..idx].trim_end().to_string();
     }
     content.push_str(&format!("\n\n{STYLE_MARKER}\n{}\n", snippet.trim()));
-    fs::write(&style_path, content).map_err(|source| TskError::Write { path: style_path, source })
+    fs::write(&style_path, content).map_err(|source| TskError::Write {
+        path: style_path,
+        source,
+    })
 }
 
 fn unpatch_style(config_dir: &Path) -> Result<bool> {
@@ -565,9 +570,7 @@ fn remove_legacy_dev_manifest(cfg: &TskConfig, integration: &str) -> Result<()> 
 }
 
 fn modules_left(data: &Value) -> Vec<String> {
-    data.as_object()
-        .map(modules_left_map)
-        .unwrap_or_default()
+    data.as_object().map(modules_left_map).unwrap_or_default()
 }
 
 fn modules_left_map(data: &Map<String, Value>) -> Vec<String> {
@@ -582,9 +585,7 @@ fn modules_left_map(data: &Map<String, Value>) -> Vec<String> {
 }
 
 fn is_tsk_module(name: &str) -> bool {
-    name == CFFI_MODULE
-        || name == TSK_TASK_MODULE
-        || name.starts_with("custom/tsk-workspace-")
+    name == CFFI_MODULE || name == TSK_TASK_MODULE || name.starts_with("custom/tsk-workspace-")
 }
 
 fn is_replaced_workspace_module(name: &str) -> bool {
@@ -597,9 +598,7 @@ fn config_has_tsk(data: &Value) -> bool {
     }
     data.as_object().is_some_and(|obj| {
         obj.keys().any(|key| {
-            key == TSK_TASK_MODULE
-                || key.starts_with("custom/tsk-workspace-")
-                || key == CFFI_MODULE
+            key == TSK_TASK_MODULE || key.starts_with("custom/tsk-workspace-") || key == CFFI_MODULE
         })
     })
 }
@@ -608,9 +607,7 @@ fn remove_tsk_keys(data: &mut Map<String, Value>) -> bool {
     let keys = data
         .keys()
         .filter(|k| {
-            *k == CFFI_MODULE
-                || *k == TSK_TASK_MODULE
-                || k.starts_with("custom/tsk-workspace-")
+            *k == CFFI_MODULE || *k == TSK_TASK_MODULE || k.starts_with("custom/tsk-workspace-")
         })
         .cloned()
         .collect::<Vec<_>>();
@@ -649,7 +646,10 @@ mod tests {
             .filter(|m| !is_tsk_module(m) && !is_replaced_workspace_module(m))
             .collect();
 
-        assert_eq!(left, vec!["custom/omarchy".to_string(), "clock".to_string()]);
+        assert_eq!(
+            left,
+            vec!["custom/omarchy".to_string(), "clock".to_string()]
+        );
         assert!(data.get(HYPR_WORKSPACES_MODULE).is_none());
         assert!(left.iter().all(|m| !is_replaced_workspace_module(m)));
     }

@@ -40,14 +40,20 @@ mod tests {
     fn task_mode_collapses_empty_high_slots() {
         let allowed: Vec<String> = (1..=10).map(|n| format!("auth-fix-{n}")).collect();
         let occupied = HashSet::from([1, 3]);
-        let visible = visible_default_workspace_count(&state(ContextMode::Task), &allowed, 1, &occupied);
+        let visible =
+            visible_default_workspace_count(&state(ContextMode::Task), &allowed, 1, &occupied);
         assert_eq!(visible, DEFAULT_MIN_VISIBLE_WORKSPACES);
     }
 
     #[test]
     fn task_mode_expands_for_active_slot_beyond_min() {
         let allowed: Vec<String> = (1..=10).map(|n| format!("auth-fix-{n}")).collect();
-        let visible = visible_default_workspace_count(&state(ContextMode::Task), &allowed, 8, &HashSet::new());
+        let visible = visible_default_workspace_count(
+            &state(ContextMode::Task),
+            &allowed,
+            8,
+            &HashSet::new(),
+        );
         assert_eq!(visible, 8);
     }
 }

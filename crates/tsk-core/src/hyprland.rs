@@ -6,7 +6,7 @@ use std::sync::Mutex;
 
 use serde_json::Value;
 
-use crate::error::{TskError, Result};
+use crate::error::{Result, TskError};
 use crate::hypr_log;
 use crate::terminal::{TUI_WINDOW_CLASS, TUI_WINDOW_TITLE};
 use crate::trace::Span;
@@ -78,8 +78,7 @@ pub fn mutations_enabled() -> bool {
 }
 
 fn has_instance() -> bool {
-    std::env::var("HYPRLAND_INSTANCE_SIGNATURE").is_ok()
-        && std::env::var("XDG_RUNTIME_DIR").is_ok()
+    std::env::var("HYPRLAND_INSTANCE_SIGNATURE").is_ok() && std::env::var("XDG_RUNTIME_DIR").is_ok()
 }
 
 pub fn hyprctl_json(args: &[&str]) -> Result<Value> {
@@ -88,13 +87,8 @@ pub fn hyprctl_json(args: &[&str]) -> Result<Value> {
     }
     with_hypr_ipc(|| {
         hypr_log::log("query", &format!("hyprctl -j {}", args.join(" ")));
-        let output = retry_on_interrupted(|| {
-            Command::new("hyprctl")
-                .arg("-j")
-                .args(args)
-                .output()
-        })
-        .map_err(|e| TskError::Hyprctl(e.to_string()))?;
+        let output = retry_on_interrupted(|| Command::new("hyprctl").arg("-j").args(args).output())
+            .map_err(|e| TskError::Hyprctl(e.to_string()))?;
         if !output.status.success() {
             return Err(TskError::Hyprctl(
                 String::from_utf8_lossy(&output.stderr).into_owned(),
@@ -276,7 +270,10 @@ pub fn list_monitors() -> Result<Vec<Monitor>> {
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
-            let focused = item.get("focused").and_then(|v| v.as_bool()).unwrap_or(false);
+            let focused = item
+                .get("focused")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
             let x = item.get("x").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
             let y = item.get("y").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
             Some(Monitor {
@@ -297,9 +294,12 @@ pub fn focus_monitor(name: &str) {
 }
 
 pub fn swap_active_workspaces(monitor_a: &str, monitor_b: &str) {
-    hypr_log::scoped(format!("swap_active_workspaces {monitor_a} ↔ {monitor_b}"), || {
-        dispatch_sync(&["swapactiveworkspaces", monitor_a, monitor_b]);
-    });
+    hypr_log::scoped(
+        format!("swap_active_workspaces {monitor_a} ↔ {monitor_b}"),
+        || {
+            dispatch_sync(&["swapactiveworkspaces", monitor_a, monitor_b]);
+        },
+    );
 }
 
 pub fn focused_monitor_name() -> Option<String> {
@@ -329,10 +329,13 @@ pub fn close_tsk_tui_windows() -> usize {
 }
 
 pub fn switch_workspace_on_monitor(monitor: &str, workspace: &str) {
-    hypr_log::scoped(format!("switch_workspace_on_monitor {monitor} → {workspace}"), || {
-        focus_monitor(monitor);
-        switch_workspace_on_current_monitor(workspace);
-    });
+    hypr_log::scoped(
+        format!("switch_workspace_on_monitor {monitor} → {workspace}"),
+        || {
+            focus_monitor(monitor);
+            switch_workspace_on_current_monitor(workspace);
+        },
+    );
 }
 
 pub fn switch_workspace_on_current_monitor(name: &str) {
@@ -359,21 +362,26 @@ pub fn switch_workspace_on_focused_monitor(name: &str) {
 /// Within-taskspace navigation: if the workspace is already visible on another
 /// monitor, focus that monitor; otherwise bring the workspace to the focused one.
 pub fn switch_workspace_for_navigation(name: &str) {
-    hypr_log::scoped(format!("switch_workspace_for_navigation {name}"), || {
-        match navigation_strategy(name) {
+    hypr_log::scoped(
+        format!("switch_workspace_for_navigation {name}"),
+        || match navigation_strategy(name) {
             NavigationStrategy::FocusExistingMonitor => {
-                hypr_log::note(format!("workspace {name} visible on another monitor — focusing it"));
+                hypr_log::note(format!(
+                    "workspace {name} visible on another monitor — focusing it"
+                ));
                 switch_workspace(name);
             }
             NavigationStrategy::OnFocusedMonitor => {
                 switch_workspace_on_current_monitor(name);
             }
             NavigationStrategy::MoveToFocusedMonitor => {
-                hypr_log::note(format!("workspace {name} not visible — moving to focused monitor"));
+                hypr_log::note(format!(
+                    "workspace {name} not visible — moving to focused monitor"
+                ));
                 switch_workspace_on_focused_monitor(name);
             }
-        }
-    });
+        },
+    );
 }
 
 /// Move the active window to a workspace by **name** (Omarchy SUPER+SHIFT+number).
@@ -391,13 +399,16 @@ pub fn move_window_to_workspace_silent(address: &str, name: &str) {
     }
     let addr = address.strip_prefix("0x").unwrap_or(address);
     let target = workspace_dispatch_arg(name);
-    hypr_log::scoped(format!("move_window_to_workspace_silent 0x{addr} → {name}"), || {
-        dispatch_sync(&[
-            "movetoworkspacesilent",
-            &target,
-            &format!("address:0x{addr}"),
-        ]);
-    });
+    hypr_log::scoped(
+        format!("move_window_to_workspace_silent 0x{addr} → {name}"),
+        || {
+            dispatch_sync(&[
+                "movetoworkspacesilent",
+                &target,
+                &format!("address:0x{addr}"),
+            ]);
+        },
+    );
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -408,10 +419,7 @@ enum NavigationStrategy {
 }
 
 fn navigation_strategy(name: &str) -> NavigationStrategy {
-    decide_navigation_strategy(
-        &list_monitors().unwrap_or_default(),
-        name,
-    )
+    decide_navigation_strategy(&list_monitors().unwrap_or_default(), name)
 }
 
 fn decide_navigation_strategy(monitors: &[Monitor], name: &str) -> NavigationStrategy {
@@ -520,9 +528,12 @@ fn ensure_workspaces_inner(names: &[String]) {
         // as an external switch (bounce / feedback loop). Callers that need to stay put
         // while creating outside the current taskspace should save/restore themselves.
         if active != prev && workspace_in_provision_set(&prev, names) {
-            hypr_log::scoped(format!("restore active workspace after ensure: {prev}"), || {
-                switch_workspace(&prev);
-            });
+            hypr_log::scoped(
+                format!("restore active workspace after ensure: {prev}"),
+                || {
+                    switch_workspace(&prev);
+                },
+            );
         }
     }
 }

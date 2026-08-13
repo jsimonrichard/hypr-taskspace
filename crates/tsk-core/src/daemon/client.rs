@@ -9,14 +9,14 @@ use std::time::{Duration, Instant};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::error::{TskError, Result};
+use crate::config::{load_config, load_dev_config, load_prod_config};
+use crate::dev_session::dev_session_active;
+use crate::error::{Result, TskError};
 use crate::hypr_log;
 use crate::hyprland;
 use crate::models::{SessionState, Task};
 use crate::service::{MenuTask, TaskService};
 use crate::workspace_nav;
-use crate::config::{load_config, load_dev_config, load_prod_config};
-use crate::dev_session::dev_session_active;
 use crate::xdg::resolve_daemon_socket_path;
 
 const RPC_TIMEOUT: Duration = Duration::from_secs(5);
@@ -104,7 +104,11 @@ fn daemon_recently_reachable(socket: &Path) -> bool {
     reachability_cache()
         .lock()
         .ok()
-        .and_then(|cache| cache.as_ref().map(|c| c.socket == socket && Instant::now() < c.ok_until))
+        .and_then(|cache| {
+            cache
+                .as_ref()
+                .map(|c| c.socket == socket && Instant::now() < c.ok_until)
+        })
         .unwrap_or(false)
 }
 
@@ -327,9 +331,12 @@ impl DaemonClient {
         let Some(name) = name else {
             return Ok(None);
         };
-        hypr_log::scoped(format!("daemon client hyprctl_then_remember slot {relative} → {name}"), || {
-            hyprland::switch_workspace_for_navigation(&name);
-        });
+        hypr_log::scoped(
+            format!("daemon client hyprctl_then_remember slot {relative} → {name}"),
+            || {
+                hyprland::switch_workspace_for_navigation(&name);
+            },
+        );
         self.sync_workspace_remember(relative)?;
         Ok(Some(name))
     }
@@ -384,10 +391,7 @@ impl DaemonClient {
 
     pub fn rename_task(&self, task_id: &str, name: &str) -> Result<Task> {
         ensure_daemon()?;
-        let v = daemon_request(
-            "rename_task",
-            json!({ "task_id": task_id, "name": name }),
-        )?;
+        let v = daemon_request("rename_task", json!({ "task_id": task_id, "name": name }))?;
         serde_json::from_value(v).map_err(|e| TskError::Other(e.to_string()))
     }
 

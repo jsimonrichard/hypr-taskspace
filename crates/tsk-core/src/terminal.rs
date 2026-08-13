@@ -3,10 +3,10 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use crate::binary::{command_v_login, resolve_tsk_spawn_binary};
 use crate::config::{load_config, TskConfig};
 use crate::distrobox;
-use crate::error::{TskError, Result};
-use crate::binary::{resolve_tsk_spawn_binary, command_v_login};
+use crate::error::{Result, TskError};
 use crate::models::Task;
 use crate::registry::Registry;
 use crate::task_env;
@@ -148,12 +148,7 @@ pub fn resolve_terminal_command(cfg: &TskConfig) -> Result<String> {
     ))
 }
 
-fn spawn_host_shell(
-    term: &str,
-    cwd: &Path,
-    title: &str,
-    env: &[(String, String)],
-) -> Result<()> {
+fn spawn_host_shell(term: &str, cwd: &Path, title: &str, env: &[(String, String)]) -> Result<()> {
     let cfg = load_config()?;
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".into());
     let base = terminal_base_name(term);
@@ -191,7 +186,12 @@ fn spawn_host_shell(
             cmd.args(["-T", title, "-D", &cwd.display().to_string()]);
         }
         "wezterm" | "kgx" | "xfce4-terminal" => {
-            cmd.args(["--title", title, "--working-directory", &cwd.display().to_string()]);
+            cmd.args([
+                "--title",
+                title,
+                "--working-directory",
+                &cwd.display().to_string(),
+            ]);
         }
         _ => {
             cmd.args(["--working-directory", &cwd.display().to_string()]);
@@ -199,9 +199,8 @@ fn spawn_host_shell(
     }
 
     cmd.arg(&shell);
-    cmd.spawn().map_err(|e| {
-        TskError::Other(format!("failed to launch terminal `{term}`: {e}"))
-    })?;
+    cmd.spawn()
+        .map_err(|e| TskError::Other(format!("failed to launch terminal `{term}`: {e}")))?;
     Ok(())
 }
 
@@ -225,10 +224,7 @@ pub fn spawn_terminal_command(
     cmd.env_remove("TSK");
     match base {
         "xdg-terminal-exec" => {
-            cmd.args([
-                &format!("--app-id={class}"),
-                &format!("--title={title}"),
-            ]);
+            cmd.args([&format!("--app-id={class}"), &format!("--title={title}")]);
             if let Some(cwd) = cwd {
                 cmd.arg(format!("--dir={}", cwd.display()));
             }
@@ -237,10 +233,7 @@ pub fn spawn_terminal_command(
             cmd.args(args);
         }
         "kitty" => {
-            cmd.args([
-                &format!("--class={class}"),
-                &format!("--title={title}"),
-            ]);
+            cmd.args([&format!("--class={class}"), &format!("--title={title}")]);
             if let Some(cwd) = cwd {
                 cmd.args([&format!("--directory={}", cwd.display())]);
             }
@@ -283,9 +276,8 @@ pub fn spawn_terminal_command(
         }
     }
 
-    cmd.spawn().map_err(|e| {
-        TskError::Other(format!("failed to launch terminal `{term}`: {e}"))
-    })?;
+    cmd.spawn()
+        .map_err(|e| TskError::Other(format!("failed to launch terminal `{term}`: {e}")))?;
     Ok(())
 }
 

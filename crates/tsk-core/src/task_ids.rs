@@ -118,6 +118,7 @@ mod tests {
             browser_profile: None,
             created_at: Utc::now(),
             last_active_at: Utc::now(),
+            listed_at: Utc::now(),
             agent_notes_path: None,
             ports: vec![],
         }
@@ -150,8 +151,14 @@ mod tests {
             lookup_task(&state, "tabc4"),
             TaskLookup::Found(t) if t.id == "tabc456"
         ));
-        assert!(matches!(lookup_task(&state, "tabc"), TaskLookup::AmbiguousPrefix(_)));
-        assert!(matches!(lookup_task(&state, "missing"), TaskLookup::NotFound));
+        assert!(matches!(
+            lookup_task(&state, "tabc"),
+            TaskLookup::AmbiguousPrefix(_)
+        ));
+        assert!(matches!(
+            lookup_task(&state, "missing"),
+            TaskLookup::NotFound
+        ));
     }
 
     #[test]
@@ -163,7 +170,9 @@ mod tests {
             global_workspace_slots: vec![1, 10],
             ..Default::default()
         };
-        state.tasks.insert("auth-fix".into(), sample_task("auth-fix"));
+        state
+            .tasks
+            .insert("auth-fix".into(), sample_task("auth-fix"));
         let workspaces = crate::workspaces::allowed_workspace_names(&state);
         let tooltip = format_workspaces_tooltip(&workspaces, &state);
         assert_eq!(tooltip, "1 (global), 2, 3, 4, 5, 6, 7, 8, 9, 0 (global)");

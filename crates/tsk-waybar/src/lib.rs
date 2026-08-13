@@ -10,18 +10,18 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use serde::Deserialize;
 use tsk_core::{
     bar_active_workspace_name, bar_occupied_names, bar_workspace_names, build_all_modules,
     hyprland_events::{
         is_full_refresh_event, is_monitor_focus_event, is_workspace_focus_event,
         parse_focusedmon_v2, parse_workspace_v2, HyprlandEventListener,
     },
-    is_global_workspace_name, read_state_rev, sync_from_workspace_name, trace_enabled, trace_event,
-    visible_default_workspace_count, launch_task_tui, workspace_display_label,
-    workspace_goto_name, workspace_tooltip_label, Registry, SessionState, StateChangeKind, StateEventListener,
-    WaybarModuleJson, ACTIVE_WORKSPACE_ICON,
+    is_global_workspace_name, launch_task_tui, read_state_rev, sync_from_workspace_name,
+    trace_enabled, trace_event, visible_default_workspace_count, workspace_display_label,
+    workspace_goto_name, workspace_tooltip_label, Registry, SessionState, StateChangeKind,
+    StateEventListener, WaybarModuleJson, ACTIVE_WORKSPACE_ICON,
 };
-use serde::Deserialize;
 use waybar_cffi::{
     gtk::{
         glib, prelude::*, Align, Box as GtkBox, Button, CssProvider, Label, Orientation,
@@ -143,9 +143,7 @@ fn install_bar_button_styles(root: &GtkBox) {
 
 const BUTTON_CLASSES: &[&str] = &["active", "empty", "idle", "global"];
 
-const LABEL_CLASSES: &[&str] = &[
-    "active", "empty", "idle", "hidden", "task", "default",
-];
+const LABEL_CLASSES: &[&str] = &["active", "empty", "idle", "hidden", "task", "default"];
 
 fn normalize_hypr_workspace_name(name: &str) -> String {
     name.strip_prefix("name:")
@@ -183,9 +181,7 @@ impl Runtime {
         refresh: PendingRefresh,
     ) {
         {
-            let mut slot = pending
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
+            let mut slot = pending.lock().unwrap_or_else(|e| e.into_inner());
             Self::merge_pending(&mut slot, refresh);
         }
         if scheduled.swap(true, Ordering::AcqRel) {
@@ -204,11 +200,7 @@ impl Runtime {
     }
 
     fn process_pending(&self) {
-        let next = self
-            .pending
-            .lock()
-            .ok()
-            .and_then(|mut g| g.take());
+        let next = self.pending.lock().ok().and_then(|mut g| g.take());
         match next {
             Some(PendingRefresh::Fast(name)) => self.repaint_fast(&name),
             Some(PendingRefresh::Full) => {
@@ -232,8 +224,7 @@ impl Runtime {
     }
 
     fn taskspace_changed(&self, state: &SessionState, bar_names: &[String]) -> bool {
-        *self.taskspace_key.borrow() != state.taskspace_key()
-            || *self.allowed.borrow() != bar_names
+        *self.taskspace_key.borrow() != state.taskspace_key() || *self.allowed.borrow() != bar_names
     }
 
     /// Pick up taskspace changes written by the CLI (state.db) without a full Waybar restart.
@@ -268,10 +259,7 @@ impl Runtime {
         let modules = build_all_modules(state, false);
         if let Some(task) = modules.get("task") {
             apply_module(&self.widgets.task_label, task);
-            let hidden = task
-                .class
-                .as_deref()
-                .is_some_and(|c| c.contains("hidden"));
+            let hidden = task.class.as_deref().is_some_and(|c| c.contains("hidden"));
             self.widgets.task_button.set_visible(!hidden);
             let tooltip = task
                 .tooltip
@@ -347,30 +335,14 @@ impl Runtime {
         }
     }
 
-    fn set_button_active(
-        &self,
-        name: &str,
-        active: bool,
-        occupied: &HashSet<String>,
-    ) {
+    fn set_button_active(&self, name: &str, active: bool, occupied: &HashSet<String>) {
         let Some(entry) = self.buttons.borrow().get(name).cloned() else {
             return;
         };
-        Self::style_button(
-            &entry,
-            name,
-            active,
-            occupied,
-            self.state.borrow().as_ref(),
-        );
+        Self::style_button(&entry, name, active, occupied, self.state.borrow().as_ref());
     }
 
-    fn flip_active(
-        &self,
-        old: &str,
-        new: &str,
-        occupied: &HashSet<String>,
-    ) {
+    fn flip_active(&self, old: &str, new: &str, occupied: &HashSet<String>) {
         if old != new && self.buttons.borrow().contains_key(old) {
             self.set_button_active(old, false, occupied);
         }
@@ -421,9 +393,7 @@ impl Runtime {
                 Self::on_workspace_clicked(&ws_name);
             });
             self.widgets.workspace_box.add(&entry.button);
-            self.buttons
-                .borrow_mut()
-                .insert(name.clone(), entry);
+            self.buttons.borrow_mut().insert(name.clone(), entry);
         }
 
         self.widgets.workspace_box.show_all();
@@ -549,8 +519,7 @@ impl Runtime {
         sync_from_workspace_name(&mut state, &workspace_name);
 
         let context_changed = before_mode != state.context_mode;
-        let task_changed =
-            context_changed || before_task != state.current_task_id;
+        let task_changed = context_changed || before_task != state.current_task_id;
         let bar = bar_workspace_names(&state);
         let strip_changed = self.taskspace_changed(&state, &bar);
         let occupied = if strip_changed || task_changed || context_changed {
@@ -690,7 +659,12 @@ fn apply_module(label: &Label, module: &WaybarModuleJson) {
     } else {
         label.set_tooltip_text(None::<&str>);
     }
-    label.set_visible(!module.class.as_deref().is_some_and(|c| c.contains("hidden")));
+    label.set_visible(
+        !module
+            .class
+            .as_deref()
+            .is_some_and(|c| c.contains("hidden")),
+    );
 
     let ctx = label.style_context();
     for class in LABEL_CLASSES {
@@ -720,13 +694,7 @@ impl TskBar {
                     .map(PendingRefresh::Fast)
                     .unwrap_or(PendingRefresh::Full),
             };
-            Runtime::queue_and_dispatch(
-                runtime_id,
-                &pending,
-                &scheduled,
-                &main_ctx,
-                refresh,
-            );
+            Runtime::queue_and_dispatch(runtime_id, &pending, &scheduled, &main_ctx, refresh);
         }))
     }
 

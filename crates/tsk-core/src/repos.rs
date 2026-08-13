@@ -10,7 +10,7 @@ use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::error::{TskError, Result};
+use crate::error::{Result, TskError};
 use crate::models::Task;
 use crate::task_paths::{
     is_scratch_workspace_path, scratch_checkout_path, task_workspace_dir, SCRATCH_DIR_NAME,
@@ -175,8 +175,7 @@ pub fn load_repo_config(vcs_root: &Path) -> Result<Option<RepoConfig>> {
         path: path.clone(),
         source,
     })?;
-    let file: RepoConfigFile =
-        toml::from_str(&raw).map_err(|e| TskError::Config(e.to_string()))?;
+    let file: RepoConfigFile = toml::from_str(&raw).map_err(|e| TskError::Config(e.to_string()))?;
     let config = RepoConfig {
         name: file.name,
         url: file.url,
@@ -240,7 +239,11 @@ fn migrate_bookmarks_to_db(conn: &Connection) -> Result<()> {
         path: bookmarks_path.clone(),
         source,
     })?;
-    for line in raw.lines().map(str::trim).filter(|line| !line.is_empty() && !line.starts_with('#')) {
+    for line in raw
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+    {
         let path = normalize_repo_path(Path::new(line));
         if path.is_dir() {
             upsert_repo_record(conn, &path)?;
@@ -296,10 +299,7 @@ fn build_registered_repo(path: PathBuf, id: String, config: Option<RepoConfig>) 
     let config = config.unwrap_or_default();
     RegisteredRepo {
         id,
-        name: config
-            .name
-            .clone()
-            .unwrap_or_else(|| repo_label(&path)),
+        name: config.name.clone().unwrap_or_else(|| repo_label(&path)),
         path,
         url: config.url,
         vcs: config.vcs,
@@ -358,17 +358,16 @@ pub fn find_repo<'a>(repos: &'a [RegisteredRepo], id: &str) -> Option<&'a Regist
     repos.iter().find(|r| r.id == id)
 }
 
-pub fn find_repo_by_path<'a>(repos: &'a [RegisteredRepo], path: &Path) -> Option<&'a RegisteredRepo> {
+pub fn find_repo_by_path<'a>(
+    repos: &'a [RegisteredRepo],
+    path: &Path,
+) -> Option<&'a RegisteredRepo> {
     repos.iter().find(|r| paths_match(&r.path, path))
 }
 
 pub fn register_repo(path: &Path, _existing: &[RegisteredRepo]) -> Result<RegisteredRepo> {
-    let root = detect_vcs_root(Some(path)).ok_or_else(|| {
-        TskError::Other(format!(
-            "No git or jj repo found at {}",
-            path.display()
-        ))
-    })?;
+    let root = detect_vcs_root(Some(path))
+        .ok_or_else(|| TskError::Other(format!("No git or jj repo found at {}", path.display())))?;
     let root = normalize_repo_path(&root);
 
     let conn = repos_db_conn()?;
@@ -560,8 +559,8 @@ path = "/tmp/legacy-app"
 
     #[test]
     fn collect_task_repo_paths_skips_scratch_tasks() {
-        use chrono::Utc;
         use crate::models::TaskStatus;
+        use chrono::Utc;
 
         let now = Utc::now();
         let linked = Task {
@@ -578,6 +577,7 @@ path = "/tmp/legacy-app"
             browser_profile: None,
             created_at: now,
             last_active_at: now,
+            listed_at: now,
             agent_notes_path: None,
             ports: vec![],
         };
@@ -595,6 +595,7 @@ path = "/tmp/legacy-app"
             browser_profile: None,
             created_at: now,
             last_active_at: now,
+            listed_at: now,
             agent_notes_path: None,
             ports: vec![],
         };

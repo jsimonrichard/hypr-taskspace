@@ -1,9 +1,9 @@
 //! Installed TSK binary resolution and login-shell PATH lookup.
 
+use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::fs;
 
 use crate::config::TskConfig;
 use crate::dev_session::{dev_session_active, dev_session_binary};
@@ -87,11 +87,8 @@ pub fn resolve_tsk_command(_cfg: &TskConfig) -> String {
     if crate::share::system_share_available() {
         return "/usr/bin/tsk".into();
     }
-    command_v_login("tsk").unwrap_or_else(|| {
-        resolve_tsk_binary(_cfg)
-            .to_string_lossy()
-            .into_owned()
-    })
+    command_v_login("tsk")
+        .unwrap_or_else(|| resolve_tsk_binary(_cfg).to_string_lossy().into_owned())
 }
 
 /// When a dev session file is present, re-exec the recorded dev binary so Hyprland
@@ -159,10 +156,7 @@ pub fn shell_quote(s: &str) -> String {
 pub fn path_tsk_is_usable(_cfg: &TskConfig) -> (bool, String) {
     if dev_session_active() {
         if let Some(bin) = dev_session_binary() {
-            return (
-                true,
-                format!("{} (dev enter session)", bin.display()),
-            );
+            return (true, format!("{} (dev enter session)", bin.display()));
         }
     }
     if let Ok(path) = std::env::var("TSK") {
@@ -309,16 +303,12 @@ pub fn legacy_share_tsk_binary(cfg: &TskConfig) -> PathBuf {
 
 /// Waybar CFFI module next to the installed share tree.
 pub fn waybar_module_path(cfg: &TskConfig) -> PathBuf {
-    crate::share::effective_share_dir(cfg)
-        .join("lib/libtsk_waybar.so")
+    crate::share::effective_share_dir(cfg).join("lib/libtsk_waybar.so")
 }
 
 /// True when `path` looks like a non-empty shared library (empty files fail Waybar silently).
 pub fn is_usable_cdylib(path: &Path) -> bool {
-    path.is_file()
-        && fs::metadata(path)
-            .map(|m| m.len() > 0)
-            .unwrap_or(false)
+    path.is_file() && fs::metadata(path).map(|m| m.len() > 0).unwrap_or(false)
 }
 
 /// FHS-style module path relative to an installed `tsk` binary (`../lib/libtsk_waybar.so`).
@@ -420,8 +410,12 @@ mod tests {
         fs::write(&packaged, b"packaged").unwrap();
         fs::write(&cargo, b"stale cargo").unwrap();
         std::os::unix::fs::symlink(&packaged, &alias).unwrap();
-        let actions = remove_shadowing_tsk_copies(&packaged, &[cargo.clone(), alias.clone()]).unwrap();
-        assert_eq!(actions, vec![format!("removed PATH shadow {}", cargo.display())]);
+        let actions =
+            remove_shadowing_tsk_copies(&packaged, &[cargo.clone(), alias.clone()]).unwrap();
+        assert_eq!(
+            actions,
+            vec![format!("removed PATH shadow {}", cargo.display())]
+        );
         assert!(!cargo.exists());
         assert!(alias.exists());
         assert!(packaged.exists());

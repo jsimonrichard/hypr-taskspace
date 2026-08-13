@@ -6,7 +6,7 @@ use std::process::{Command, Stdio};
 use crate::binary::command_v_login;
 use crate::config::load_config;
 use crate::distrobox;
-use crate::error::{TskError, Result};
+use crate::error::{Result, TskError};
 use crate::models::{SessionState, Task};
 use crate::task_env;
 
@@ -66,8 +66,7 @@ pub fn launch_task_editor(task: &Task, state: &SessionState) -> Result<()> {
 pub fn launch_task_browser(task: &Task, state: &SessionState) -> Result<()> {
     let browser = resolve_browser_command().ok_or_else(|| {
         TskError::Other(
-            "no browser found (looked for chromium, chrome, brave, firefox) — set $BROWSER"
-                .into(),
+            "no browser found (looked for chromium, chrome, brave, firefox) — set $BROWSER".into(),
         )
     })?;
     spawn_task_command(task, state, &browser, &[])
@@ -77,8 +76,7 @@ pub fn launch_task_browser(task: &Task, state: &SessionState) -> Result<()> {
 pub fn launch_taskspace_browser(state: &SessionState, tasks_base_dir: &Path) -> Result<()> {
     let browser = resolve_browser_command().ok_or_else(|| {
         TskError::Other(
-            "no browser found (looked for chromium, chrome, brave, firefox) — set $BROWSER"
-                .into(),
+            "no browser found (looked for chromium, chrome, brave, firefox) — set $BROWSER".into(),
         )
     })?;
     let env = task_env::build_taskspace_env(state, tasks_base_dir);
@@ -100,7 +98,11 @@ pub fn launch_taskspace_editor(
     let env = task_env::build_taskspace_env(state, tasks_base_dir);
     let path = path
         .map(str::to_string)
-        .or_else(|| std::env::current_dir().ok().map(|p| p.to_string_lossy().into_owned()))
+        .or_else(|| {
+            std::env::current_dir()
+                .ok()
+                .map(|p| p.to_string_lossy().into_owned())
+        })
         .unwrap_or_else(|| ".".into());
     spawn_with_env(&editor, &[&path], &env)
 }
@@ -155,11 +157,7 @@ fn ensure_container_ready(task: &Task) -> Result<()> {
             "tsk: container `{}` missing — creating before launch…",
             task.container_name
         );
-        distrobox::create_container(
-            &task.container_name,
-            &task_home,
-            &cfg.distrobox_image,
-        )?;
+        distrobox::create_container(&task.container_name, &task_home, &cfg.distrobox_image)?;
     }
     distrobox::start_container(&task.container_name)
 }

@@ -1,7 +1,7 @@
 use regex::Regex;
 use serde_json::Value;
 
-use crate::error::{TskError, Result};
+use crate::error::{Result, TskError};
 
 pub fn parse_jsonc(text: &str) -> Result<Value> {
     let block = Regex::new(r"/\*.*?\*/").unwrap();
@@ -15,7 +15,10 @@ pub fn parse_jsonc(text: &str) -> Result<Value> {
 }
 
 pub fn dump_jsonc(value: &Value) -> String {
-    format!("{}\n", serde_json::to_string_pretty(value).unwrap_or_else(|_| "{}".into()))
+    format!(
+        "{}\n",
+        serde_json::to_string_pretty(value).unwrap_or_else(|_| "{}".into())
+    )
 }
 
 #[cfg(test)]

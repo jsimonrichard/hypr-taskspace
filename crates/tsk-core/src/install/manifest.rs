@@ -5,7 +5,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::error::{TskError, Result};
+use crate::error::{Result, TskError};
 use crate::xdg::ensure_parent;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -40,7 +40,10 @@ impl Manifest {
 }
 
 pub fn manifest_path(data_dir: &Path, integration: &str) -> PathBuf {
-    data_dir.join("install").join(integration).join("manifest.json")
+    data_dir
+        .join("install")
+        .join(integration)
+        .join("manifest.json")
 }
 
 pub fn load_manifest(data_dir: &Path, integration: &str) -> Result<Option<Manifest>> {
@@ -64,8 +67,7 @@ pub fn save_manifest(data_dir: &Path, manifest: &Manifest) -> Result<PathBuf> {
         &path,
         format!(
             "{}\n",
-            serde_json::to_string_pretty(manifest)
-                .map_err(|e| TskError::Other(e.to_string()))?
+            serde_json::to_string_pretty(manifest).map_err(|e| TskError::Other(e.to_string()))?
         ),
     )
     .map_err(|source| TskError::Write {

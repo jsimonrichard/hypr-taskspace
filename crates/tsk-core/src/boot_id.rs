@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::error::{TskError, Result};
+use crate::error::{Result, TskError};
 use crate::xdg::ensure_parent;
 
 const BOOT_ID_PROC: &str = "/proc/sys/kernel/random/boot_id";
@@ -38,10 +38,7 @@ pub fn read_stored_boot_id(data_dir: &Path) -> Result<Option<String>> {
 pub fn write_stored_boot_id(data_dir: &Path, boot_id: &str) -> Result<()> {
     let path = last_boot_id_path(data_dir);
     ensure_parent(&path)?;
-    fs::write(&path, format!("{boot_id}\n")).map_err(|source| TskError::Write {
-        path,
-        source,
-    })
+    fs::write(&path, format!("{boot_id}\n")).map_err(|source| TskError::Write { path, source })
 }
 
 fn read_boot_id_from(path: &Path) -> Result<String> {

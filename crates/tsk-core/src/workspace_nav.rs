@@ -206,9 +206,12 @@ pub fn workspace_goto_name(state: &mut SessionState, name: &str) -> Option<Strin
 
 pub fn move_window_to_relative(state: &SessionState, relative: i32) -> Option<String> {
     let name = workspace_name_for_relative(state, relative)?;
-    hypr_log::scoped(format!("move_window_to_relative slot {relative} → {name}"), || {
-        hyprland::move_active_window_to_workspace(&name);
-    });
+    hypr_log::scoped(
+        format!("move_window_to_relative slot {relative} → {name}"),
+        || {
+            hyprland::move_active_window_to_workspace(&name);
+        },
+    );
     Some(name)
 }
 
@@ -287,10 +290,7 @@ fn sync_monitors_to_taskspace_inner(
     }
 
     let dest_key = state.taskspace_key();
-    let focused_monitor = monitors
-        .iter()
-        .find(|m| m.focused)
-        .map(|m| m.name.clone());
+    let focused_monitor = monitors.iter().find(|m| m.focused).map(|m| m.name.clone());
     let max_slots = new_allowed.len();
 
     let mut targets: Vec<(String, i32, String)> = Vec::new();
@@ -332,11 +332,7 @@ fn sync_monitors_to_taskspace_inner(
         .or_else(|| {
             workspace_name_at_relative(
                 &new_allowed,
-                state
-                    .last_workspace
-                    .get(&dest_key)
-                    .copied()
-                    .unwrap_or(1),
+                state.last_workspace.get(&dest_key).copied().unwrap_or(1),
             )
         })
 }
@@ -364,11 +360,14 @@ fn sync_taskspace_from_external_inner(
     old_key: &str,
 ) -> Result<(), String> {
     if hyprland::available() {
-        hypr_log::scoped(format!("capture layout for leaving taskspace {old_key}"), || {
-            if let Ok(monitors) = hyprland::list_monitors() {
-                capture_monitor_layout(state, old_key, old_allowed, &monitors);
-            }
-        });
+        hypr_log::scoped(
+            format!("capture layout for leaving taskspace {old_key}"),
+            || {
+                if let Ok(monitors) = hyprland::list_monitors() {
+                    capture_monitor_layout(state, old_key, old_allowed, &monitors);
+                }
+            },
+        );
         hyprland::close_tsk_tui_windows();
     }
 
@@ -439,11 +438,14 @@ fn set_taskspace_inner(
     old_key: &str,
 ) -> Result<(), String> {
     if hyprland::available() {
-        hypr_log::scoped(format!("capture layout for leaving taskspace {old_key}"), || {
-            if let Ok(monitors) = hyprland::list_monitors() {
-                capture_monitor_layout(state, old_key, old_allowed, &monitors);
-            }
-        });
+        hypr_log::scoped(
+            format!("capture layout for leaving taskspace {old_key}"),
+            || {
+                if let Ok(monitors) = hyprland::list_monitors() {
+                    capture_monitor_layout(state, old_key, old_allowed, &monitors);
+                }
+            },
+        );
         hyprland::close_tsk_tui_windows();
     }
 
@@ -503,9 +505,12 @@ pub fn setup_task_workspaces_for_state(task_id: &str, state: &SessionState) {
 }
 
 pub fn setup_default_taskspace_workspaces(count: u32) {
-    hypr_log::scoped(format!("setup_default_taskspace_workspaces count={count}"), || {
-        hyprland::ensure_workspaces(&default_taskspace_workspace_names(count));
-    });
+    hypr_log::scoped(
+        format!("setup_default_taskspace_workspaces count={count}"),
+        || {
+            hyprland::ensure_workspaces(&default_taskspace_workspace_names(count));
+        },
+    );
 }
 
 fn capture_monitor_layout(
@@ -660,9 +665,10 @@ fn restore_monitor_targets(
             break;
         };
 
-        if let Some(holder) = monitors.iter().find(|m| {
-            m.name != **monitor && m.workspace_name == *target_ws
-        }) {
+        if let Some(holder) = monitors
+            .iter()
+            .find(|m| m.name != **monitor && m.workspace_name == *target_ws)
+        {
             hypr_log::scoped(
                 format!(
                     "restore: swap {monitor} with {} (holder of {target_ws})",
@@ -671,10 +677,9 @@ fn restore_monitor_targets(
                 || hyprland::swap_active_workspaces(monitor, &holder.name),
             );
         } else {
-            hypr_log::scoped(
-                format!("restore: move {monitor} → {target_ws}"),
-                || hyprland::switch_workspace_on_monitor(monitor, target_ws),
-            );
+            hypr_log::scoped(format!("restore: move {monitor} → {target_ws}"), || {
+                hyprland::switch_workspace_on_monitor(monitor, target_ws)
+            });
         }
     }
 }
@@ -740,9 +745,12 @@ fn workspace_name_at_relative(names: &[String], relative: i32) -> Option<String>
 
 fn focus_relative_in_taskspace(state: &SessionState, relative: i32) -> Option<String> {
     let name = relative_to_name(state, relative)?;
-    hypr_log::scoped(format!("focus_relative_in_taskspace slot {relative} → {name}"), || {
-        hyprland::switch_workspace_for_navigation(&name);
-    });
+    hypr_log::scoped(
+        format!("focus_relative_in_taskspace slot {relative} → {name}"),
+        || {
+            hyprland::switch_workspace_for_navigation(&name);
+        },
+    );
     Some(name)
 }
 
@@ -758,10 +766,7 @@ fn relative_slot_in_allowed(workspace_name: &str, allowed: &[String]) -> Option<
 /// If the user pressed SUPER+N while switching taskspaces, Hyprland may already be on
 /// the leaving taskspace's slot N (stale cache) or the destination slot (fresh cache).
 /// Map that slot onto the destination before monitor restore runs.
-fn adopt_active_slot_for_taskspace_switch(
-    state: &mut SessionState,
-    old_allowed: &[String],
-) {
+fn adopt_active_slot_for_taskspace_switch(state: &mut SessionState, old_allowed: &[String]) {
     if !hyprland::available() {
         return;
     }
@@ -783,10 +788,8 @@ fn adopt_active_slot_for_taskspace_switch(
     let slot = if state.context_mode == ContextMode::Default
         && is_global_workspace_slot(slot as u32, &state.global_workspace_slots)
     {
-        primary_task_workspace_slot(
-            state.default_workspace_count,
-            &state.global_workspace_slots,
-        ) as i32
+        primary_task_workspace_slot(state.default_workspace_count, &state.global_workspace_slots)
+            as i32
     } else {
         slot
     };
@@ -911,6 +914,7 @@ mod tests {
                 browser_profile: None,
                 created_at: chrono::Utc::now(),
                 last_active_at: chrono::Utc::now(),
+                listed_at: chrono::Utc::now(),
                 agent_notes_path: None,
                 ports: vec![],
             },
@@ -949,14 +953,12 @@ mod tests {
                 browser_profile: None,
                 created_at: chrono::Utc::now(),
                 last_active_at: chrono::Utc::now(),
+                listed_at: chrono::Utc::now(),
                 agent_notes_path: None,
                 ports: vec![],
             },
         );
-        assert_eq!(
-            workspace_name_for_relative(&state, 1).as_deref(),
-            Some("1")
-        );
+        assert_eq!(workspace_name_for_relative(&state, 1).as_deref(), Some("1"));
         assert_eq!(
             workspace_name_for_relative(&state, 2).as_deref(),
             Some("auth-fix-2")
@@ -1032,7 +1034,10 @@ mod tests {
     fn relative_slot_in_allowed_matches_exact_name() {
         let allowed = vec!["auth-fix-1".into(), "auth-fix-2".into()];
         assert_eq!(relative_slot_in_allowed("auth-fix-2", &allowed), Some(2));
-        assert_eq!(relative_slot_in_allowed("7", &["1".into(), "7".into()]), Some(2));
+        assert_eq!(
+            relative_slot_in_allowed("7", &["1".into(), "7".into()]),
+            Some(2)
+        );
         assert_eq!(relative_slot_in_allowed("7", &allowed), None);
         assert_eq!(relative_slot_in_allowed("3", &allowed), None);
     }
@@ -1055,7 +1060,10 @@ mod tests {
         let state = SessionState::default();
         assert_eq!(resolve_monitor_slot(&state, "task:new", "eDP-1", 0, 10), 1);
         assert_eq!(resolve_monitor_slot(&state, "task:new", "DP-2", 1, 10), 2);
-        assert_eq!(resolve_monitor_slot(&state, "task:new", "HDMI-A-1", 2, 2), 2);
+        assert_eq!(
+            resolve_monitor_slot(&state, "task:new", "HDMI-A-1", 2, 2),
+            2
+        );
     }
 
     #[test]
@@ -1111,7 +1119,12 @@ mod tests {
             &new_allowed,
             &old_allowed,
         ));
-        assert!(!monitor_needs_move(Some("2"), "2", &new_allowed, &old_allowed));
+        assert!(!monitor_needs_move(
+            Some("2"),
+            "2",
+            &new_allowed,
+            &old_allowed
+        ));
     }
 
     #[test]

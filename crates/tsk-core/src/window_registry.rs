@@ -89,13 +89,13 @@ pub fn sync_window_registry(state: &mut SessionState) -> Result<usize> {
         entry.pid = client.pid;
     }
 
-    Ok(clients
-        .iter()
-        .filter(|c| !is_ephemeral_window(c))
-        .count())
+    Ok(clients.iter().filter(|c| !is_ephemeral_window(c)).count())
 }
 
-pub fn misplaced_clients(state: &SessionState, clients: &[HyprWindow]) -> Vec<(HyprWindow, String)> {
+pub fn misplaced_clients(
+    state: &SessionState,
+    clients: &[HyprWindow],
+) -> Vec<(HyprWindow, String)> {
     let mut out = Vec::new();
     for client in clients {
         if is_ephemeral_window(client) {
@@ -195,6 +195,7 @@ mod tests {
             browser_profile: None,
             created_at: chrono::Utc::now(),
             last_active_at: chrono::Utc::now(),
+            listed_at: chrono::Utc::now(),
             agent_notes_path: None,
             ports: vec![],
         };

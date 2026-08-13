@@ -54,8 +54,7 @@ pub fn is_scratch_workspace_path(path: &Path, tasks_base_dir: &Path) -> bool {
 pub fn is_managed_task_checkout(repo_path: &Path, tasks_base: &Path, task_id: &str) -> bool {
     let workspace_root = expand(tasks_base.join(task_id).join("workspace"));
     let repo_path = expand(repo_path);
-    repo_path.starts_with(&workspace_root)
-        || paths_match(&repo_path, &workspace_root)
+    repo_path.starts_with(&workspace_root) || paths_match(&repo_path, &workspace_root)
 }
 
 #[cfg(test)]

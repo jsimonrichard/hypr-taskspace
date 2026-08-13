@@ -6,7 +6,7 @@ use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
 
-use crate::error::{TskError, Result};
+use crate::error::{Result, TskError};
 
 pub fn available() -> bool {
     which::which("distrobox").is_ok()
@@ -61,8 +61,7 @@ pub fn resolve_create_image(image: &str) -> Result<String> {
                 .into(),
         ));
     }
-    Ok(crate::host::migrate_stale_distrobox_image(trimmed)
-        .unwrap_or_else(|| trimmed.to_string()))
+    Ok(crate::host::migrate_stale_distrobox_image(trimmed).unwrap_or_else(|| trimmed.to_string()))
 }
 
 /// Create a Distrobox with task home as `--home` (host paths still shared).
@@ -83,7 +82,9 @@ pub fn create_container_with_progress(
 ) -> Result<()> {
     require_available()?;
     if container_exists(name) {
-        on_line(format!("Container `{name}` already exists — ensuring it is initialized…"));
+        on_line(format!(
+            "Container `{name}` already exists — ensuring it is initialized…"
+        ));
         return initialize_container_with_progress(name, on_line);
     }
     let image = resolve_create_image(image)?;
@@ -118,7 +119,9 @@ pub fn create_container_with_progress(
             "Distrobox create `{name}` reported success but container is missing"
         )));
     }
-    on_line(format!("Container `{name}` created — running first-enter setup…"));
+    on_line(format!(
+        "Container `{name}` created — running first-enter setup…"
+    ));
     initialize_container_with_progress(name, on_line)
 }
 
@@ -158,7 +161,12 @@ fn run_distrobox_streaming(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| TskError::Other(format!("distrobox {} failed: {e}", args.first().unwrap_or(&"?"))))?;
+        .map_err(|e| {
+            TskError::Other(format!(
+                "distrobox {} failed: {e}",
+                args.first().unwrap_or(&"?")
+            ))
+        })?;
 
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();

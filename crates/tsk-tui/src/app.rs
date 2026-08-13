@@ -2,17 +2,17 @@ use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::thread;
 
-use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-use tsk_core::{
-    collect_task_repo_paths, create_container_with_progress, detect_vcs_root, ensure_daemon,
-    ensure_repo_removable, is_scratch_task, load_config, load_repos, paths_match, repo_display_path,
-    task_belongs_to_repo, task_data_dir, unregister_repo, ContextMode, DaemonClient, RegisteredRepo,
-    Result, Task, TaskRepoSource, SCRATCH_TASK_LIST_LABEL,
-};
 use crate::grep_dir_picker::{GrepDirPicker, PickerAction};
 use crate::modal::{arrow_nav_delta, ModalButtonAction, ModalButtonBar};
 use crate::new_task_form::{cycle_form_focus, initial_form_focus, NewTaskFormFocus};
 use crate::ui;
+use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+use tsk_core::{
+    collect_task_repo_paths, create_container_with_progress, detect_vcs_root, ensure_daemon,
+    ensure_repo_removable, is_scratch_task, load_config, load_repos, paths_match,
+    repo_display_path, task_belongs_to_repo, task_data_dir, unregister_repo, ContextMode,
+    DaemonClient, RegisteredRepo, Result, Task, TaskRepoSource, SCRATCH_TASK_LIST_LABEL,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Panel {
@@ -196,11 +196,7 @@ impl App {
 
         let active_tasks = svc.list_active_tasks()?;
         let archived_tasks = svc.list_archived_tasks()?;
-        let task_paths = collect_task_repo_paths(
-            active_tasks
-                .iter()
-                .chain(archived_tasks.iter()),
-        );
+        let task_paths = collect_task_repo_paths(active_tasks.iter().chain(archived_tasks.iter()));
         self.refresh_repos(task_paths)?;
 
         let prev_task_id = Self::selected_task_from(&self.entries, &self.list_state)
@@ -229,7 +225,7 @@ impl App {
                 .iter()
                 .filter(|t| !is_scratch_task(t) && task_belongs_to_repo(t, repo))
                 .collect();
-            repo_tasks.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+            repo_tasks.sort_by(|a, b| a.cmp_list_order(b));
 
             if repo_tasks.is_empty() {
                 continue;
@@ -249,12 +245,9 @@ impl App {
             }
         }
 
-        let mut scratch: Vec<&Task> = active_tasks
-            .iter()
-            .filter(|t| is_scratch_task(t))
-            .collect();
+        let mut scratch: Vec<&Task> = active_tasks.iter().filter(|t| is_scratch_task(t)).collect();
         if !scratch.is_empty() {
-            scratch.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+            scratch.sort_by(|a, b| a.cmp_list_order(b));
             self.entries.push(ListEntry::Header {
                 label: SCRATCH_TASK_LIST_LABEL.into(),
             });
@@ -276,7 +269,7 @@ impl App {
                     .iter()
                     .filter(|t| !is_scratch_task(t) && task_belongs_to_repo(t, repo))
                     .collect();
-                repo_tasks.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+                repo_tasks.sort_by(|a, b| a.cmp_list_order(b));
 
                 if repo_tasks.is_empty() {
                     continue;
@@ -301,7 +294,7 @@ impl App {
                 .filter(|t| is_scratch_task(t))
                 .collect();
             if !scratch.is_empty() {
-                scratch.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+                scratch.sort_by(|a, b| a.cmp_list_order(b));
                 self.archived_entries.push(ListEntry::Header {
                     label: SCRATCH_TASK_LIST_LABEL.into(),
                 });
@@ -319,14 +312,14 @@ impl App {
 
         let new_sel = prev_task_id
             .and_then(|id| {
-                self.entries.iter().position(|entry| {
-                    matches!(entry, ListEntry::Task(t) if t.id == id)
-                })
+                self.entries
+                    .iter()
+                    .position(|entry| matches!(entry, ListEntry::Task(t) if t.id == id))
             })
             .or_else(|| {
-                self.entries.iter().position(|entry| {
-                    matches!(entry, ListEntry::Task(t) if t.current)
-                })
+                self.entries
+                    .iter()
+                    .position(|entry| matches!(entry, ListEntry::Task(t) if t.current))
             })
             .or_else(|| Self::first_selectable_in(&self.entries));
 
@@ -335,21 +328,18 @@ impl App {
 
         let new_archived_sel = prev_archived_task_id
             .and_then(|id| {
-                self.archived_entries.iter().position(|entry| {
-                    matches!(entry, ListEntry::Task(t) if t.id == id)
-                })
+                self.archived_entries
+                    .iter()
+                    .position(|entry| matches!(entry, ListEntry::Task(t) if t.id == id))
             })
             .or_else(|| Self::first_selectable_in(&self.archived_entries));
 
         self.archived_list_state.select(new_archived_sel);
-        Self::ensure_selection_on_task_in(
-            &self.archived_entries,
-            &mut self.archived_list_state,
-        );
+        Self::ensure_selection_on_task_in(&self.archived_entries, &mut self.archived_list_state);
 
-        let repo_sel = prev_repo_sel
-            .filter(|i| *i < self.repos.len())
-            .or_else(|| default_repo_selection(&self.repos).or_else(|| (!self.repos.is_empty()).then_some(0)));
+        let repo_sel = prev_repo_sel.filter(|i| *i < self.repos.len()).or_else(|| {
+            default_repo_selection(&self.repos).or_else(|| (!self.repos.is_empty()).then_some(0))
+        });
         self.repo_list_state.select(repo_sel);
 
         Ok(())
@@ -396,10 +386,7 @@ impl App {
             Screen::NewTaskName { .. } => self.handle_new_task_name_key(key),
             Screen::ContainerSetup { done, task_id, .. } => {
                 if done.is_some()
-                    && matches!(
-                        key.code,
-                        KeyCode::Enter | KeyCode::Esc | KeyCode::Char('q')
-                    )
+                    && matches!(key.code, KeyCode::Enter | KeyCode::Esc | KeyCode::Char('q'))
                 {
                     if done.as_ref().is_some_and(|r| r.is_ok()) {
                         let task_id = task_id.clone();
@@ -549,8 +536,7 @@ impl App {
             KeyCode::Char('j') | KeyCode::Char('k') | KeyCode::Up | KeyCode::Down
         ) {
             if let Screen::NewTaskPickRepo {
-                actions_focused,
-                ..
+                actions_focused, ..
             } = &mut self.screen
             {
                 *actions_focused = false;
@@ -575,8 +561,7 @@ impl App {
         }
 
         if let Screen::NewTaskPickRepo {
-            actions_focused,
-            ..
+            actions_focused, ..
         } = &mut self.screen
         {
             if *actions_focused {
@@ -584,7 +569,12 @@ impl App {
             }
         }
 
-        let Screen::NewTaskPickRepo { choices, list_state, .. } = &mut self.screen else {
+        let Screen::NewTaskPickRepo {
+            choices,
+            list_state,
+            ..
+        } = &mut self.screen
+        else {
             return Ok(());
         };
         match key.code {
@@ -621,8 +611,7 @@ impl App {
             KeyCode::Char('j') | KeyCode::Char('k') | KeyCode::Up | KeyCode::Down
         ) {
             if let Screen::NewTaskPickRepo {
-                actions_focused,
-                ..
+                actions_focused, ..
             } = &mut self.screen
             {
                 *actions_focused = false;
@@ -643,7 +632,12 @@ impl App {
     }
 
     fn advance_new_task_from_repo_pick(&mut self) -> Result<()> {
-        let Screen::NewTaskPickRepo { choices, list_state, .. } = &self.screen else {
+        let Screen::NewTaskPickRepo {
+            choices,
+            list_state,
+            ..
+        } = &self.screen
+        else {
             return Ok(());
         };
         let Some(sel) = list_state.selected() else {
@@ -654,14 +648,8 @@ impl App {
         };
         let create_worktree = choice.repo.is_some();
         let (repo, repo_label_text) = match choice.repo {
-            None => (
-                TaskRepoSource::Scratch,
-                "Scratch workspace".into(),
-            ),
-            Some(path) => (
-                TaskRepoSource::Path(path),
-                choice.label,
-            ),
+            None => (TaskRepoSource::Scratch, "Scratch workspace".into()),
+            Some(path) => (TaskRepoSource::Path(path), choice.label),
         };
         let focus = initial_form_focus(&repo);
         self.screen = Screen::NewTaskName {
@@ -719,7 +707,10 @@ impl App {
         match current_focus {
             NewTaskFormFocus::Worktree => match key.code {
                 KeyCode::Char(' ') => {
-                    if let Screen::NewTaskName { create_worktree, .. } = &mut self.screen {
+                    if let Screen::NewTaskName {
+                        create_worktree, ..
+                    } = &mut self.screen
+                    {
                         *create_worktree = !*create_worktree;
                     }
                 }
@@ -729,7 +720,8 @@ impl App {
             NewTaskFormFocus::Container => match key.code {
                 KeyCode::Char(' ') => {
                     if let Screen::NewTaskName {
-                        container_isolation, ..
+                        container_isolation,
+                        ..
                     } = &mut self.screen
                     {
                         *container_isolation = !*container_isolation;
@@ -823,14 +815,10 @@ impl App {
         let (tx, rx) = mpsc::channel();
         let name_for_thread = container_name.clone();
         thread::spawn(move || {
-            let result = create_container_with_progress(
-                &name_for_thread,
-                &task_home,
-                &image,
-                |line| {
+            let result =
+                create_container_with_progress(&name_for_thread, &task_home, &image, |line| {
                     let _ = tx.send(ContainerSetupEvent::Line(line));
-                },
-            );
+                });
             let finished = match result {
                 Ok(()) => Ok(()),
                 Err(err) => Err(err.to_string()),
@@ -962,11 +950,7 @@ impl App {
                 task_name,
                 buttons,
                 ..
-            } => (
-                task_id.clone(),
-                task_name.clone(),
-                buttons.handle_key(key),
-            ),
+            } => (task_id.clone(), task_name.clone(), buttons.handle_key(key)),
             _ => return Ok(()),
         };
 
@@ -997,11 +981,7 @@ impl App {
                 task_name,
                 buttons,
                 ..
-            } => (
-                task_id.clone(),
-                task_name.clone(),
-                buttons.handle_key(key),
-            ),
+            } => (task_id.clone(), task_name.clone(), buttons.handle_key(key)),
             _ => return Ok(()),
         };
 
@@ -1032,11 +1012,7 @@ impl App {
                 task_name,
                 buttons,
                 ..
-            } => (
-                task_id.clone(),
-                task_name.clone(),
-                buttons.handle_key(key),
-            ),
+            } => (task_id.clone(), task_name.clone(), buttons.handle_key(key)),
             _ => return Ok(()),
         };
 
@@ -1195,7 +1171,10 @@ impl App {
             return Ok(());
         };
         if task.is_archived {
-            self.status = Some((false, "Archived tasks cannot be switched to — restore or delete first".into()));
+            self.status = Some((
+                false,
+                "Archived tasks cannot be switched to — restore or delete first".into(),
+            ));
             return Ok(());
         }
         if task.is_default {
@@ -1298,10 +1277,7 @@ impl App {
 
     fn handle_rename_task_key(&mut self, key: KeyEvent) -> Result<()> {
         if let Some(delta) = arrow_nav_delta(key) {
-            if let Screen::RenameTask {
-                buttons_active, ..
-            } = &mut self.screen
-            {
+            if let Screen::RenameTask { buttons_active, .. } = &mut self.screen {
                 if !*buttons_active {
                     *buttons_active = true;
                     if let Screen::RenameTask { buttons, .. } = &mut self.screen {
@@ -1316,10 +1292,7 @@ impl App {
             }
         }
 
-        let Screen::RenameTask {
-            buttons_active, ..
-        } = &self.screen
-        else {
+        let Screen::RenameTask { buttons_active, .. } = &self.screen else {
             return Ok(());
         };
 
@@ -1399,9 +1372,7 @@ impl App {
 fn default_repo_selection(repos: &[RegisteredRepo]) -> Option<usize> {
     let cwd = std::env::current_dir().ok()?;
     let root = detect_vcs_root(Some(&cwd))?;
-    repos
-        .iter()
-        .position(|repo| paths_match(&repo.path, &root))
+    repos.iter().position(|repo| paths_match(&repo.path, &root))
 }
 
 fn default_new_task_choice(choices: &[RepoChoice]) -> Option<usize> {

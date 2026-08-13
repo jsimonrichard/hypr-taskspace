@@ -37,12 +37,7 @@ pub fn socket2_candidates() -> Vec<PathBuf> {
         std::env::var("HYPRLAND_INSTANCE_SIGNATURE"),
         xdg::runtime_dir(),
     ) {
-        out.push(
-            runtime
-                .join("hypr")
-                .join(sig)
-                .join(".socket2.sock"),
-        );
+        out.push(runtime.join("hypr").join(sig).join(".socket2.sock"));
     }
     if let Ok(sig) = std::env::var("HYPRLAND_INSTANCE_SIGNATURE") {
         out.push(PathBuf::from("/tmp/hypr").join(sig).join(".socket2.sock"));
@@ -105,7 +100,10 @@ pub fn diagnose_socket2() -> Socket2Diagnostic {
         };
     }
 
-    let reason = if candidates.iter().any(|(_, s)| s == "exists but not a socket") {
+    let reason = if candidates
+        .iter()
+        .any(|(_, s)| s == "exists but not a socket")
+    {
         "path exists but is not a Unix socket".into()
     } else {
         "no .socket2.sock found at expected paths (is Hyprland running?)".into()
@@ -249,14 +247,8 @@ mod tests {
 
     #[test]
     fn parse_workspace_v2_payload() {
-        assert_eq!(
-            parse_workspace_v2("3,code"),
-            Some((3, "code".into()))
-        );
-        assert_eq!(
-            parse_workspace_v2("2,2"),
-            Some((2, "2".into()))
-        );
+        assert_eq!(parse_workspace_v2("3,code"), Some((3, "code".into())));
+        assert_eq!(parse_workspace_v2("2,2"), Some((2, "2".into())));
     }
 
     #[test]
@@ -265,7 +257,10 @@ mod tests {
         let path = dir.path().join("test.sock");
         let _listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
         assert!(path.exists());
-        assert!(!path.is_file(), "Unix sockets must not pass Path::is_file()");
+        assert!(
+            !path.is_file(),
+            "Unix sockets must not pass Path::is_file()"
+        );
         assert!(is_socket2_path(&path));
     }
 }

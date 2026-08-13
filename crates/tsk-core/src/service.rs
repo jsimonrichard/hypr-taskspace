@@ -5,7 +5,7 @@ use std::path::Path;
 use chrono::Utc;
 
 use crate::config::TskConfig;
-use crate::error::{TskError, Result};
+use crate::error::{Result, TskError};
 use crate::hypr_log;
 use crate::hyprland;
 use crate::models::{ContextMode, SessionState, Task, TaskStatus};
@@ -39,11 +39,7 @@ impl TaskService {
     }
 
     /// Persist state and notify Waybar subscribers.
-    fn commit_state(
-        &self,
-        state: &SessionState,
-        change: Option<StateChangeKind>,
-    ) -> Result<()> {
+    fn commit_state(&self, state: &SessionState, change: Option<StateChangeKind>) -> Result<()> {
         self.registry.save_state(state)?;
         self.write_runtime_files(state)?;
         if let Some(kind) = change {
@@ -253,7 +249,9 @@ impl TaskService {
         if to_save.taskspace_key() != initial_key {
             workspace_nav::sync_workspace_slot(&mut to_save, relative);
             self.persist_workspace_switch(&to_save)?;
-            Ok(workspace_nav::workspace_name_for_relative(&to_save, relative))
+            Ok(workspace_nav::workspace_name_for_relative(
+                &to_save, relative,
+            ))
         } else {
             self.persist_workspace_switch(&state)?;
             Ok(Some(name))
@@ -404,6 +402,7 @@ impl TaskService {
             browser_profile: Some(browser_profile.to_string_lossy().into_owned()),
             created_at: now,
             last_active_at: now,
+            listed_at: now,
             agent_notes_path: Some(notes_path),
             ports: vec![],
         };
@@ -497,7 +496,9 @@ impl TaskService {
             .cloned()
             .ok_or_else(|| TskError::Other(format!("Unknown task: {task_id}")))?;
         if task.status == TaskStatus::Archived {
-            return Err(TskError::Other(format!("Task is already archived: {task_id}")));
+            return Err(TskError::Other(format!(
+                "Task is already archived: {task_id}"
+            )));
         }
 
         let was_current = crate::task_cleanup::is_active_task_context(&state, &task);
@@ -574,8 +575,10 @@ impl TaskService {
         }
 
         if let Some(entry) = state.tasks.get_mut(task_id) {
+            let now = Utc::now();
             entry.status = TaskStatus::Active;
-            entry.last_active_at = Utc::now();
+            entry.last_active_at = now;
+            entry.listed_at = now;
         }
 
         self.commit_state(&state, Some(StateChangeKind::Full))?;
@@ -620,11 +623,7 @@ impl TaskService {
         Ok(state.tasks.get(task_id).unwrap().clone())
     }
 
-    fn active_task_name_taken(
-        state: &SessionState,
-        name: &str,
-        exclude_id: Option<&str>,
-    ) -> bool {
+    fn active_task_name_taken(state: &SessionState, name: &str, exclude_id: Option<&str>) -> bool {
         state
             .tasks
             .values()
@@ -673,7 +672,10 @@ impl TaskService {
         self.commit_state(&state, Some(StateChangeKind::Full))
     }
 
-    pub fn preview_task_teardown(&self, task_id: &str) -> Result<crate::task_cleanup::TaskTeardownPreview> {
+    pub fn preview_task_teardown(
+        &self,
+        task_id: &str,
+    ) -> Result<crate::task_cleanup::TaskTeardownPreview> {
         let state = self.load_state()?;
         let task = state
             .tasks
@@ -706,7 +708,8 @@ impl TaskService {
                 .get(tid)
                 .cloned()
                 .ok_or_else(|| TskError::Other(format!("Unknown task: {tid}")))?;
-            let env = crate::task_env::build_task_env(&state, &task, &self.config.tasks_base_dir, None);
+            let env =
+                crate::task_env::build_task_env(&state, &task, &self.config.tasks_base_dir, None);
             return crate::terminal::launch_task_terminal(&task, &env);
         }
 
@@ -819,9 +822,9 @@ impl TaskService {
         let state = self.load_state()?;
         match self.registry.lookup_task(&state, name_or_id) {
             crate::task_ids::TaskLookup::Found(task) => Ok(task.clone()),
-            crate::task_ids::TaskLookup::NotFound => {
-                Err(crate::error::TskError::Other(format!("Unknown task: {name_or_id}")))
-            }
+            crate::task_ids::TaskLookup::NotFound => Err(crate::error::TskError::Other(format!(
+                "Unknown task: {name_or_id}"
+            ))),
             crate::task_ids::TaskLookup::AmbiguousPrefix(ids) => {
                 let hints: Vec<String> = ids
                     .iter()
@@ -925,6 +928,7 @@ mod tests {
         assert_eq!(task.workspace_names().len(), 10);
         assert_eq!(task.workspace_names()[0], format!("{}-1", task.id));
         assert_eq!(task.workspace_names()[9], format!("{}-10", task.id));
+        assert_eq!(task.listed_at, task.created_at);
         assert!(task.agent_notes_path.as_ref().unwrap().is_file());
         assert!(task.repo_path.is_dir());
         assert!(!task.repo_path.join(".git").exists());
@@ -971,10 +975,17 @@ mod tests {
             .unwrap();
         svc.archive_task(&task.id).unwrap();
         let state = svc.load_state().unwrap();
-        assert_eq!(state.tasks.get(&task.id).unwrap().status, TaskStatus::Archived);
+        assert_eq!(
+            state.tasks.get(&task.id).unwrap().status,
+            TaskStatus::Archived
+        );
         assert_eq!(state.context_mode, ContextMode::Default);
         assert!(state.current_task_id.is_none());
-        assert!(svc.tasks_for_menu().unwrap().iter().all(|t| t.id != task.id));
+        assert!(svc
+            .tasks_for_menu()
+            .unwrap()
+            .iter()
+            .all(|t| t.id != task.id));
         assert!(dir.path().join("tasks").join(&task.id).is_dir());
     }
 
@@ -995,7 +1006,12 @@ mod tests {
         let archived = svc.archive_active_tasks_if_new_boot("boot-1").unwrap();
         assert_eq!(archived, vec![task.id.clone()]);
         assert_eq!(
-            svc.load_state().unwrap().tasks.get(&task.id).unwrap().status,
+            svc.load_state()
+                .unwrap()
+                .tasks
+                .get(&task.id)
+                .unwrap()
+                .status,
             TaskStatus::Archived
         );
         assert_eq!(
@@ -1024,7 +1040,12 @@ mod tests {
         let archived = svc.archive_active_tasks_if_new_boot("boot-1").unwrap();
         assert!(archived.is_empty());
         assert_eq!(
-            svc.load_state().unwrap().tasks.get(&task.id).unwrap().status,
+            svc.load_state()
+                .unwrap()
+                .tasks
+                .get(&task.id)
+                .unwrap()
+                .status,
             TaskStatus::Active
         );
     }
@@ -1085,13 +1106,54 @@ mod tests {
                 crate::task_repo::TaskRepoOptions::default(),
             )
             .unwrap();
+        let created_at = task.created_at;
         svc.archive_task(&task.id).unwrap();
-        assert!(svc.tasks_for_menu().unwrap().iter().all(|t| t.id != task.id));
+        assert!(svc
+            .tasks_for_menu()
+            .unwrap()
+            .iter()
+            .all(|t| t.id != task.id));
 
+        std::thread::sleep(std::time::Duration::from_millis(5));
         svc.restore_task(&task.id).unwrap();
         let state = svc.load_state().unwrap();
-        assert_eq!(state.tasks.get(&task.id).unwrap().status, TaskStatus::Active);
-        assert!(svc.tasks_for_menu().unwrap().iter().any(|t| t.id == task.id));
+        let restored = state.tasks.get(&task.id).unwrap();
+        assert_eq!(restored.status, TaskStatus::Active);
+        assert_eq!(restored.created_at, created_at);
+        assert!(restored.listed_at > created_at);
+        assert_eq!(restored.listed_at, restored.last_active_at);
+        assert!(svc
+            .tasks_for_menu()
+            .unwrap()
+            .iter()
+            .any(|t| t.id == task.id));
+    }
+
+    #[test]
+    fn switch_task_does_not_change_listed_at() {
+        let dir = tempdir().unwrap();
+        let svc = test_service(dir.path());
+        let task = svc
+            .create_task(
+                "keep-order",
+                false,
+                crate::task_repo::TaskRepoSource::Scratch,
+                None,
+                crate::task_repo::TaskRepoOptions::default(),
+            )
+            .unwrap();
+        let listed_at = task.listed_at;
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        svc.switch_task(&task.id).unwrap();
+        let after = svc
+            .load_state()
+            .unwrap()
+            .tasks
+            .get(&task.id)
+            .unwrap()
+            .clone();
+        assert_eq!(after.listed_at, listed_at);
+        assert!(after.last_active_at > listed_at);
     }
 
     #[test]
@@ -1253,7 +1315,7 @@ mod tests {
                 crate::task_repo::TaskRepoOptions {
                     create_worktree: false,
                     container_isolation: false,
-                defer_container_create: false,
+                    defer_container_create: false,
                 },
             )
             .unwrap();

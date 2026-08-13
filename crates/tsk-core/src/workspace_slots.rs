@@ -28,17 +28,23 @@ pub fn read_slot_target(relative: i32) -> Option<String> {
 /// Switch via `hyprctl dispatch` using the slot cache (keybind hot path).
 pub fn switch_slot(relative: i32) -> Option<String> {
     let target = read_slot_target(relative)?;
-    hypr_log::scoped(format!("switch_slot cache slot {relative} → {target}"), || {
-        hyprland::switch_workspace_for_navigation(&target);
-    });
+    hypr_log::scoped(
+        format!("switch_slot cache slot {relative} → {target}"),
+        || {
+            hyprland::switch_workspace_for_navigation(&target);
+        },
+    );
     Some(target)
 }
 
 pub fn move_slot(relative: i32) -> Option<String> {
     let target = read_slot_target(relative)?;
-    hypr_log::scoped(format!("move_slot cache slot {relative} → {target}"), || {
-        hyprland::move_active_window_to_workspace(&target);
-    });
+    hypr_log::scoped(
+        format!("move_slot cache slot {relative} → {target}"),
+        || {
+            hyprland::move_active_window_to_workspace(&target);
+        },
+    );
     Some(target)
 }
 

@@ -1,12 +1,12 @@
 use std::path::{Path, PathBuf};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use tsk_core::{detect_vcs_root, normalize_repo_path, register_repo, RegisteredRepo, Result};
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap};
 use ratatui::Frame;
+use tsk_core::{detect_vcs_root, normalize_repo_path, register_repo, RegisteredRepo, Result};
 
 #[derive(Debug, Clone)]
 struct PickerEntry {
@@ -34,7 +34,9 @@ impl GrepDirPicker {
         let cwd = start
             .or_else(|| detect_vcs_root(None))
             .or_else(|| std::env::current_dir().ok())
-            .ok_or_else(|| tsk_core::TskError::Other("Could not determine start directory".into()))?;
+            .ok_or_else(|| {
+                tsk_core::TskError::Other("Could not determine start directory".into())
+            })?;
         let mut picker = Self {
             cwd: normalize_repo_path(&cwd),
             filter: String::new(),
@@ -147,10 +149,12 @@ impl GrepDirPicker {
                 source,
             })?;
             let path = entry.path();
-            let file_type = entry.file_type().map_err(|source| tsk_core::TskError::Read {
-                path: path.clone(),
-                source,
-            })?;
+            let file_type = entry
+                .file_type()
+                .map_err(|source| tsk_core::TskError::Read {
+                    path: path.clone(),
+                    source,
+                })?;
             if !file_type.is_dir() {
                 continue;
             }
@@ -169,10 +173,7 @@ impl GrepDirPicker {
             dirs.sort_by(|a, b| {
                 let name_a = entry_name(&a.label);
                 let name_b = entry_name(&b.label);
-                match (
-                    match_score(name_a, &needle),
-                    match_score(name_b, &needle),
-                ) {
+                match (match_score(name_a, &needle), match_score(name_b, &needle)) {
                     (Some(sa), Some(sb)) => sa.cmp(&sb).then_with(|| a.label.cmp(&b.label)),
                     _ => a.label.cmp(&b.label),
                 }
@@ -191,9 +192,7 @@ impl GrepDirPicker {
     }
 
     fn selected_entry(&self) -> Option<&PickerEntry> {
-        self.list_state
-            .selected()
-            .and_then(|i| self.entries.get(i))
+        self.list_state.selected().and_then(|i| self.entries.get(i))
     }
 
     fn select_next(&mut self) {
@@ -225,7 +224,10 @@ pub fn draw(frame: &mut Frame, picker: &mut GrepDirPicker) {
 
     let vcs_hint = vcs_label(picker.cwd());
     let block = Block::default()
-        .title(format!(" Register repo — {} ({vcs_hint}) ", picker.cwd().display()))
+        .title(format!(
+            " Register repo — {} ({vcs_hint}) ",
+            picker.cwd().display()
+        ))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Green));
 
@@ -297,15 +299,26 @@ pub fn draw(frame: &mut Frame, picker: &mut GrepDirPicker) {
         ))
     } else {
         Line::from(vec![
-            Span::styled("▸ Register: ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "▸ Register: ",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled(
                 "Ctrl+Enter",
-                Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::styled(" or ", Style::default().fg(Color::Green)),
             Span::styled(
                 "Ctrl+Y",
-                Style::default().fg(Color::Black).bg(Color::Green).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(Color::Black)
+                    .bg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 format!("  ({vcs_hint} repo at this path)"),
@@ -351,7 +364,10 @@ mod tests {
 
     #[test]
     fn match_score_prefers_exact_then_prefix() {
-        assert!(match_score("local", "local").unwrap() < match_score("hypr-taskspace", "local").unwrap());
+        assert!(
+            match_score("local", "local").unwrap()
+                < match_score("hypr-taskspace", "local").unwrap()
+        );
         assert!(
             match_score("hypr-taskspace", "local").unwrap()
                 < match_score("my-local-app", "local").unwrap()

@@ -9,9 +9,7 @@ pub fn default_taskspace_workspace_name(relative: u32) -> String {
 }
 
 pub fn default_taskspace_workspace_names(count: u32) -> Vec<String> {
-    (1..=count)
-        .map(default_taskspace_workspace_name)
-        .collect()
+    (1..=count).map(default_taskspace_workspace_name).collect()
 }
 
 pub fn is_global_workspace_slot(slot: u32, global_slots: &[u32]) -> bool {
@@ -35,7 +33,9 @@ pub fn task_workspace_name(task_id: &str, relative: u32) -> String {
 }
 
 pub fn task_workspace_names(task_id: &str, count: u32) -> Vec<String> {
-    (1..=count).map(|n| task_workspace_name(task_id, n)).collect()
+    (1..=count)
+        .map(|n| task_workspace_name(task_id, n))
+        .collect()
 }
 
 /// First task-specific workspace in a task taskspace (skips global slots like SUPER+1 → `"1"`).
@@ -44,7 +44,10 @@ pub fn primary_task_workspace(
     default_workspace_count: u32,
     global_workspace_slots: &[u32],
 ) -> String {
-    task_workspace_name(task_id, primary_task_workspace_slot(default_workspace_count, global_workspace_slots))
+    task_workspace_name(
+        task_id,
+        primary_task_workspace_slot(default_workspace_count, global_workspace_slots),
+    )
 }
 
 /// 1-based slot index for the first non-global workspace in a task taskspace.
@@ -102,8 +105,7 @@ pub fn relative_slot_from_name(name: &str) -> Option<u32> {
     if let Ok(n) = name.parse::<u32>() {
         return Some(n);
     }
-    name.rsplit_once('-')
-        .and_then(|(_, rel)| rel.parse().ok())
+    name.rsplit_once('-').and_then(|(_, rel)| rel.parse().ok())
 }
 
 pub fn task_for_workspace_name<'a>(state: &'a SessionState, name: &str) -> Option<&'a Task> {
@@ -133,9 +135,7 @@ pub fn allowed_workspace_names(state: &SessionState) -> Vec<String> {
             .as_ref()
             .map(|id| task_taskspace_workspace_names(state, id))
             .unwrap_or_else(|| default_taskspace_workspace_names(state.default_workspace_count)),
-        ContextMode::Default => {
-            default_taskspace_workspace_names(state.default_workspace_count)
-        }
+        ContextMode::Default => default_taskspace_workspace_names(state.default_workspace_count),
     }
 }
 
@@ -154,11 +154,9 @@ pub fn resolve_bar_workspace_name(
         return Some(hypr_name.to_string());
     }
     relative_slot_from_name(hypr_name).and_then(|rel| {
-        if hypr_name
-            .parse::<u32>()
-            .ok()
-            .is_some_and(|_| is_default_taskspace_workspace_name(hypr_name, state.default_workspace_count))
-            && !bar_names.iter().any(|n| n == hypr_name)
+        if hypr_name.parse::<u32>().ok().is_some_and(|_| {
+            is_default_taskspace_workspace_name(hypr_name, state.default_workspace_count)
+        }) && !bar_names.iter().any(|n| n == hypr_name)
         {
             return None;
         }
@@ -178,12 +176,8 @@ pub fn bar_active_workspace_name(
     state: &SessionState,
     bar_names: &[String],
 ) -> String {
-    resolve_bar_workspace_name(active_hypr_name, state, bar_names).unwrap_or_else(|| {
-        bar_names
-            .first()
-            .cloned()
-            .unwrap_or_else(|| "1".into())
-    })
+    resolve_bar_workspace_name(active_hypr_name, state, bar_names)
+        .unwrap_or_else(|| bar_names.first().cloned().unwrap_or_else(|| "1".into()))
 }
 
 /// Occupied bar slots for the current taskspace strip.
@@ -210,10 +204,7 @@ mod tests {
 
     #[test]
     fn primary_task_workspace_skips_global_slots() {
-        assert_eq!(
-            primary_task_workspace("auth-fix", 10, &[1]),
-            "auth-fix-2"
-        );
+        assert_eq!(primary_task_workspace("auth-fix", 10, &[1]), "auth-fix-2");
         assert_eq!(primary_task_workspace("auth-fix", 10, &[]), "auth-fix-1");
         assert_eq!(
             primary_task_workspace("auth-fix", 10, &[1, 2]),
@@ -264,6 +255,7 @@ mod tests {
                 browser_profile: None,
                 created_at: chrono::Utc::now(),
                 last_active_at: chrono::Utc::now(),
+                listed_at: chrono::Utc::now(),
                 agent_notes_path: None,
                 ports: vec![],
             },
@@ -301,6 +293,7 @@ mod tests {
                 browser_profile: None,
                 created_at: chrono::Utc::now(),
                 last_active_at: chrono::Utc::now(),
+                listed_at: chrono::Utc::now(),
                 agent_notes_path: None,
                 ports: vec![],
             },
@@ -338,6 +331,7 @@ mod tests {
                 browser_profile: None,
                 created_at: chrono::Utc::now(),
                 last_active_at: chrono::Utc::now(),
+                listed_at: chrono::Utc::now(),
                 agent_notes_path: None,
                 ports: vec![],
             },
@@ -379,6 +373,7 @@ mod tests {
                 browser_profile: None,
                 created_at: chrono::Utc::now(),
                 last_active_at: chrono::Utc::now(),
+                listed_at: chrono::Utc::now(),
                 agent_notes_path: None,
                 ports: vec![],
             },

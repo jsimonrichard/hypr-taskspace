@@ -4,14 +4,16 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::binary::{resolve_tsk_binary, resolve_tsk_command, waybar_module_beside_binary, waybar_module_path};
+use crate::binary::{
+    resolve_tsk_binary, resolve_tsk_command, waybar_module_beside_binary, waybar_module_path,
+};
 use crate::config::TskConfig;
 use crate::error::{Result, TskError};
-use crate::install::profile::{dev_config_path, is_dev_config, InstallProfile, profile_for_config};
+use crate::install::profile::{dev_config_path, is_dev_config, profile_for_config, InstallProfile};
 use crate::install::reload;
 use crate::share::{effective_share_dir, uses_packaged_share};
-use crate::xdg::{ensure_parent, user_bin_dir};
 use crate::task_env::{ensure_task_bin_dir, task_bin_dir};
+use crate::xdg::{ensure_parent, user_bin_dir};
 
 const LIB_NAME: &str = "libtsk_waybar.so";
 const TSK_SHARE_PLACEHOLDER: &str = "@TSK_SHARE@";
@@ -127,11 +129,7 @@ pub fn install_bins(cfg: &TskConfig, options: &InstallBinsOptions) -> Result<Vec
     if deploy_user_share {
         let template_src = share_src.clone();
         let tsk_bin = resolve_tsk_binary(cfg);
-        copy_share_tree(
-            cfg,
-            &template_src,
-            &resolve_tsk_command(cfg),
-        )?;
+        copy_share_tree(cfg, &template_src, &resolve_tsk_command(cfg))?;
         if !system_share {
             install_tsk_wrapper(cfg, &tsk_bin)?;
         }
@@ -283,13 +281,7 @@ fn find_workspace_waybar_cdylib(workspace_root: Option<&Path>) -> Result<Option<
 
     eprintln!("building tsk-waybar (release)...");
     let status = Command::new("cargo")
-        .args([
-            "build",
-            "-p",
-            "tsk-waybar",
-            "--release",
-            "--target-dir",
-        ])
+        .args(["build", "-p", "tsk-waybar", "--release", "--target-dir"])
         .arg(&target_dir)
         .current_dir(&workspace)
         .status()
@@ -312,7 +304,8 @@ fn install_tsk_wrapper(cfg: &TskConfig, tsk_bin: &Path) -> Result<()> {
     let wrapper = cfg.install_hypr_share_dir.join("bin/tsk");
     ensure_parent(&wrapper)?;
     let config_path = dev_config_path().to_string_lossy().into_owned();
-    let exec_bin = crate::dev_session::dev_session_binary().unwrap_or_else(|| tsk_bin.to_path_buf());
+    let exec_bin =
+        crate::dev_session::dev_session_binary().unwrap_or_else(|| tsk_bin.to_path_buf());
     let marker = crate::dev_session::dev_session_marker_path()
         .to_string_lossy()
         .into_owned();
@@ -381,10 +374,8 @@ fn install_xdg_open_wrapper(share_src: &Path, tsk_cmd: &str, cfg: &TskConfig) ->
             })?
             .permissions();
         perms.set_mode(0o755);
-        fs::set_permissions(&dest, perms).map_err(|source| TskError::Write {
-            path: dest,
-            source,
-        })?;
+        fs::set_permissions(&dest, perms)
+            .map_err(|source| TskError::Write { path: dest, source })?;
     }
     Ok(())
 }
@@ -398,7 +389,10 @@ fn remove_legacy_global_xdg_open_wrapper() -> Result<()> {
     let Ok(raw) = fs::read_to_string(&legacy) else {
         return Ok(());
     };
-    if raw.contains("Taskspace xdg-open") || raw.contains("Taskspace-aware xdg-open") || raw.contains("tsk open") {
+    if raw.contains("Taskspace xdg-open")
+        || raw.contains("Taskspace-aware xdg-open")
+        || raw.contains("tsk open")
+    {
         fs::remove_file(&legacy).map_err(|source| TskError::Write {
             path: legacy,
             source,
@@ -407,11 +401,7 @@ fn remove_legacy_global_xdg_open_wrapper() -> Result<()> {
     Ok(())
 }
 
-fn copy_share_tree(
-    cfg: &TskConfig,
-    share_src: &Path,
-    tsk_cmd: &str,
-) -> Result<()> {
+fn copy_share_tree(cfg: &TskConfig, share_src: &Path, tsk_cmd: &str) -> Result<()> {
     let share_dir = &cfg.install_hypr_share_dir;
     let share_str = share_dir.to_string_lossy();
 
@@ -421,16 +411,15 @@ fn copy_share_tree(
         &share_str,
         tsk_cmd,
     )?;
-    copy_dir_files_flat(&share_src.join("waybar"), &share_dir.join("waybar"), &share_str)?;
+    copy_dir_files_flat(
+        &share_src.join("waybar"),
+        &share_dir.join("waybar"),
+        &share_str,
+    )?;
     Ok(())
 }
 
-fn copy_hypr_tree(
-    src: &Path,
-    dest: &Path,
-    share_str: &str,
-    tsk_cmd: &str,
-) -> Result<()> {
+fn copy_hypr_tree(src: &Path, dest: &Path, share_str: &str, tsk_cmd: &str) -> Result<()> {
     if !src.is_dir() {
         return Ok(());
     }
@@ -587,8 +576,12 @@ mod tests {
         let raw = include_str!("../../../../share/hypr/bindings.conf");
         let share = "/home/u/.local/share/tsk";
         let out = substitute_share(raw, share).replace(TSK_CMD_PLACEHOLDER, "/usr/bin/tsk");
-        assert!(out.contains("source = /home/u/.local/share/tsk/hypr/integrations/omarchy-unbind.conf"));
-        assert!(out.contains("source = /home/u/.local/share/tsk/hypr/integrations/omarchy-escape-hatch.conf"));
+        assert!(
+            out.contains("source = /home/u/.local/share/tsk/hypr/integrations/omarchy-unbind.conf")
+        );
+        assert!(out.contains(
+            "source = /home/u/.local/share/tsk/hypr/integrations/omarchy-escape-hatch.conf"
+        ));
         assert!(out.contains("$tsk = /usr/bin/tsk"));
     }
 
@@ -628,7 +621,8 @@ pub fn resolve_share_templates(
         return Ok(crate::share::system_share_dir());
     }
     Err(TskError::Other(
-        "could not find share/ templates — install the hypr-taskspace package or run from the repo".into(),
+        "could not find share/ templates — install the hypr-taskspace package or run from the repo"
+            .into(),
     ))
 }
 

@@ -5,16 +5,16 @@ use std::path::{Path, PathBuf};
 
 use crate::config::TskConfig;
 use crate::distrobox;
-use crate::error::{TskError, Result};
+use crate::error::{Result, TskError};
 use crate::hyprland::{self, HyprWindow};
 use crate::models::{SessionState, Task};
 use crate::task_paths::is_managed_task_checkout;
 use crate::terminal::{TUI_WINDOW_CLASS, TUI_WINDOW_TITLE};
-use crate::workspaces::{is_global_workspace_slot, task_owned_workspace_names};
 use crate::vcs::{
     detach_linked_checkout, jj_workspace_name_for_task, reattach_linked_checkout,
     remove_linked_checkout,
 };
+use crate::workspaces::{is_global_workspace_slot, task_owned_workspace_names};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TaskTeardownPreview {
@@ -76,8 +76,7 @@ pub fn client_belongs_to_task(client: &HyprWindow, config: &TskConfig, task: &Ta
     .into_iter()
     .collect();
     let title_prefix = format!("[{}]", task.id);
-    workspace_names.contains(&client.workspace_name)
-        || client.title.starts_with(&title_prefix)
+    workspace_names.contains(&client.workspace_name) || client.title.starts_with(&title_prefix)
 }
 
 pub fn clients_for_task(config: &TskConfig, task: &Task) -> Result<Vec<HyprWindow>> {
@@ -120,9 +119,9 @@ pub fn remove_task_container(task: &Task) -> Result<()> {
 }
 
 pub fn purge_task_windows(state: &mut SessionState, task_id: &str) {
-    state.windows.retain(|_, record| {
-        record.task_id.as_deref() != Some(task_id)
-    });
+    state
+        .windows
+        .retain(|_, record| record.task_id.as_deref() != Some(task_id));
 }
 
 pub fn purge_task_session_keys(state: &mut SessionState, task_id: &str) {
@@ -213,6 +212,7 @@ mod tests {
             browser_profile: None,
             created_at: chrono::Utc::now(),
             last_active_at: chrono::Utc::now(),
+            listed_at: chrono::Utc::now(),
             agent_notes_path: None,
             ports: vec![],
         }

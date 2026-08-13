@@ -12,9 +12,7 @@ pub fn system_share_dir() -> PathBuf {
 }
 
 pub fn system_share_available() -> bool {
-    system_share_dir()
-        .join("hypr/bindings.conf")
-        .is_file()
+    system_share_dir().join("hypr/bindings.conf").is_file()
 }
 
 pub fn system_waybar_module_path() -> PathBuf {

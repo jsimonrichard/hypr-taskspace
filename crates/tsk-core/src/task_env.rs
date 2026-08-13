@@ -46,7 +46,10 @@ pub fn ensure_task_bin_dir(cfg: &TskConfig) -> Result<PathBuf> {
 pub fn build_default_taskspace_env() -> Vec<(String, String)> {
     vec![
         ("TSK_TASKSPACE".into(), "default".into()),
-        ("TSK_CONTEXT_MODE".into(), ContextMode::Default.as_str().into()),
+        (
+            "TSK_CONTEXT_MODE".into(),
+            ContextMode::Default.as_str().into(),
+        ),
     ]
 }
 
@@ -80,21 +83,18 @@ pub fn build_task_env(
     });
 
     let mut env = vec![
-        (
-            "TSK_TASKSPACE".into(),
-            format!("task:{}", task.id),
-        ),
-        (
-            "TSK_CONTEXT_MODE".into(),
-            ContextMode::Task.as_str().into(),
-        ),
+        ("TSK_TASKSPACE".into(), format!("task:{}", task.id)),
+        ("TSK_CONTEXT_MODE".into(), ContextMode::Task.as_str().into()),
         ("TSK_TASK_ID".into(), task.id.clone()),
         ("TSK_TASK_NAME".into(), task.name.clone()),
         (
             "TSK_TASK_REPO".into(),
             task.repo_path.to_string_lossy().into_owned(),
         ),
-        ("TSK_PRIMARY_NON_GLOBAL_WORKSPACE".into(), primary_non_global_workspace),
+        (
+            "TSK_PRIMARY_NON_GLOBAL_WORKSPACE".into(),
+            primary_non_global_workspace,
+        ),
         (
             "TSK_WORKTREE".into(),
             if is_worktree { "1" } else { "0" }.into(),
@@ -135,10 +135,7 @@ pub fn apply_task_process_env(cmd: &mut Command, env: &[(String, String)], cfg: 
     if let Some(path) = task_path(cfg, std::env::var_os("PATH").as_deref()) {
         cmd.env("PATH", path);
     }
-    cmd.env(
-        "TSK_TASK_BIN",
-        task_bin_dir(cfg).to_string_lossy().as_ref(),
-    );
+    cmd.env("TSK_TASK_BIN", task_bin_dir(cfg).to_string_lossy().as_ref());
 }
 
 #[cfg(test)]
@@ -170,6 +167,7 @@ mod tests {
             browser_profile: None,
             created_at: now,
             last_active_at: now,
+            listed_at: now,
             agent_notes_path: None,
             ports: vec![],
         }
@@ -207,11 +205,7 @@ mod tests {
     #[test]
     fn taskspace_env_from_state_uses_current_task() {
         let base = PathBuf::from("/tmp/tsk-tasks");
-        let task = test_task(
-            "tabc123",
-            base.join("tabc123").join("workspace"),
-            None,
-        );
+        let task = test_task("tabc123", base.join("tabc123").join("workspace"), None);
         let mut tasks = HashMap::new();
         tasks.insert(task.id.clone(), task);
         let state = SessionState {

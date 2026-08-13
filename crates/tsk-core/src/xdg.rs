@@ -1,7 +1,7 @@
 use std::env;
 use std::path::{Path, PathBuf};
 
-use crate::error::{TskError, Result};
+use crate::error::{Result, TskError};
 
 /// Hyprland `exec` bindings may run without `XDG_RUNTIME_DIR` or `HOME`.
 /// Fill sensible defaults before any subcommand touches runtime paths or config.
@@ -140,7 +140,10 @@ mod tests {
         let saved = env::var_os("XDG_RUNTIME_DIR");
         env::remove_var("XDG_RUNTIME_DIR");
         normalize_desktop_env();
-        assert_eq!(env::var_os("XDG_RUNTIME_DIR").as_deref(), Some(expected.as_ref()));
+        assert_eq!(
+            env::var_os("XDG_RUNTIME_DIR").as_deref(),
+            Some(expected.as_ref())
+        );
         match saved {
             Some(v) => env::set_var("XDG_RUNTIME_DIR", v),
             None => env::remove_var("XDG_RUNTIME_DIR"),

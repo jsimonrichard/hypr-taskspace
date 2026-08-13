@@ -11,8 +11,8 @@ use crate::config::{load_config, TskConfig};
 use crate::error::{Result, TskError};
 use crate::hyprland::{self, HyprWindow};
 use crate::models::{ContextMode, SessionState, Task};
-use crate::workspaces::primary_task_workspace;
 use crate::window_registry::infer_task_id;
+use crate::workspaces::primary_task_workspace;
 
 const BROWSER_CLASS_MARKERS: &[&str] = &["chromium", "chrome", "brave", "vivaldi", "opera", "edge"];
 
@@ -159,8 +159,7 @@ fn find_task_browser_window(state: &SessionState, task: &Task) -> Option<HyprWin
         .filter(|client| is_browser_class(&client.class_name))
         .filter(|client| {
             workspace_names.contains(&client.workspace_name)
-                || infer_task_id(state, &client.workspace_name, &client.title)
-                    .as_deref()
+                || infer_task_id(state, &client.workspace_name, &client.title).as_deref()
                     == Some(task.id.as_str())
         })
         .max_by_key(|client| client.address.clone())
@@ -249,11 +248,8 @@ fn spawn_chromium(
         }
     }
 
-    cmd.spawn().map_err(|e| {
-        TskError::Other(format!(
-            "failed to launch browser `{browser}`: {e}"
-        ))
-    })?;
+    cmd.spawn()
+        .map_err(|e| TskError::Other(format!("failed to launch browser `{browser}`: {e}")))?;
     Ok(())
 }
 
@@ -319,7 +315,9 @@ pub fn resolve_system_xdg_open() -> Result<String> {
             .is_some_and(|n| n == "xdg-open")
         {
             let canonical = wrapper.canonicalize().ok();
-            let self_path = std::env::current_exe().ok().and_then(|p| p.canonicalize().ok());
+            let self_path = std::env::current_exe()
+                .ok()
+                .and_then(|p| p.canonicalize().ok());
             if canonical == self_path {
                 return Err(TskError::Other(
                     "xdg-open wrapper loop — set TSK_REAL_XDG_OPEN=/usr/bin/xdg-open".into(),

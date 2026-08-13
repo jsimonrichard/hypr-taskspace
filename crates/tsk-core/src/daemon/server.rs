@@ -14,7 +14,7 @@ use std::time::Duration;
 use serde_json::{json, Value};
 
 use crate::daemon::client::{daemon_pid_path, daemon_socket_path, ping_daemon_at};
-use crate::error::{TskError, Result};
+use crate::error::{Result, TskError};
 use crate::hyprland_events::{parse_workspace_v2, HyprlandEventListener};
 use crate::service::TaskService;
 use crate::xdg::ensure_parent;
@@ -99,16 +99,18 @@ impl DaemonServer {
             path: socket_path.clone(),
             source,
         })?;
-        listener.set_nonblocking(true).map_err(|source| TskError::Write {
-            path: socket_path.clone(),
-            source,
-        })?;
-        fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600)).map_err(
-            |source| TskError::Write {
+        listener
+            .set_nonblocking(true)
+            .map_err(|source| TskError::Write {
                 path: socket_path.clone(),
                 source,
-            },
-        )?;
+            })?;
+        fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600)).map_err(|source| {
+            TskError::Write {
+                path: socket_path.clone(),
+                source,
+            }
+        })?;
 
         eprintln!("tsk daemon listening on {}", socket_path.display());
 
@@ -210,10 +212,8 @@ impl DaemonServer {
 fn write_pid_file() -> Result<()> {
     let path = daemon_pid_path()?;
     ensure_parent(&path)?;
-    fs::write(&path, format!("{}\n", std::process::id())).map_err(|source| TskError::Write {
-        path,
-        source,
-    })
+    fs::write(&path, format!("{}\n", std::process::id()))
+        .map_err(|source| TskError::Write { path, source })
 }
 
 fn cleanup_runtime_files() {
@@ -225,29 +225,25 @@ fn cleanup_runtime_files() {
     }
 }
 
-fn start_hyprland_listener(
-    service: Arc<Mutex<TaskService>>,
-) -> Option<HyprlandEventListener> {
-    HyprlandEventListener::start(Arc::new(move |event, payload| {
-        match event {
-            "openwindow" | "closewindow" | "movewindow" | "movewindowv2" => {
-                if let Ok(svc) = service.lock() {
-                    if let Err(err) = svc.sync_window_registry() {
-                        eprintln!("tsk daemon: window registry sync: {err}");
-                    }
+fn start_hyprland_listener(service: Arc<Mutex<TaskService>>) -> Option<HyprlandEventListener> {
+    HyprlandEventListener::start(Arc::new(move |event, payload| match event {
+        "openwindow" | "closewindow" | "movewindow" | "movewindowv2" => {
+            if let Ok(svc) = service.lock() {
+                if let Err(err) = svc.sync_window_registry() {
+                    eprintln!("tsk daemon: window registry sync: {err}");
                 }
             }
-            "workspacev2" => {
-                if let Some((_, name)) = parse_workspace_v2(payload) {
-                    if let Ok(svc) = service.lock() {
-                        if let Err(err) = svc.sync_external_workspace(&name) {
-                            eprintln!("tsk daemon: workspace sync: {err}");
-                        }
-                    }
-                }
-            }
-            _ => {}
         }
+        "workspacev2" => {
+            if let Some((_, name)) = parse_workspace_v2(payload) {
+                if let Ok(svc) = service.lock() {
+                    if let Err(err) = svc.sync_external_workspace(&name) {
+                        eprintln!("tsk daemon: workspace sync: {err}");
+                    }
+                }
+            }
+        }
+        _ => {}
     }))
 }
 
@@ -266,10 +262,7 @@ fn handle_connection(mut stream: UnixStream, service: Arc<Mutex<TaskService>>) {
         .and_then(|m| m.as_str())
         .unwrap_or("")
         .to_string();
-    let params = request
-        .get("params")
-        .cloned()
-        .unwrap_or_else(|| json!({}));
+    let params = request.get("params").cloned().unwrap_or_else(|| json!({}));
 
     if is_inline_method(&method) {
         let response = dispatch(service, &method, params);
@@ -318,11 +311,7 @@ fn read_request(stream: &mut UnixStream) -> Option<Value> {
     serde_json::from_str(line.lines().next()?.trim()).ok()
 }
 
-fn dispatch(
-    service: Arc<Mutex<TaskService>>,
-    method: &str,
-    params: Value,
-) -> Result<Value> {
+fn dispatch(service: Arc<Mutex<TaskService>>, method: &str, params: Value) -> Result<Value> {
     if method == "ping" {
         return Ok(json!({ "pong": true }));
     }
@@ -380,7 +369,8 @@ fn dispatch(
             let relative = params
                 .get("relative")
                 .and_then(|v| v.as_i64())
-                .ok_or_else(|| TskError::Other("relative required".into()))? as i32;
+                .ok_or_else(|| TskError::Other("relative required".into()))?
+                as i32;
             let ws = svc.remember_workspace_go(relative)?;
             Ok(json!({ "workspace": ws }))
         }
@@ -388,7 +378,8 @@ fn dispatch(
             let relative = params
                 .get("relative")
                 .and_then(|v| v.as_i64())
-                .ok_or_else(|| TskError::Other("relative required".into()))? as i32;
+                .ok_or_else(|| TskError::Other("relative required".into()))?
+                as i32;
             let ws = svc.remember_workspace_go(relative)?;
             Ok(json!({ "workspace": ws }))
         }
@@ -689,12 +680,10 @@ fn parse_proc_cmdline(raw: &[u8]) -> Vec<String> {
 }
 
 fn is_tsk_daemon_run(argv: &[String]) -> bool {
-    let Some(tsk_idx) = argv.iter().position(|arg| {
-        Path::new(arg)
-            .file_name()
-            .and_then(|name| name.to_str())
-            == Some("tsk")
-    }) else {
+    let Some(tsk_idx) = argv
+        .iter()
+        .position(|arg| Path::new(arg).file_name().and_then(|name| name.to_str()) == Some("tsk"))
+    else {
         return false;
     };
     argv.get(tsk_idx + 1).map(String::as_str) == Some("daemon")
@@ -721,7 +710,10 @@ mod tests {
         let socket = dir.path().join("daemon.sock");
         let first = acquire_daemon_lock(&socket).expect("first lock");
         let second = acquire_daemon_lock(&socket);
-        assert!(second.is_err(), "second lock should fail while first is held");
+        assert!(
+            second.is_err(),
+            "second lock should fail while first is held"
+        );
         drop(first);
         acquire_daemon_lock(&socket).expect("lock after release");
     }

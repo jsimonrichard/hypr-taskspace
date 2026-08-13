@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 
-use crate::error::{TskError, Result};
+use crate::error::{Result, TskError};
 use crate::repos::normalize_repo_path;
 use crate::task_paths::{ensure_scratch_workspace, linked_checkout_path, scratch_checkout_path};
 use crate::vcs::{create_linked_checkout, detect_vcs_root, vcs_kind_at, VcsKind};
@@ -97,10 +97,7 @@ impl TaskRepoSource {
                 }
                 if options.create_worktree {
                     let kind = vcs_kind_at(&root).ok_or_else(|| {
-                        TskError::Other(format!(
-                            "Not a git or jj repo: {}",
-                            root.display()
-                        ))
+                        TskError::Other(format!("Not a git or jj repo: {}", root.display()))
                     })?;
                     TaskRepoSetup::Linked {
                         source_root: root,
@@ -188,10 +185,9 @@ pub fn provision_task_checkout(resolved: &ResolvedTaskRepo, task_id: &str) -> Re
     match &resolved.setup {
         TaskRepoSetup::Scratch => ensure_scratch_workspace(&resolved.checkout_path),
         TaskRepoSetup::Direct { .. } => Ok(()),
-        TaskRepoSetup::Linked {
-            source_root,
-            kind,
-        } => create_linked_checkout(source_root, &resolved.checkout_path, task_id, *kind),
+        TaskRepoSetup::Linked { source_root, kind } => {
+            create_linked_checkout(source_root, &resolved.checkout_path, task_id, *kind)
+        }
     }
 }
 
@@ -253,17 +249,12 @@ mod tests {
                 &TaskRepoOptions {
                     create_worktree: false,
                     container_isolation: false,
-                defer_container_create: false,
+                    defer_container_create: false,
                 },
             )
             .unwrap();
         assert_eq!(resolved.checkout_path, repo);
-        assert_eq!(
-            resolved.setup,
-            TaskRepoSetup::Direct {
-                source_root: repo,
-            }
-        );
+        assert_eq!(resolved.setup, TaskRepoSetup::Direct { source_root: repo });
     }
 
     #[test]
@@ -273,10 +264,7 @@ mod tests {
         let resolved = TaskRepoSource::Scratch
             .resolve(&task_home, None, &TaskRepoOptions::default())
             .unwrap();
-        assert_eq!(
-            resolved.checkout_path,
-            task_home.join("workspace")
-        );
+        assert_eq!(resolved.checkout_path, task_home.join("workspace"));
         assert_eq!(resolved.setup, TaskRepoSetup::Scratch);
     }
 

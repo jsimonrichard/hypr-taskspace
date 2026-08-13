@@ -1,22 +1,21 @@
 use clap::{Parser, Subcommand};
 
 use tsk_core::{
-    allowed_workspace_names, analyze_recent_latency, build_all_modules, clear_log, daemon_socket_path,
-    format_version_long, install_bins, diagnose_socket2, enable_for_process, format_report, hypr_log_path,
-    hyprland, install_hypr,
-    install_hypr_status, install_omarchy_prod, install_systemd_status, install_waybar,
-    install_walker, install_walker_status, install_waybar_status, is_dev_config, is_daemon_running, is_systemd_unit_installed, launch_task_tui,
-    load_config, load_dev_config, maybe_reexec_dev_session, normalize_desktop_env, ping_daemon,
-    reconcile_stale_dev_session,
-    profile_for_config,
-    run_doctor_checks, format_doctor_report, stop_daemon,
-    systemd_restart, systemd_start, systemd_stop, systemctl_is_active, tail_hypr_log, tail_raw,
-    trace_path, uninstall_hypr, uninstall_waybar, version_info, workspace_module_key, DaemonClient,
-    DaemonServer, InstallBinsOptions, InstallHyprOptions, InstallProfile,
-    InstallWaybarOptions, InstallWalkerOptions, OmarchyInstallOptions, TskError, Registry, Result, TaskService, TaskStatus,
-    walker_exec, walker_terminal, walker_watch_launch,
-    TaskRepoSource,     detect_vcs_root, find_repo, find_repo_by_path, load_repos, register_repo, repo_label,
-    ensure_repo_removable, unregister_repo, clear_hypr_log, is_http_url, effective_share_dir,
+    allowed_workspace_names, analyze_recent_latency, build_all_modules, clear_hypr_log, clear_log,
+    daemon_socket_path, detect_vcs_root, diagnose_socket2, effective_share_dir, enable_for_process,
+    ensure_repo_removable, find_repo, find_repo_by_path, format_doctor_report, format_report,
+    format_version_long, hypr_log_path, hyprland, install_bins, install_hypr, install_hypr_status,
+    install_omarchy_prod, install_systemd_status, install_walker, install_walker_status,
+    install_waybar, install_waybar_status, is_daemon_running, is_dev_config, is_http_url,
+    is_systemd_unit_installed, launch_task_tui, load_config, load_dev_config, load_repos,
+    maybe_reexec_dev_session, normalize_desktop_env, ping_daemon, profile_for_config,
+    reconcile_stale_dev_session, register_repo, repo_label, run_doctor_checks, stop_daemon,
+    systemctl_is_active, systemd_restart, systemd_start, systemd_stop, tail_hypr_log, tail_raw,
+    trace_path, uninstall_hypr, uninstall_waybar, unregister_repo, version_info, walker_exec,
+    walker_terminal, walker_watch_launch, workspace_module_key, DaemonClient, DaemonServer,
+    InstallBinsOptions, InstallHyprOptions, InstallProfile, InstallWalkerOptions,
+    InstallWaybarOptions, OmarchyInstallOptions, Registry, Result, TaskRepoSource, TaskService,
+    TaskStatus, TskError,
 };
 
 #[derive(Parser)]
@@ -96,7 +95,10 @@ enum Commands {
     Open {
         #[arg(value_name = "URL", required = true)]
         urls: Vec<String>,
-        #[arg(long, help = "Open in the system default handler instead of the task browser")]
+        #[arg(
+            long,
+            help = "Open in the system default handler instead of the task browser"
+        )]
         host: bool,
         #[arg(long, help = "Target a specific task by name or id")]
         task: Option<String>,
@@ -289,7 +291,10 @@ enum TaskCommands {
         no_switch: bool,
         #[arg(long, help = "Use an empty scratch workspace under the task home")]
         scratch: bool,
-        #[arg(long, help = "Use a specific checkout path instead of detecting git/jj from cwd")]
+        #[arg(
+            long,
+            help = "Use a specific checkout path instead of detecting git/jj from cwd"
+        )]
         repo_path: Option<std::path::PathBuf>,
         #[arg(
             long,
@@ -366,9 +371,7 @@ enum RepoCommands {
     /// List registered repos
     List,
     /// Remove a repo from tsk bookmarks (does not modify the checkout)
-    Remove {
-        id_or_path: String,
-    },
+    Remove { id_or_path: String },
     /// Show the git/jj repo root for a directory (default: cwd)
     Root {
         #[arg(value_name = "DIR")]
@@ -576,9 +579,10 @@ fn run() -> Result<()> {
             TaskCommands::Current => cmd_task_current(),
             TaskCommands::Archive { name_or_id } => cmd_task_archive(&name_or_id),
             TaskCommands::Restore { name_or_id } => cmd_task_restore(&name_or_id),
-            TaskCommands::Rename { name_or_id, new_name } => {
-                cmd_task_rename(&name_or_id, &new_name)
-            }
+            TaskCommands::Rename {
+                name_or_id,
+                new_name,
+            } => cmd_task_rename(&name_or_id, &new_name),
             TaskCommands::Delete { name_or_id } => cmd_task_delete(&name_or_id),
             TaskCommands::Menu | TaskCommands::TuiLaunch => cmd_task_tui_launch(),
             TaskCommands::Tui => cmd_task_tui(),
@@ -765,8 +769,7 @@ fn cmd_windows_list(task_filter: Option<&str>) -> Result<()> {
             .unwrap_or("-");
         println!(
             "{} [{task_id}] {} ws={ws_name} home={home}",
-            w.address,
-            w.title,
+            w.address, w.title,
         );
     }
     Ok(())
@@ -857,7 +860,10 @@ fn cmd_install_omarchy(dry_run: bool, workspace: Option<std::path::PathBuf>) -> 
         println!("Applied: {}.", actions.join(", "));
     }
     println!();
-    println!("Omarchy prod integration installed to {}.", effective_share_dir(&cfg).display());
+    println!(
+        "Omarchy prod integration installed to {}.",
+        effective_share_dir(&cfg).display()
+    );
     println!("  Hyprland: source line + Omarchy unbinds");
     println!("  Waybar: cffi/tsk module, styles, restart");
     println!("  Walker: Elephant launch_prefix + terminal_cmd");
@@ -881,7 +887,9 @@ fn cmd_install_walker(dry_run: bool, quiet: bool) -> Result<()> {
         }
     }
     if !dry_run && !quiet {
-        println!("Walker integration installed — restart Walker if apps still launch without task env.");
+        println!(
+            "Walker integration installed — restart Walker if apps still launch without task env."
+        );
     }
     Ok(())
 }
@@ -1074,7 +1082,10 @@ fn cmd_reset_layout() -> Result<()> {
 fn cmd_integration_status(cfg: tsk_core::TskConfig) -> Result<()> {
     let profile = profile_for_config(&cfg);
     let session_active = tsk_core::dev_session_active();
-    println!("Profile: {profile:?} ({})", cfg.install_hypr_share_dir.display());
+    println!(
+        "Profile: {profile:?} ({})",
+        cfg.install_hypr_share_dir.display()
+    );
     if session_active {
         println!("Session: active (dev enter running)");
         if let Some(bin) = tsk_core::dev_session_binary() {
@@ -1085,7 +1096,10 @@ fn cmd_integration_status(cfg: tsk_core::TskConfig) -> Result<()> {
     }
     let h = install_hypr_status(&cfg)?;
     let w = install_waybar_status(&cfg)?;
-    if h.get("installed").and_then(|v| v.as_bool()).unwrap_or(false) {
+    if h.get("installed")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
         println!("Hyprland integration: installed");
         if let Some(p) = h.get("config_path").and_then(|v| v.as_str()) {
             println!("  config: {p}");
@@ -1093,13 +1107,20 @@ fn cmd_integration_status(cfg: tsk_core::TskConfig) -> Result<()> {
     } else {
         println!("Hyprland integration: not installed");
     }
-    if w.get("installed").and_then(|v| v.as_bool()).unwrap_or(false) {
+    if w.get("installed")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
         println!("Waybar integration: installed");
     } else {
         println!("Waybar integration: not installed");
     }
     let walker = install_walker_status(&cfg)?;
-    if walker.get("installed").and_then(|v| v.as_bool()).unwrap_or(false) {
+    if walker
+        .get("installed")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
         println!("Walker integration: installed");
         if let Some(p) = walker.get("config_path").and_then(|v| v.as_str()) {
             println!("  elephant: {p}");
@@ -1112,14 +1133,23 @@ fn cmd_integration_status(cfg: tsk_core::TskConfig) -> Result<()> {
             .get("terminal_cmd_set")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        println!("  launch_prefix: {}", if prefix_ok { "ok" } else { "missing" });
-        println!("  terminal_cmd: {}", if terminal_ok { "ok" } else { "missing" });
+        println!(
+            "  launch_prefix: {}",
+            if prefix_ok { "ok" } else { "missing" }
+        );
+        println!(
+            "  terminal_cmd: {}",
+            if terminal_ok { "ok" } else { "missing" }
+        );
     } else {
         println!("Walker integration: not installed");
     }
     if profile.install_systemd() {
         let s = install_systemd_status(&cfg)?;
-        if s.get("installed").and_then(|v| v.as_bool()).unwrap_or(false) {
+        if s.get("installed")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
             println!("Systemd daemon service: installed");
             if let Some(p) = s.get("unit_path").and_then(|v| v.as_str()) {
                 println!("  unit: {p}");
@@ -1234,12 +1264,13 @@ fn cmd_task_new(
     let task = client()?.create_task(name, switch && !container, repo, repo_options)?;
     println!(
         "Created task {} → workspaces {}-1..{}-{}",
-        task.id,
-        task.id,
-        task.id,
-        task.workspace_count
+        task.id, task.id, task.id, task.workspace_count
     );
-    println!("Repo: {} ({})", repo_label(&task.repo_path), task.repo_path.display());
+    println!(
+        "Repo: {} ({})",
+        repo_label(&task.repo_path),
+        task.repo_path.display()
+    );
     if container {
         let cfg = load_config()?;
         let task_home = tsk_core::task_data_dir(&cfg, &task.id);
@@ -1272,12 +1303,11 @@ fn cmd_repo_add(dir: Option<&std::path::Path>) -> Result<()> {
         .ok_or_else(|| TskError::Other("Could not resolve directory".into()))?;
     let existing = load_repos([])?;
     let repo = register_repo(&start, &existing)?;
+    println!("Registered {} → {}", repo.name, repo.path.display());
     println!(
-        "Registered {} → {}",
-        repo.name,
-        repo.path.display()
+        "Settings: {}",
+        tsk_core::repo_config_path(&repo.path).display()
     );
-    println!("Settings: {}", tsk_core::repo_config_path(&repo.path).display());
     Ok(())
 }
 
@@ -1288,12 +1318,7 @@ fn cmd_repo_list() -> Result<()> {
         return Ok(());
     }
     for repo in repos {
-        println!(
-            "{:<20}  {}  {}",
-            repo.id,
-            repo.name,
-            repo.path.display()
-        );
+        println!("{:<20}  {}  {}", repo.id, repo.name, repo.path.display());
     }
     Ok(())
 }
@@ -1392,15 +1417,19 @@ fn cmd_task_list(json: bool, include_archived: bool) -> Result<()> {
     if json {
         let items = svc.tasks_for_menu()?;
         if include_archived {
-            let archived: Vec<_> = svc.list_archived_tasks()?.into_iter().map(|t| {
-                serde_json::json!({
-                    "id": t.id,
-                    "name": t.name,
-                    "status": t.status.as_str(),
-                    "kind": "task",
-                    "current": false,
+            let archived: Vec<_> = svc
+                .list_archived_tasks()?
+                .into_iter()
+                .map(|t| {
+                    serde_json::json!({
+                        "id": t.id,
+                        "name": t.name,
+                        "status": t.status.as_str(),
+                        "kind": "task",
+                        "current": false,
+                    })
                 })
-            }).collect();
+                .collect();
             println!(
                 "{}",
                 serde_json::to_string(&serde_json::json!({
@@ -1746,7 +1775,9 @@ fn spawn_daemon_and_wait() -> Result<()> {
             } else {
                 format!("exit status {status}: {stderr}")
             };
-            return Err(TskError::Other(format!("daemon failed to start ({detail})")));
+            return Err(TskError::Other(format!(
+                "daemon failed to start ({detail})"
+            )));
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
@@ -1798,7 +1829,10 @@ fn cmd_daemon_status() -> Result<()> {
         if is_daemon_running() {
             println!("running (systemd, {})", path.display());
         } else if active {
-            println!("systemd unit active but daemon not reachable ({})", path.display());
+            println!(
+                "systemd unit active but daemon not reachable ({})",
+                path.display()
+            );
         } else {
             println!("stopped (systemd unit inactive; CLI will use direct mode)");
         }

@@ -6,7 +6,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
-use crate::apps::{resolve_browser_command, resolve_editor_command, BROWSER_CANDIDATES, EDITOR_CANDIDATES};
+use crate::apps::{
+    resolve_browser_command, resolve_editor_command, BROWSER_CANDIDATES, EDITOR_CANDIDATES,
+};
 use crate::config::load_config;
 use crate::context_sync;
 use crate::error::{Result, TskError};
@@ -158,16 +160,22 @@ fn walker_open_terminal(_ctx: &WalkerLaunchContext, target: &LaunchTarget) -> Re
         let svc = TaskService::with_defaults()?;
         return svc.open_terminal(None, false);
     }
-    walker_terminal(target.argv.iter().map(String::as_str).collect::<Vec<_>>().as_slice())
+    walker_terminal(
+        target
+            .argv
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .as_slice(),
+    )
 }
 
 fn walker_open_browser(_ctx: &WalkerLaunchContext, target: &LaunchTarget) -> Result<()> {
     if target.opens_browser_app() {
         return TaskService::with_defaults()?.open_browser(None, false);
     }
-    let browser = resolve_browser_command().ok_or_else(|| {
-        TskError::Other("walker exec: browser not found".into())
-    })?;
+    let browser = resolve_browser_command()
+        .ok_or_else(|| TskError::Other("walker exec: browser not found".into()))?;
     let extra: Vec<&str> = target.argv.iter().skip(1).map(String::as_str).collect();
     launch_with_env(_ctx, Some(&browser), &extra)
 }
@@ -176,9 +184,8 @@ fn walker_open_editor(ctx: &WalkerLaunchContext, target: &LaunchTarget) -> Resul
     if target.opens_editor_app() {
         return TaskService::with_defaults()?.open_editor(None);
     }
-    let editor = resolve_editor_command().ok_or_else(|| {
-        TskError::Other("walker exec: editor not found".into())
-    })?;
+    let editor = resolve_editor_command()
+        .ok_or_else(|| TskError::Other("walker exec: editor not found".into()))?;
     let cwd = std::env::current_dir()
         .ok()
         .map(|p| p.to_string_lossy().into_owned())
@@ -201,7 +208,14 @@ fn walker_launch_generic(ctx: &WalkerLaunchContext, target: &LaunchTarget) -> Re
     let (program, program_args) = if target.argv.is_empty() {
         return Err(TskError::Other("walker exec: empty launch target".into()));
     } else {
-        split_command(target.argv.iter().map(String::as_str).collect::<Vec<_>>().as_slice())?
+        split_command(
+            target
+                .argv
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                .as_slice(),
+        )?
     };
     let mut cmd = Command::new(&program);
     apply_launch_env(&mut cmd, ctx);
@@ -304,9 +318,8 @@ fn format_command_label(argv: &[String]) -> Option<String> {
 fn spawn_watched(cmd: Command, label: String) -> Result<()> {
     let program = cmd.get_program().to_owned();
     let args: Vec<_> = cmd.get_args().map(|a| a.to_owned()).collect();
-    let helper = std::env::current_exe().map_err(|e| {
-        TskError::Other(format!("walker exec: current_exe unavailable: {e}"))
-    })?;
+    let helper = std::env::current_exe()
+        .map_err(|e| TskError::Other(format!("walker exec: current_exe unavailable: {e}")))?;
 
     let mut watch = Command::new(&helper);
     // Inherit process env, then overlay whatever was set on the prepared launch command
@@ -341,7 +354,9 @@ fn spawn_watched(cmd: Command, label: String) -> Result<()> {
 /// Internal: run a launch command and notify if it fails quickly.
 pub fn walker_watch_launch(label: &str, args: &[&str]) -> Result<()> {
     if args.is_empty() {
-        return Err(TskError::Other("walker watch-launch: missing command".into()));
+        return Err(TskError::Other(
+            "walker watch-launch: missing command".into(),
+        ));
     }
     let (program, program_args) = split_command(args)?;
     let mut cmd = Command::new(&program);
@@ -488,11 +503,11 @@ impl LaunchTarget {
         if self.desktop.as_ref().is_some_and(|d| d.terminal) {
             return true;
         }
-        if self
-            .desktop
-            .as_ref()
-            .is_some_and(|d| d.categories.iter().any(|c| c == "TerminalEmulator" || c == "Terminal"))
-        {
+        if self.desktop.as_ref().is_some_and(|d| {
+            d.categories
+                .iter()
+                .any(|c| c == "TerminalEmulator" || c == "Terminal")
+        }) {
             return true;
         }
         if let Some(id) = self.desktop_id.as_deref() {
@@ -531,11 +546,11 @@ impl LaunchTarget {
     }
 
     fn is_browser(&self) -> bool {
-        if self
-            .desktop
-            .as_ref()
-            .is_some_and(|d| d.categories.iter().any(|c| c == "Network" || c == "WebBrowser"))
-        {
+        if self.desktop.as_ref().is_some_and(|d| {
+            d.categories
+                .iter()
+                .any(|c| c == "Network" || c == "WebBrowser")
+        }) {
             return true;
         }
         if let Some(id) = self.desktop_id.as_deref() {
@@ -596,10 +611,7 @@ impl LaunchTarget {
             return true;
         }
         if let Some(id) = self.desktop_id.as_deref() {
-            if desktop_ids
-                .iter()
-                .any(|name| name.eq_ignore_ascii_case(id))
-            {
+            if desktop_ids.iter().any(|name| name.eq_ignore_ascii_case(id)) {
                 return true;
             }
         }
@@ -622,9 +634,7 @@ fn argv_starts_with_candidate(argv: &[String], candidates: &[&str]) -> bool {
         .file_name()
         .and_then(OsStr::to_str)
         .unwrap_or(program.as_str());
-    candidates
-        .iter()
-        .any(|c| base.eq_ignore_ascii_case(c))
+    candidates.iter().any(|c| base.eq_ignore_ascii_case(c))
 }
 
 fn active_task(state: &SessionState) -> Option<&Task> {
@@ -647,7 +657,10 @@ fn split_command(args: &[&str]) -> Result<(String, Vec<String>)> {
     let Some(program) = args.first() else {
         return Err(TskError::Other("walker: empty command".into()));
     };
-    Ok((program.to_string(), args[1..].iter().map(|s| s.to_string()).collect()))
+    Ok((
+        program.to_string(),
+        args[1..].iter().map(|s| s.to_string()).collect(),
+    ))
 }
 
 fn command_v(name: &str) -> Option<String> {
@@ -760,13 +773,18 @@ fn parse_desktop_exec(exec: &str) -> Result<Vec<String>> {
         out.push(current);
     }
     if out.is_empty() {
-        return Err(TskError::Other(format!("invalid desktop Exec line: {exec}")));
+        return Err(TskError::Other(format!(
+            "invalid desktop Exec line: {exec}"
+        )));
     }
     Ok(out)
 }
 
 fn is_exec_field_code(ch: char) -> bool {
-    matches!(ch, 'f' | 'F' | 'u' | 'U' | 'd' | 'D' | 'n' | 'N' | 'i' | 'c' | 'k' | 'v' | 'm')
+    matches!(
+        ch,
+        'f' | 'F' | 'u' | 'U' | 'd' | 'D' | 'n' | 'N' | 'i' | 'c' | 'k' | 'v' | 'm'
+    )
 }
 
 fn take(slot: &mut String) -> String {

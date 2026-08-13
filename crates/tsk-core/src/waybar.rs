@@ -47,10 +47,12 @@ struct WaybarData {
 }
 
 pub fn notify_waybar() {
-    if Command::new("which").arg("waybar").output().is_ok_and(|o| o.status.success()) {
-        let _ = Command::new("pkill")
-            .args(["-RTMIN+11", "waybar"])
-            .status();
+    if Command::new("which")
+        .arg("waybar")
+        .output()
+        .is_ok_and(|o| o.status.success())
+    {
+        let _ = Command::new("pkill").args(["-RTMIN+11", "waybar"]).status();
     }
 }
 
@@ -328,6 +330,7 @@ mod tests {
                 browser_profile: None,
                 created_at: Utc::now(),
                 last_active_at: Utc::now(),
+                listed_at: Utc::now(),
                 agent_notes_path: None,
                 ports: vec![],
             },

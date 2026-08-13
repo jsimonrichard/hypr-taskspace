@@ -32,7 +32,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     .split(area);
 
     if app.show_daemon_warning() {
-        let header = Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).split(chunks[0]);
+        let header =
+            Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).split(chunks[0]);
         draw_tabs(frame, header[0], app);
         draw_daemon_warning(frame, header[1]);
     } else {
@@ -60,17 +61,23 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
 fn draw_tabs(frame: &mut Frame, area: Rect, app: &App) {
     let tasks_style = if app.panel == Panel::Tasks {
-        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::DarkGray)
     };
     let repos_style = if app.panel == Panel::Repos {
-        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::DarkGray)
     };
     let archived_style = if app.panel == Panel::Archived {
-        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::DarkGray)
     };
@@ -280,16 +287,9 @@ fn draw_modal_dialog(
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
 
-    let chunks = Layout::vertical([
-        Constraint::Min(1),
-        Constraint::Length(1),
-    ])
-    .split(inner);
+    let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(inner);
 
-    frame.render_widget(
-        Paragraph::new(body).wrap(Wrap { trim: true }),
-        chunks[0],
-    );
+    frame.render_widget(Paragraph::new(body).wrap(Wrap { trim: true }), chunks[0]);
     draw_button_bar(frame, chunks[1], buttons, buttons_active);
 }
 
@@ -315,11 +315,7 @@ fn draw_new_task_pick_repo(frame: &mut Frame, area: Rect, app: &mut App) {
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
 
-    let chunks = Layout::vertical([
-        Constraint::Min(3),
-        Constraint::Length(1),
-    ])
-    .split(inner);
+    let chunks = Layout::vertical([Constraint::Min(3), Constraint::Length(1)]).split(inner);
 
     let items: Vec<ListItem> = choices
         .iter()
@@ -371,11 +367,7 @@ fn draw_new_task_name(frame: &mut Frame, area: Rect, app: &App) {
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
 
-    let chunks = Layout::vertical([
-        Constraint::Min(1),
-        Constraint::Length(1),
-    ])
-    .split(inner);
+    let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(inner);
 
     let mut lines = vec![
         Line::from(vec![
@@ -404,10 +396,7 @@ fn draw_new_task_name(frame: &mut Frame, area: Rect, app: &App) {
         };
         lines.push(Line::from(vec![
             Span::raw(marker),
-            Span::styled(
-                format!("{toggle} {label}"),
-                field_style(focused),
-            ),
+            Span::styled(format!("{toggle} {label}"), field_style(focused)),
             Span::styled("  Space", Style::default().fg(Color::DarkGray)),
         ]));
         lines.push(Line::from(""));
@@ -474,11 +463,7 @@ fn draw_rename_task(frame: &mut Frame, area: Rect, app: &App) {
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
 
-    let chunks = Layout::vertical([
-        Constraint::Min(1),
-        Constraint::Length(1),
-    ])
-    .split(inner);
+    let chunks = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).split(inner);
 
     let name_focused = !buttons_active;
     let lines = vec![
@@ -553,7 +538,10 @@ fn draw_container_setup(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 fn draw_confirm_delete_repo(frame: &mut Frame, area: Rect, app: &App) {
-    let Screen::ConfirmDeleteRepo { repo_name, buttons, .. } = &app.screen else {
+    let Screen::ConfirmDeleteRepo {
+        repo_name, buttons, ..
+    } = &app.screen
+    else {
         return;
     };
 
@@ -640,9 +628,7 @@ fn draw_confirm_restore(frame: &mut Frame, area: Rect, app: &App) {
     } else {
         String::new()
     };
-    let mut body = format!(
-        "Restore \"{task_name}\"?\n\nTask files at {data_dir}."
-    );
+    let mut body = format!("Restore \"{task_name}\"?\n\nTask files at {data_dir}.");
     if !container_line.is_empty() {
         body.push('\n');
         body.push_str(&container_line);

@@ -3,11 +3,13 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use crate::error::{TskError, Result};
+use crate::error::{Result, TskError};
 use crate::host::{default_distrobox_image, migrate_stale_distrobox_image};
 use crate::install::profile::is_dev_share_dir;
 use crate::share::default_prod_share_dir;
-use crate::xdg::{ensure_parent, expand, tsk_config_path, tsk_data_dir, resolve_daemon_socket_path};
+use crate::xdg::{
+    ensure_parent, expand, resolve_daemon_socket_path, tsk_config_path, tsk_data_dir,
+};
 
 pub fn default_daemon_socket_config_value() -> String {
     "~/.local/share/tsk/daemon.sock".into()
@@ -203,14 +205,10 @@ fn seed_dev_config_contents() -> Result<String> {
 }
 
 fn dev_config_from_prod(prod_contents: &str) -> Result<String> {
-    let mut root: toml::Table = toml::from_str(prod_contents)
-        .map_err(|e| TskError::Config(format!("prod config: {e}")))?;
+    let mut root: toml::Table =
+        toml::from_str(prod_contents).map_err(|e| TskError::Config(format!("prod config: {e}")))?;
 
-    set_nested_str(
-        &mut root,
-        &["data", "dir"],
-        "~/.local/share/tsk",
-    );
+    set_nested_str(&mut root, &["data", "dir"], "~/.local/share/tsk");
     set_nested_str(
         &mut root,
         &["install", "hypr", "share_dir"],
@@ -258,8 +256,7 @@ pub fn load_dev_config() -> Result<TskConfig> {
         path: path.clone(),
         source,
     })?;
-    let parsed: RawConfig =
-        toml::from_str(&raw).map_err(|e| TskError::Config(e.to_string()))?;
+    let parsed: RawConfig = toml::from_str(&raw).map_err(|e| TskError::Config(e.to_string()))?;
     let mut cfg = parse_config(parsed);
     let needs_repair = dev_config_needs_repair(&raw);
     apply_dev_config_overrides(&mut cfg);
@@ -410,8 +407,7 @@ pub fn load_config_at(path: &std::path::Path) -> Result<TskConfig> {
         path: path.to_path_buf(),
         source,
     })?;
-    let parsed: RawConfig =
-        toml::from_str(&raw).map_err(|e| TskError::Config(e.to_string()))?;
+    let parsed: RawConfig = toml::from_str(&raw).map_err(|e| TskError::Config(e.to_string()))?;
     let mut cfg = parse_config(parsed);
     if is_prod_config_path(path) {
         apply_packaged_prod_share_override(&mut cfg);
@@ -514,7 +510,8 @@ fn parse_config(raw: RawConfig) -> TskConfig {
         .or(raw.default.desktop_count)
         .unwrap_or(10);
     if let Some(slots) = raw.default.global_workspaces {
-        cfg.global_workspace_slots = normalize_global_workspace_slots(slots, cfg.default_workspace_count);
+        cfg.global_workspace_slots =
+            normalize_global_workspace_slots(slots, cfg.default_workspace_count);
     }
     if let Some(base) = raw.tasks.base_dir {
         cfg.tasks_base_dir = expand(base);
@@ -526,8 +523,7 @@ fn parse_config(raw: RawConfig) -> TskConfig {
         cfg.max_tasks = n;
     }
     if let Some(image) = raw.distrobox.image {
-        cfg.distrobox_image =
-            migrate_stale_distrobox_image(&image).unwrap_or(image);
+        cfg.distrobox_image = migrate_stale_distrobox_image(&image).unwrap_or(image);
     }
     if let Some(prefix) = raw.distrobox.container_prefix {
         cfg.container_prefix = prefix;
@@ -729,10 +725,7 @@ require_sourced_last = true
         assert_eq!(cfg.container_prefix, "tsk-dev");
         assert_eq!(cfg.data_dir, expand("~/.local/share/tsk"));
         assert_eq!(cfg.daemon_socket, "~/.local/share/tsk-dev/daemon.sock");
-        assert_eq!(
-            cfg.install_hypr_share_dir,
-            expand("~/.local/share/tsk-dev")
-        );
+        assert_eq!(cfg.install_hypr_share_dir, expand("~/.local/share/tsk-dev"));
         assert!(dev.contains("require_sourced_last = true"));
     }
 

@@ -5,10 +5,8 @@ use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::config::TskConfig;
-use crate::error::{TskError, Result};
-use crate::models::{
-    ContextMode, generate_task_id, SessionState, Task, TaskStatus, WindowRecord,
-};
+use crate::error::{Result, TskError};
+use crate::models::{generate_task_id, ContextMode, SessionState, Task, TaskStatus, WindowRecord};
 use crate::task_ids::{lookup_task, TaskLookup};
 
 const SCHEMA: &str = r#"
@@ -37,7 +35,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     agent_notes_path TEXT,
     ports TEXT NOT NULL DEFAULT '[]',
     source_repo_path TEXT,
-    container_isolation INTEGER NOT NULL DEFAULT 0
+    container_isolation INTEGER NOT NULL DEFAULT 0,
+    listed_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS windows (
@@ -138,6 +137,14 @@ impl Registry {
         if !task_cols.iter().any(|c| c == "container_isolation") {
             conn.execute(
                 "ALTER TABLE tasks ADD COLUMN container_isolation INTEGER NOT NULL DEFAULT 0",
+                [],
+            )?;
+        }
+        let task_cols = table_columns(conn, "tasks")?;
+        if !task_cols.iter().any(|c| c == "listed_at") {
+            conn.execute("ALTER TABLE tasks ADD COLUMN listed_at TEXT", [])?;
+            conn.execute(
+                "UPDATE tasks SET listed_at = created_at WHERE listed_at IS NULL OR listed_at = ''",
                 [],
             )?;
         }
@@ -276,11 +283,7 @@ impl Registry {
         }
     }
 
-    pub fn lookup_task<'a>(
-        &self,
-        state: &'a SessionState,
-        name_or_id: &str,
-    ) -> TaskLookup<'a> {
+    pub fn lookup_task<'a>(&self, state: &'a SessionState, name_or_id: &str) -> TaskLookup<'a> {
         lookup_task(state, name_or_id)
     }
 
@@ -327,12 +330,21 @@ fn task_from_row(row: &rusqlite::Row<'_>) -> Result<Task> {
     let ports: Vec<u16> = serde_json::from_str(&ports_raw).unwrap_or_default();
     let created_at: String = row.get(9)?;
     let last_active_at: String = row.get(10)?;
-    let container_isolation = row
-        .get::<_, Option<i32>>(14)
+    let created_at = DateTime::parse_from_rfc3339(&created_at)
+        .map(|dt| dt.with_timezone(&Utc))
+        .unwrap_or_else(|_| Utc::now());
+    let last_active_at = DateTime::parse_from_rfc3339(&last_active_at)
+        .map(|dt| dt.with_timezone(&Utc))
+        .unwrap_or_else(|_| Utc::now());
+    let listed_at = row
+        .get::<_, Option<String>>("listed_at")
         .ok()
         .flatten()
-        .unwrap_or(0)
-        != 0;
+        .filter(|s| !s.is_empty())
+        .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
+        .map(|dt| dt.with_timezone(&Utc))
+        .unwrap_or(created_at);
+    let container_isolation = row.get::<_, Option<i32>>(14).ok().flatten().unwrap_or(0) != 0;
     Ok(Task {
         id: row.get(0)?,
         name: row.get(1)?,
@@ -348,15 +360,10 @@ fn task_from_row(row: &rusqlite::Row<'_>) -> Result<Task> {
         container_isolation,
         workspace_count: row.get::<_, i32>(7)? as u32,
         browser_profile: row.get(8)?,
-        created_at: DateTime::parse_from_rfc3339(&created_at)
-            .map(|dt| dt.with_timezone(&Utc))
-            .unwrap_or_else(|_| Utc::now()),
-        last_active_at: DateTime::parse_from_rfc3339(&last_active_at)
-            .map(|dt| dt.with_timezone(&Utc))
-            .unwrap_or_else(|_| Utc::now()),
-        agent_notes_path: row
-            .get::<_, Option<String>>(11)?
-            .map(PathBuf::from),
+        created_at,
+        last_active_at,
+        listed_at,
+        agent_notes_path: row.get::<_, Option<String>>(11)?.map(PathBuf::from),
         ports,
         source_repo_path: row
             .get::<_, Option<String>>(13)
@@ -369,7 +376,7 @@ fn task_from_row(row: &rusqlite::Row<'_>) -> Result<Task> {
 fn upsert_task(conn: &Connection, task: &Task) -> Result<()> {
     let ports = serde_json::to_string(&task.ports).map_err(|e| TskError::Other(e.to_string()))?;
     conn.execute(
-        "INSERT OR REPLACE INTO tasks (id, name, status, repo_url, repo_path, branch, container_name, desktop_count, browser_profile, created_at, last_active_at, agent_notes_path, ports, source_repo_path, container_isolation) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+        "INSERT OR REPLACE INTO tasks (id, name, status, repo_url, repo_path, branch, container_name, desktop_count, browser_profile, created_at, last_active_at, agent_notes_path, ports, source_repo_path, container_isolation, listed_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
         params![
             task.id,
             task.name,
@@ -386,6 +393,7 @@ fn upsert_task(conn: &Connection, task: &Task) -> Result<()> {
             ports,
             task.source_repo_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
             if task.container_isolation { 1 } else { 0 },
+            task.listed_at.to_rfc3339(),
         ],
     )?;
     Ok(())
@@ -406,5 +414,63 @@ mod tests {
         registry.save_state(&state).unwrap();
         let again = registry.load_state().unwrap();
         assert_eq!(again.context_mode, ContextMode::Default);
+    }
+
+    #[test]
+    fn migrate_listed_at_from_created_at() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("state.db");
+        {
+            let conn = Connection::open(&db).unwrap();
+            conn.execute_batch(
+                r#"
+                CREATE TABLE session (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    context_mode TEXT NOT NULL DEFAULT 'default',
+                    current_task_id TEXT,
+                    previous_context TEXT,
+                    previous_task_id TEXT,
+                    last_desktop TEXT NOT NULL DEFAULT '{}',
+                    default_desktop_count INTEGER NOT NULL DEFAULT 3
+                );
+                CREATE TABLE tasks (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    repo_url TEXT,
+                    repo_path TEXT NOT NULL,
+                    branch TEXT,
+                    container_name TEXT NOT NULL,
+                    desktop_count INTEGER NOT NULL DEFAULT 3,
+                    browser_profile TEXT,
+                    created_at TEXT NOT NULL,
+                    last_active_at TEXT NOT NULL,
+                    agent_notes_path TEXT,
+                    ports TEXT NOT NULL DEFAULT '[]',
+                    source_repo_path TEXT,
+                    container_isolation INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE TABLE windows (
+                    hypr_address TEXT PRIMARY KEY,
+                    task_id TEXT,
+                    title TEXT NOT NULL DEFAULT '',
+                    class TEXT NOT NULL DEFAULT '',
+                    workspace INTEGER NOT NULL DEFAULT 0,
+                    workspace_name TEXT NOT NULL DEFAULT '',
+                    pid INTEGER
+                );
+                INSERT INTO session (id, context_mode, last_desktop, default_desktop_count)
+                VALUES (1, 'default', '{"default":1}', 3);
+                INSERT INTO tasks (id, name, status, repo_path, container_name, created_at, last_active_at)
+                VALUES ('t1', 'old', 'active', '/tmp', 'tsk-t1', '2020-01-01T00:00:00Z', '2020-01-02T00:00:00Z');
+                "#,
+            )
+            .unwrap();
+        }
+        let registry = Registry::new(Some(db), TskConfig::default()).unwrap();
+        let state = registry.load_state().unwrap();
+        let task = state.tasks.get("t1").expect("migrated task");
+        assert_eq!(task.created_at.to_rfc3339(), "2020-01-01T00:00:00+00:00");
+        assert_eq!(task.listed_at, task.created_at);
     }
 }

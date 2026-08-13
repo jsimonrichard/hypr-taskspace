@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::error::{TskError, Result};
+use crate::error::{Result, TskError};
 use crate::xdg::ensure_parent;
 
 pub fn backup_timestamp() -> String {
@@ -22,9 +22,11 @@ pub fn backup_file(source: &Path, backup_root: &Path) -> Result<PathBuf> {
         path: backup_root.to_path_buf(),
         source,
     })?;
-    let dest = backup_root.join(source.file_name().ok_or_else(|| {
-        TskError::Other("backup source has no file name".into())
-    })?);
+    let dest = backup_root.join(
+        source
+            .file_name()
+            .ok_or_else(|| TskError::Other("backup source has no file name".into()))?,
+    );
     fs::copy(source, &dest).map_err(|source| TskError::Write {
         path: dest.clone(),
         source,

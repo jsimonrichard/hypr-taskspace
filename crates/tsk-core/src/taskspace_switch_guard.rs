@@ -67,6 +67,7 @@ mod tests {
             browser_profile: None,
             created_at: chrono::Utc::now(),
             last_active_at: chrono::Utc::now(),
+            listed_at: chrono::Utc::now(),
             agent_notes_path: None,
             ports: vec![],
         };
@@ -92,6 +93,7 @@ mod tests {
                         browser_profile: None,
                         created_at: chrono::Utc::now(),
                         last_active_at: chrono::Utc::now(),
+                        listed_at: chrono::Utc::now(),
                         agent_notes_path: None,
                         ports: vec![],
                     },

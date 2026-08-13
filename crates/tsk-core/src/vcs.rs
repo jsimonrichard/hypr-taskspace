@@ -5,9 +5,9 @@ use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::{TskError, Result};
-use crate::xdg::expand;
+use crate::error::{Result, TskError};
 use crate::models::Task;
+use crate::xdg::expand;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -120,11 +120,11 @@ pub fn create_linked_checkout(
 
 /// Refresh a jj workspace after it became stale (reactivation / reuse).
 pub fn reconnect_jj_workspace(checkout: &Path) -> Result<()> {
-    let path = checkout.to_str().ok_or_else(|| {
-        TskError::Other(format!("Invalid checkout path: {}", checkout.display()))
-    })?;
+    let path = checkout
+        .to_str()
+        .ok_or_else(|| TskError::Other(format!("Invalid checkout path: {}", checkout.display())))?;
     run_checked(
-        Command::new("jj").args([ "-R", path, "workspace", "update-stale"]),
+        Command::new("jj").args(["-R", path, "workspace", "update-stale"]),
         "jj workspace update-stale",
     )
 }
@@ -164,9 +164,9 @@ fn create_git_worktree(source_root: &Path, dest: &Path, branch: &str) -> Result<
             source_root.display()
         ))
     })?;
-    let dest_str = dest.to_str().ok_or_else(|| {
-        TskError::Other(format!("Invalid checkout path: {}", dest.display()))
-    })?;
+    let dest_str = dest
+        .to_str()
+        .ok_or_else(|| TskError::Other(format!("Invalid checkout path: {}", dest.display())))?;
 
     let add_new_branch = Command::new("git")
         .args([
@@ -191,19 +191,14 @@ fn create_git_worktree(source_root: &Path, dest: &Path, branch: &str) -> Result<
             }
         }
         Err(e) => {
-            return Err(TskError::Other(format!("failed to run git worktree add: {e}")));
+            return Err(TskError::Other(format!(
+                "failed to run git worktree add: {e}"
+            )));
         }
     }
 
     run_checked(
-        Command::new("git").args([
-            "-C",
-            source,
-            "worktree",
-            "add",
-            dest_str,
-            branch.as_str(),
-        ]),
+        Command::new("git").args(["-C", source, "worktree", "add", dest_str, branch.as_str()]),
         "git worktree add",
     )
 }
@@ -220,9 +215,9 @@ fn create_jj_workspace(
             source_root.display()
         ))
     })?;
-    let dest_str = dest.to_str().ok_or_else(|| {
-        TskError::Other(format!("Invalid checkout path: {}", dest.display()))
-    })?;
+    let dest_str = dest
+        .to_str()
+        .ok_or_else(|| TskError::Other(format!("Invalid checkout path: {}", dest.display())))?;
 
     let mut args = vec![
         "-R".to_string(),
@@ -317,14 +312,12 @@ fn reattach_git_worktree(
                 checkout.display()
             ))
         })?;
-    let source = source_root
-        .map(|p| p.to_path_buf())
-        .ok_or_else(|| {
-            TskError::Other(format!(
-                "Could not find git repository for {}",
-                checkout.display()
-            ))
-        })?;
+    let source = source_root.map(|p| p.to_path_buf()).ok_or_else(|| {
+        TskError::Other(format!(
+            "Could not find git repository for {}",
+            checkout.display()
+        ))
+    })?;
     if git_worktree_listed_at_source(&source, checkout) && is_git_worktree(checkout) {
         return Ok(());
     }
@@ -342,14 +335,12 @@ pub fn detach_linked_checkout(
     }
     match linked_checkout_kind(checkout) {
         Some(VcsKind::Git) => {
-            let source = source_root
-                .map(|p| p.to_path_buf())
-                .ok_or_else(|| {
-                    TskError::Other(format!(
-                        "Could not find git repository for {}",
-                        checkout.display()
-                    ))
-                })?;
+            let source = source_root.map(|p| p.to_path_buf()).ok_or_else(|| {
+                TskError::Other(format!(
+                    "Could not find git repository for {}",
+                    checkout.display()
+                ))
+            })?;
             detach_git_worktree(&source, checkout)
         }
         Some(VcsKind::Jj) => {
@@ -441,9 +432,9 @@ fn is_git_worktree(path: &Path) -> bool {
 }
 
 fn remove_git_worktree(checkout: &Path) -> Result<()> {
-    let path = checkout.to_str().ok_or_else(|| {
-        TskError::Other(format!("Invalid checkout path: {}", checkout.display()))
-    })?;
+    let path = checkout
+        .to_str()
+        .ok_or_else(|| TskError::Other(format!("Invalid checkout path: {}", checkout.display())))?;
     let out = Command::new("git")
         .args(["-C", path, "worktree", "remove", "--force", path])
         .output()
@@ -506,8 +497,7 @@ fn git_worktree_listed_at_source(source_root: &Path, checkout: &Path) -> bool {
     if !out.status.success() {
         return false;
     }
-    let checkout_canon =
-        std::fs::canonicalize(checkout).unwrap_or_else(|_| expand(checkout));
+    let checkout_canon = std::fs::canonicalize(checkout).unwrap_or_else(|_| expand(checkout));
     String::from_utf8_lossy(&out.stdout).lines().any(|line| {
         let Some(path) = line.split_whitespace().next() else {
             return false;
@@ -517,11 +507,7 @@ fn git_worktree_listed_at_source(source_root: &Path, checkout: &Path) -> bool {
     })
 }
 
-fn add_git_worktree_existing_branch(
-    source_root: &Path,
-    dest: &Path,
-    task_id: &str,
-) -> Result<()> {
+fn add_git_worktree_existing_branch(source_root: &Path, dest: &Path, task_id: &str) -> Result<()> {
     let branch = git_branch_for_task(task_id);
     let source = source_root.to_str().ok_or_else(|| {
         TskError::Other(format!(
@@ -529,32 +515,21 @@ fn add_git_worktree_existing_branch(
             source_root.display()
         ))
     })?;
-    let dest_str = dest.to_str().ok_or_else(|| {
-        TskError::Other(format!("Invalid checkout path: {}", dest.display()))
-    })?;
+    let dest_str = dest
+        .to_str()
+        .ok_or_else(|| TskError::Other(format!("Invalid checkout path: {}", dest.display())))?;
     run_checked(
-        Command::new("git").args([
-            "-C",
-            source,
-            "worktree",
-            "add",
-            dest_str,
-            branch.as_str(),
-        ]),
+        Command::new("git").args(["-C", source, "worktree", "add", dest_str, branch.as_str()]),
         "git worktree add",
     )
 }
 
 /// Re-register a detached git worktree directory (files kept on disk).
-fn relink_detached_git_worktree(
-    source_root: &Path,
-    checkout: &Path,
-    task_id: &str,
-) -> Result<()> {
+fn relink_detached_git_worktree(source_root: &Path, checkout: &Path, task_id: &str) -> Result<()> {
     let checkout = expand(checkout);
-    let parent = checkout.parent().ok_or_else(|| {
-        TskError::Other(format!("Invalid checkout path: {}", checkout.display()))
-    })?;
+    let parent = checkout
+        .parent()
+        .ok_or_else(|| TskError::Other(format!("Invalid checkout path: {}", checkout.display())))?;
     let backup = parent.join(format!(".{task_id}-git-relink-tmp"));
     if backup.exists() {
         std::fs::remove_dir_all(&backup).map_err(|source| TskError::Write {
@@ -635,9 +610,9 @@ fn relink_forgotten_jj_workspace(source_root: &Path, checkout: &Path, name: &str
         }
     }
 
-    let parent = checkout.parent().ok_or_else(|| {
-        TskError::Other(format!("Invalid checkout path: {}", checkout.display()))
-    })?;
+    let parent = checkout
+        .parent()
+        .ok_or_else(|| TskError::Other(format!("Invalid checkout path: {}", checkout.display())))?;
     let backup = parent.join(format!(".{name}-relink-tmp"));
     if backup.exists() {
         std::fs::remove_dir_all(&backup).map_err(|source| TskError::Write {
@@ -747,11 +722,10 @@ fn jj_workspace_registered_at_source(source_root: &Path, workspace_name: &str) -
     if !out.status.success() {
         return false;
     }
-    String::from_utf8_lossy(&out.stdout).lines().any(|line| {
-        line.split(':').next().map(|n| n.trim()) == Some(workspace_name)
-    })
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .any(|line| line.split(':').next().map(|n| n.trim()) == Some(workspace_name))
 }
-
 
 /// Task home for a managed checkout: `…/<id>/workspace/<repo>` → `…/<id>`,
 /// or scratch `…/<id>/workspace` → `…/<id>`.
@@ -825,9 +799,9 @@ struct JjRestoreTarget {
 }
 
 fn jj_template(checkout: &Path, revset: &str, template: &str) -> Result<String> {
-    let path = checkout.to_str().ok_or_else(|| {
-        TskError::Other(format!("Invalid checkout path: {}", checkout.display()))
-    })?;
+    let path = checkout
+        .to_str()
+        .ok_or_else(|| TskError::Other(format!("Invalid checkout path: {}", checkout.display())))?;
     let out = Command::new("jj")
         .args([
             "--ignore-working-copy",
@@ -916,10 +890,7 @@ fn write_jj_restore_target(checkout: &Path, target: &JjRestoreTarget) -> Result<
         lines.push(format!("base:{id}"));
     }
     lines.push(String::new());
-    std::fs::write(&path, lines.join("\n")).map_err(|source| TskError::Write {
-        path,
-        source,
-    })?;
+    std::fs::write(&path, lines.join("\n")).map_err(|source| TskError::Write { path, source })?;
     // Drop older locations so state is not tracked as source / not ambiguous.
     let in_repo = jj_working_change_sidecar_in_repo(checkout);
     if in_repo.exists() {
@@ -1015,7 +986,10 @@ fn forget_jj_workspace(source_root: &Path, workspace_name: &str) -> Result<()> {
 
 fn jj_repo_root_from_checkout(checkout: &Path) -> Option<PathBuf> {
     let path = checkout.to_str()?;
-    let out = Command::new("jj").args(["-R", path, "workspace", "root"]).output().ok()?;
+    let out = Command::new("jj")
+        .args(["-R", path, "workspace", "root"])
+        .output()
+        .ok()?;
     if !out.status.success() {
         return None;
     }
@@ -1032,9 +1006,9 @@ fn jj_workspace_name_at(checkout: &Path) -> Result<String> {
 }
 
 fn jj_workspace_name(checkout: &Path) -> Result<String> {
-    let path = checkout.to_str().ok_or_else(|| {
-        TskError::Other(format!("Invalid checkout path: {}", checkout.display()))
-    })?;
+    let path = checkout
+        .to_str()
+        .ok_or_else(|| TskError::Other(format!("Invalid checkout path: {}", checkout.display())))?;
     let out = Command::new("jj")
         .args(["-R", path, "workspace", "list"])
         .output()
@@ -1169,7 +1143,12 @@ mod tests {
             cmd.args(args);
             run_checked(&mut cmd, "git").unwrap();
         }
-        let dest = dir.path().join("tasks").join("t1").join("workspace").join("main");
+        let dest = dir
+            .path()
+            .join("tasks")
+            .join("t1")
+            .join("workspace")
+            .join("main");
         create_linked_checkout(&source, &dest, "t1", VcsKind::Git).unwrap();
         assert!(dest.is_dir());
         assert!(is_git_worktree(&dest));
@@ -1193,7 +1172,12 @@ mod tests {
             cmd.args(args);
             run_checked(&mut cmd, "git").unwrap();
         }
-        let dest = dir.path().join("tasks").join("tabc123").join("workspace").join("main");
+        let dest = dir
+            .path()
+            .join("tasks")
+            .join("tabc123")
+            .join("workspace")
+            .join("main");
         create_linked_checkout(&source, &dest, "tabc123", VcsKind::Git).unwrap();
         fs::write(dest.join("local.txt"), "local only").unwrap();
 
@@ -1205,7 +1189,10 @@ mod tests {
         reattach_linked_checkout(&dest, Some(&source), Some("tabc123")).unwrap();
         assert!(is_git_worktree(&dest));
         assert!(git_worktree_listed_at_source(&source, &dest));
-        assert_eq!(fs::read_to_string(dest.join("local.txt")).unwrap(), "local only");
+        assert_eq!(
+            fs::read_to_string(dest.join("local.txt")).unwrap(),
+            "local only"
+        );
         assert_eq!(
             current_branch(&dest).as_deref(),
             Some(git_branch_for_task("tabc123").as_str())
@@ -1214,10 +1201,16 @@ mod tests {
 
     #[test]
     fn jj_workspace_detach_reattach_preserves_change_id() {
-        if Command::new("jj").arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+        if Command::new("jj")
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
             == false
         {
-            eprintln!("skipping jj_workspace_detach_reattach_preserves_change_id: jj not available");
+            eprintln!(
+                "skipping jj_workspace_detach_reattach_preserves_change_id: jj not available"
+            );
             return;
         }
 
@@ -1225,12 +1218,7 @@ mod tests {
         let source = dir.path().join("main");
         fs::create_dir_all(&source).unwrap();
         run_checked(
-            Command::new("jj").args([
-                "git",
-                "init",
-                "--colocate",
-                source.to_str().unwrap(),
-            ]),
+            Command::new("jj").args(["git", "init", "--colocate", source.to_str().unwrap()]),
             "jj git init",
         )
         .unwrap_or_else(|_| {
@@ -1266,13 +1254,7 @@ mod tests {
 
         fs::write(dest.join("local.txt"), "jj local only").unwrap();
         run_checked(
-            Command::new("jj").args([
-                "-R",
-                dest.to_str().unwrap(),
-                "describe",
-                "-m",
-                "task work",
-            ]),
+            Command::new("jj").args(["-R", dest.to_str().unwrap(), "describe", "-m", "task work"]),
             "jj describe",
         )
         .unwrap();
@@ -1298,7 +1280,10 @@ mod tests {
         assert_eq!(jj_working_change_sidecar(&dest), expected);
         let target = read_jj_restore_target(&dest).expect("sidecar should parse");
         assert_eq!(target.edit_change_id.as_deref(), Some(original_id.as_str()));
-        assert_eq!(target.base_commit_id.as_deref(), Some(parent_commit.as_str()));
+        assert_eq!(
+            target.base_commit_id.as_deref(),
+            Some(parent_commit.as_str())
+        );
         assert!(dest.join("local.txt").is_file());
         assert!(!jj_workspace_registered_at_source(&source, "tjj123"));
 
@@ -1317,7 +1302,11 @@ mod tests {
 
     #[test]
     fn jj_workspace_detach_reattach_empty_wc_uses_parent_base() {
-        if Command::new("jj").arg("--version").output().map(|o| o.status.success()).unwrap_or(false)
+        if Command::new("jj")
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
             == false
         {
             eprintln!(
@@ -1330,12 +1319,7 @@ mod tests {
         let source = dir.path().join("main");
         fs::create_dir_all(&source).unwrap();
         run_checked(
-            Command::new("jj").args([
-                "git",
-                "init",
-                "--colocate",
-                source.to_str().unwrap(),
-            ]),
+            Command::new("jj").args(["git", "init", "--colocate", source.to_str().unwrap()]),
             "jj git init",
         )
         .unwrap_or_else(|_| {
@@ -1368,13 +1352,7 @@ mod tests {
         // Advance main / trunk away from the empty default@ lineage.
         fs::write(source.join("main.txt"), "on main").unwrap();
         run_checked(
-            Command::new("jj").args([
-                "-R",
-                source.to_str().unwrap(),
-                "describe",
-                "-m",
-                "main tip",
-            ]),
+            Command::new("jj").args(["-R", source.to_str().unwrap(), "describe", "-m", "main tip"]),
             "jj describe main tip",
         )
         .unwrap();
@@ -1415,13 +1393,7 @@ mod tests {
         // Non-empty described commit, then empty child via jj new.
         fs::write(dest.join("local.txt"), "task file").unwrap();
         run_checked(
-            Command::new("jj").args([
-                "-R",
-                dest.to_str().unwrap(),
-                "describe",
-                "-m",
-                "task work",
-            ]),
+            Command::new("jj").args(["-R", dest.to_str().unwrap(), "describe", "-m", "task work"]),
             "jj describe task work",
         )
         .unwrap();
@@ -1494,7 +1466,9 @@ mod tests {
         fs::write(checkout_a.join(JJ_WORKING_CHANGE_SIDECAR_IN_REPO), "old\n").unwrap();
         // Flat workspace file from the intermediate layout.
         fs::write(
-            task_home.join("workspace").join(JJ_WORKING_CHANGE_SIDECAR_WORKSPACE),
+            task_home
+                .join("workspace")
+                .join(JJ_WORKING_CHANGE_SIDECAR_WORKSPACE),
             "flat-old\n",
         )
         .unwrap();
@@ -1525,12 +1499,10 @@ mod tests {
             task_home.join(".tsk/jj-restore/repo-b")
         );
         assert!(!checkout_a.join(JJ_WORKING_CHANGE_SIDECAR_IN_REPO).exists());
-        assert!(
-            !task_home
-                .join("workspace")
-                .join(JJ_WORKING_CHANGE_SIDECAR_WORKSPACE)
-                .exists()
-        );
+        assert!(!task_home
+            .join("workspace")
+            .join(JJ_WORKING_CHANGE_SIDECAR_WORKSPACE)
+            .exists());
 
         let a = read_jj_restore_target(&checkout_a).unwrap();
         let b = read_jj_restore_target(&checkout_b).unwrap();

@@ -304,8 +304,7 @@ mod tests {
     #[test]
     fn migrates_stale_toolbx_images_arch() {
         assert_eq!(
-            migrate_stale_distrobox_image("quay.io/toolbx-images/arch-toolbox:latest")
-                .as_deref(),
+            migrate_stale_distrobox_image("quay.io/toolbx-images/arch-toolbox:latest").as_deref(),
             Some("quay.io/toolbx/arch-toolbox:latest")
         );
     }
@@ -313,8 +312,7 @@ mod tests {
     #[test]
     fn migrates_stale_ubuntu_preserving_tag() {
         assert_eq!(
-            migrate_stale_distrobox_image("quay.io/toolbx-images/ubuntu-toolbox:22.04")
-                .as_deref(),
+            migrate_stale_distrobox_image("quay.io/toolbx-images/ubuntu-toolbox:22.04").as_deref(),
             Some("quay.io/toolbx/ubuntu-toolbox:22.04")
         );
     }

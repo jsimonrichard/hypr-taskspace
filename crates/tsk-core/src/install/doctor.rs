@@ -6,13 +6,14 @@ use std::path::Path;
 use crate::config::TskConfig;
 use crate::daemon_socket_path;
 use crate::error::Result;
-use crate::is_daemon_running;
 use crate::hyprland;
 use crate::hyprland_events::diagnose_socket2;
-use crate::install::{
-    install_hypr_status, install_systemd_status, install_walker_status, install_waybar_status, manifest,
-};
 use crate::install::waybar::CFFI_MODULE;
+use crate::install::{
+    install_hypr_status, install_systemd_status, install_walker_status, install_waybar_status,
+    manifest,
+};
+use crate::is_daemon_running;
 use crate::share::{effective_share_dir, uses_packaged_share};
 
 #[derive(Debug, Clone)]
@@ -266,7 +267,10 @@ fn install_backup_status(cfg: &TskConfig) -> (bool, String) {
         return (false, "no manifest".into());
     };
     let backup_dir = Path::new(&m.backup_dir);
-    let ok = backup_dir.is_dir() && fs::read_dir(backup_dir).ok().is_some_and(|mut d| d.next().is_some());
+    let ok = backup_dir.is_dir()
+        && fs::read_dir(backup_dir)
+            .ok()
+            .is_some_and(|mut d| d.next().is_some());
     (ok, backup_dir.display().to_string())
 }
 
@@ -296,7 +300,10 @@ fn super_one_counts() -> Option<(usize, usize)> {
     if binds.is_empty() {
         return None;
     }
-    let tsk_binds = binds.iter().filter(|b| bind_runs_tsk_workspace_switch(b)).count();
+    let tsk_binds = binds
+        .iter()
+        .filter(|b| bind_runs_tsk_workspace_switch(b))
+        .count();
     let omarchy_binds = binds
         .iter()
         .filter(|b| bind_is_omarchy_workspace_digit(b))
@@ -344,15 +351,11 @@ fn parse_hyprctl_binds(text: &str) -> Vec<HyprBind> {
 }
 
 fn bind_runs_tsk_workspace_switch(bind: &HyprBind) -> bool {
-    bind.keycode == 10
-        && bind.modmask == 64
-        && bind.arg.contains("workspace switch")
+    bind.keycode == 10 && bind.modmask == 64 && bind.arg.contains("workspace switch")
 }
 
 fn bind_is_omarchy_workspace_digit(bind: &HyprBind) -> bool {
-    (10..=19).contains(&bind.keycode)
-        && bind.modmask == 64
-        && bind.dispatcher == "workspace"
+    (10..=19).contains(&bind.keycode) && bind.modmask == 64 && bind.dispatcher == "workspace"
 }
 
 #[cfg(test)]
@@ -403,8 +406,20 @@ bind
 	arg: /usr/bin/tsk workspace switch 1
 "#;
         let binds = parse_hyprctl_binds(text);
-        assert_eq!(binds.iter().filter(|b| bind_runs_tsk_workspace_switch(b)).count(), 1);
-        assert_eq!(binds.iter().filter(|b| bind_is_omarchy_workspace_digit(b)).count(), 0);
+        assert_eq!(
+            binds
+                .iter()
+                .filter(|b| bind_runs_tsk_workspace_switch(b))
+                .count(),
+            1
+        );
+        assert_eq!(
+            binds
+                .iter()
+                .filter(|b| bind_is_omarchy_workspace_digit(b))
+                .count(),
+            0
+        );
     }
 
     fn check(passed: bool, label: &str) -> DoctorCheck {
@@ -418,10 +433,7 @@ bind
     #[test]
     fn format_doctor_report_default_is_failures_only() {
         let checks = [check(true, "a"), check(false, "b"), check(true, "c")];
-        assert_eq!(
-            format_doctor_report(&checks, false),
-            "[FAIL] b: detail"
-        );
+        assert_eq!(format_doctor_report(&checks, false), "[FAIL] b: detail");
     }
 
     #[test]

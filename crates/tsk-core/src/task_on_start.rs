@@ -39,7 +39,14 @@ pub fn run_on_create_after_create(
     state: &SessionState,
     config: &TskConfig,
 ) -> Result<()> {
-    run_task_hook(TaskHook::Create, task, setup, hyprland_enabled, state, config)
+    run_task_hook(
+        TaskHook::Create,
+        task,
+        setup,
+        hyprland_enabled,
+        state,
+        config,
+    )
 }
 
 /// Run the restore hook after an archived task is reactivated.
@@ -50,7 +57,14 @@ pub fn run_on_restore_after_restore(
     state: &SessionState,
 ) -> Result<()> {
     let setup = setup_for_restored_task(task, config);
-    run_task_hook(TaskHook::Restore, task, &setup, hyprland_enabled, state, config)
+    run_task_hook(
+        TaskHook::Restore,
+        task,
+        &setup,
+        hyprland_enabled,
+        state,
+        config,
+    )
 }
 
 fn run_task_hook(
@@ -74,11 +88,8 @@ fn run_task_hook(
         state.default_workspace_count,
         &state.global_workspace_slots,
     );
-    let monitor = preferred_on_start_monitor(
-        state,
-        &task.id,
-        repo_config.on_start_monitor.as_deref(),
-    );
+    let monitor =
+        preferred_on_start_monitor(state, &task.id, repo_config.on_start_monitor.as_deref());
 
     if hyprland_enabled && hyprland::available() {
         prepare_hyprland_for_hook(&task_workspace, monitor.as_deref());
@@ -125,10 +136,7 @@ pub fn setup_for_task(task: &Task, config: &TskConfig) -> TaskRepoSetup {
     let source_root = normalize_repo_path(task.source_repo_path.as_ref().unwrap());
     if is_managed_task_checkout(&task.repo_path, &config.tasks_base_dir, &task.id) {
         let kind = vcs_kind_at(&source_root).unwrap_or(VcsKind::Git);
-        TaskRepoSetup::Linked {
-            source_root,
-            kind,
-        }
+        TaskRepoSetup::Linked { source_root, kind }
     } else {
         TaskRepoSetup::Direct { source_root }
     }
@@ -174,12 +182,7 @@ fn run_hook_script(
     let is_worktree = matches!(_setup, TaskRepoSetup::Linked { .. });
     let mut cmd = command_for_script(&script_path);
     cmd.current_dir(&task.repo_path);
-    let env = task_env::build_task_env(
-        state,
-        task,
-        &tsk_config.tasks_base_dir,
-        Some(is_worktree),
-    );
+    let env = task_env::build_task_env(state, task, &tsk_config.tasks_base_dir, Some(is_worktree));
     task_env::apply_task_process_env(&mut cmd, &env, tsk_config);
     cmd.env("TSK_TASK_HOOK", hook.env_name());
     if let Some(monitor) = monitor {
@@ -290,6 +293,7 @@ mod tests {
             browser_profile: None,
             created_at: now,
             last_active_at: now,
+            listed_at: now,
             agent_notes_path: None,
             ports: vec![],
         }
@@ -331,7 +335,14 @@ mod tests {
                 source_root: source.clone(),
                 kind: crate::vcs::VcsKind::Git,
             };
-            run_on_create_after_create(&task, &setup, false, &test_state(vec![1]), &test_config(dir.path())).unwrap();
+            run_on_create_after_create(
+                &task,
+                &setup,
+                false,
+                &test_state(vec![1]),
+                &test_config(dir.path()),
+            )
+            .unwrap();
 
             for _ in 0..50 {
                 if marker.is_file() {
@@ -374,7 +385,14 @@ mod tests {
                 source_root: source.clone(),
                 kind: crate::vcs::VcsKind::Git,
             };
-            run_on_create_after_create(&task, &setup, false, &test_state(vec![]), &test_config(dir.path())).unwrap();
+            run_on_create_after_create(
+                &task,
+                &setup,
+                false,
+                &test_state(vec![]),
+                &test_config(dir.path()),
+            )
+            .unwrap();
 
             for _ in 0..50 {
                 if marker.is_file() {
@@ -415,7 +433,14 @@ mod tests {
                 source_root: source.clone(),
                 kind: crate::vcs::VcsKind::Git,
             };
-            run_on_create_after_create(&task, &setup, false, &test_state(vec![]), &test_config(dir.path())).unwrap();
+            run_on_create_after_create(
+                &task,
+                &setup,
+                false,
+                &test_state(vec![]),
+                &test_config(dir.path()),
+            )
+            .unwrap();
 
             for _ in 0..50 {
                 if marker.is_file() {
@@ -453,7 +478,14 @@ mod tests {
                 source_root: source.clone(),
                 kind: crate::vcs::VcsKind::Git,
             };
-            run_on_create_after_create(&task, &setup, false, &test_state(vec![]), &test_config(dir.path())).unwrap();
+            run_on_create_after_create(
+                &task,
+                &setup,
+                false,
+                &test_state(vec![]),
+                &test_config(dir.path()),
+            )
+            .unwrap();
 
             for _ in 0..50 {
                 if marker.is_file() {
@@ -618,15 +650,13 @@ mod tests {
             let dir = tempfile::tempdir().unwrap();
             let source = dir.path().join("project");
             fs::create_dir_all(source.join(".tsk")).unwrap();
-            let marker = dir
-                .path()
-                .join(format!(
-                    "scratch-{}.env",
-                    SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap()
-                        .as_nanos()
-                ));
+            let marker = dir.path().join(format!(
+                "scratch-{}.env",
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
             fs::write(
                 source.join(".tsk/on-start.sh"),
                 format!("touch {}\n", marker.display()),

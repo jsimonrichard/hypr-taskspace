@@ -6,13 +6,13 @@ use std::path::{Path, PathBuf};
 use serde_json::{json, Value};
 
 use crate::config::TskConfig;
-use crate::error::{TskError, Result};
+use crate::error::{Result, TskError};
 use crate::install::backup;
 use crate::install::bins::{install_bins, InstallBinsOptions};
 use crate::install::hypr::{install_hypr, InstallHyprOptions};
 use crate::install::profile::InstallProfile;
-use crate::install::waybar::{install_waybar, InstallWaybarOptions};
 use crate::install::walker::{install_walker, InstallWalkerOptions};
+use crate::install::waybar::{install_waybar, InstallWaybarOptions};
 use crate::xdg::expand;
 
 #[derive(Debug, Clone)]
@@ -21,7 +21,10 @@ pub struct OmarchyInstallOptions {
     pub workspace_root: Option<PathBuf>,
 }
 
-pub fn install_omarchy_prod(cfg: &TskConfig, options: &OmarchyInstallOptions) -> Result<Vec<String>> {
+pub fn install_omarchy_prod(
+    cfg: &TskConfig,
+    options: &OmarchyInstallOptions,
+) -> Result<Vec<String>> {
     let profile = InstallProfile::Prod;
     let mut actions = install_bins(
         cfg,
@@ -134,9 +137,7 @@ fn is_active_native_workspace_gesture(line: &str) -> bool {
         return false;
     }
     let lower = trimmed.to_ascii_lowercase();
-    lower.starts_with("gesture")
-        && lower.contains("workspace")
-        && !lower.contains("dispatcher")
+    lower.starts_with("gesture") && lower.contains("workspace") && !lower.contains("dispatcher")
 }
 
 /// Disable native Omarchy workspace swipe gestures in `input.conf` during install.

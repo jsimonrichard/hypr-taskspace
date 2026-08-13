@@ -185,9 +185,6 @@ mod tests {
             workspace: None,
         };
         let json = serde_json::to_string(&event).unwrap();
-        assert_eq!(
-            serde_json::from_str::<StateEvent>(&json).unwrap(),
-            event
-        );
+        assert_eq!(serde_json::from_str::<StateEvent>(&json).unwrap(), event);
     }
 }
