@@ -1,7 +1,7 @@
 # Maintainer: Your Name <you@example.com>
 pkgname=hypr-taskspace
 pkgver=0.1.0
-pkgrel=1
+pkgrel=2
 pkgdesc="Task-centric Hyprland control plane with Waybar integration"
 arch=('x86_64' 'aarch64')
 url="https://github.com/jsimonrichard/hypr-taskspace"
@@ -31,4 +31,9 @@ package() {
     "$pkgdir/usr/share/tsk/lib/libtsk_waybar.so"
 
   bash "$root/packaging/arch/install-share.sh" "$pkgdir" "$root"
+
+  install -Dm644 "$root/packaging/arch/90-hypr-taskspace-reload.hook" \
+    "$pkgdir/usr/share/libalpm/hooks/90-hypr-taskspace-reload.hook"
+  install -Dm755 "$root/packaging/arch/reload-hyprland.sh" \
+    "$pkgdir/usr/share/libalpm/scripts/hypr-taskspace-reload-hyprland"
 }

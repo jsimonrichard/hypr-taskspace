@@ -121,9 +121,14 @@ source_line = "/usr/share/tsk/hypr/bindings.conf"
 ## Update after pulling
 
 ```bash
-scripts/install-user-share.sh          # cargo / source: refresh share + .so
-tsk install omarchy                    # Omarchy: re-patch configs
-# pacman: cd packaging/arch && makepkg -si
+# pacman
+cd packaging/arch && makepkg -si
+systemctl --user restart tskd.service
+# If Hyprland still reports missing tsk source files: hyprctl reload
+
+# cargo / source
+scripts/install-user-share.sh          # refresh share + .so
+# tsk install omarchy                  # only to re-patch Hypr/Waybar user configs
 systemctl --user restart tskd.service
 ```
 
