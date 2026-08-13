@@ -44,8 +44,8 @@ pub mod xdg;
 pub use apps::launch_task_editor;
 pub use binary::{
     command_v_login, maybe_reexec_dev_session, path_tsk_binary, path_tsk_is_usable,
-    peel_tsk_wrapper, remove_packaged_path_shadows, resolve_tsk_binary, resolve_tsk_command,
-    resolve_tsk_spawn_binary, waybar_module_path,
+    peel_tsk_wrapper, remove_packaged_path_shadows, resolve_named_command, resolve_tsk_binary,
+    resolve_tsk_command, resolve_tsk_spawn_binary, waybar_module_path,
 };
 pub use browser::{
     default_browser_profile_dir, delegate_to_system_xdg_open, is_http_url, launch_task_browser,

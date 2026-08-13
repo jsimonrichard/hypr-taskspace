@@ -36,6 +36,9 @@ title_flag = "--title"
 [browser]
 command = "chromium"
 user_data_flag = "--user-data-dir"
+# false = share the host Chromium profile (extensions, password manager).
+# true  = per-task --user-data-dir (blank profile, no shared logins).
+isolate_profile = false
 
 [hyprland]
 enabled = true
@@ -84,6 +87,9 @@ title_flag = "--title"
 [browser]
 command = "chromium"
 user_data_flag = "--user-data-dir"
+# false = share the host Chromium profile (extensions, password manager).
+# true  = per-task --user-data-dir (blank profile, no shared logins).
+isolate_profile = false
 
 [hyprland]
 enabled = true
@@ -131,6 +137,9 @@ pub struct TskConfig {
     pub terminal_command: String,
     pub browser_command: String,
     pub browser_user_data_flag: String,
+    /// When true, each task gets its own Chromium `--user-data-dir`.
+    /// Default false: share the host profile so extensions and logins carry over.
+    pub browser_isolate_profile: bool,
 }
 
 impl Default for TskConfig {
@@ -155,6 +164,7 @@ impl Default for TskConfig {
             terminal_command: "xdg-terminal-exec".into(),
             browser_command: "chromium".into(),
             browser_user_data_flag: "--user-data-dir".into(),
+            browser_isolate_profile: false,
         }
     }
 }
@@ -369,6 +379,7 @@ struct RawTerminal {
 struct RawBrowser {
     command: Option<String>,
     user_data_flag: Option<String>,
+    isolate_profile: Option<bool>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -563,6 +574,9 @@ fn parse_config(raw: RawConfig) -> TskConfig {
     if let Some(flag) = raw.browser.user_data_flag {
         cfg.browser_user_data_flag = flag;
     }
+    if let Some(isolate) = raw.browser.isolate_profile {
+        cfg.browser_isolate_profile = isolate;
+    }
     cfg
 }
 
@@ -625,6 +639,27 @@ global_workspaces = [10, 1, 1, 99, 3]
         .unwrap();
         let cfg = parse_config(raw);
         assert_eq!(cfg.global_workspace_slots, vec![1, 3, 10]);
+    }
+
+    #[test]
+    fn browser_isolate_profile_defaults_false() {
+        let cfg = parse_config(toml::from_str("").unwrap());
+        assert!(!cfg.browser_isolate_profile);
+    }
+
+    #[test]
+    fn browser_isolate_profile_can_be_enabled() {
+        let raw: RawConfig = toml::from_str(
+            r#"
+[browser]
+isolate_profile = true
+"#,
+        )
+        .unwrap();
+        let cfg = parse_config(raw);
+        assert!(cfg.browser_isolate_profile);
+        assert_eq!(cfg.browser_command, "chromium");
+        assert_eq!(cfg.browser_user_data_flag, "--user-data-dir");
     }
 
     #[test]

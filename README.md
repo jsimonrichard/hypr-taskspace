@@ -152,6 +152,8 @@ These match the defaults in `share/hypr/bindings.conf` — what `tsk install oma
 
 Default and task taskspaces both use **10** slots so keybinds feel the same. Change the count with `workspace_count` under `[default]` in `~/.config/tsk/config.toml`.
 
+Chromium in a taskspace (`SUPER+B`, Walker, or `tsk task browser`) uses the **host profile** so extensions and logins (password manager, etc.) are shared. Set `isolate_profile = true` under `[browser]` for a blank per-task `--user-data-dir`.
+
 ### Useful commands
 
 ```bash

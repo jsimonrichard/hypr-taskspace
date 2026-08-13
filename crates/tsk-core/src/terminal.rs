@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::binary::{command_v_login, resolve_tsk_spawn_binary};
+use crate::binary::{command_v_login, resolve_named_command, resolve_tsk_spawn_binary};
 use crate::config::{load_config, TskConfig};
 use crate::distrobox;
 use crate::error::{Result, TskError};
@@ -45,9 +45,17 @@ pub fn launch_task_tui() -> Result<()> {
 
 /// Open a terminal in the task checkout (Distrobox enter when isolation is enabled).
 pub fn launch_task_terminal(task: &Task, env: &[(String, String)]) -> Result<()> {
+    launch_task_terminal_with(task, env, None)
+}
+
+pub fn launch_task_terminal_with(
+    task: &Task,
+    env: &[(String, String)],
+    command: Option<&str>,
+) -> Result<()> {
     let cfg = load_config()?;
     crate::vcs::ensure_task_checkout_ready(task, &cfg)?;
-    let term = resolve_terminal_command(&cfg)?;
+    let term = resolve_terminal_override(&cfg, command)?;
     let title = format!("[{}] terminal", task.id);
 
     if task.container_isolation {
@@ -103,8 +111,16 @@ pub fn launch_task_terminal(task: &Task, env: &[(String, String)]) -> Result<()>
 }
 
 pub fn launch_host_terminal(cwd: Option<PathBuf>, env: &[(String, String)]) -> Result<()> {
+    launch_host_terminal_with(cwd, env, None)
+}
+
+pub fn launch_host_terminal_with(
+    cwd: Option<PathBuf>,
+    env: &[(String, String)],
+    command: Option<&str>,
+) -> Result<()> {
     let cfg = load_config()?;
-    let term = resolve_terminal_command(&cfg)?;
+    let term = resolve_terminal_override(&cfg, command)?;
     let cwd = cwd.or_else(|| std::env::var_os("HOME").map(PathBuf::from));
     spawn_host_shell(
         &term,
@@ -116,6 +132,17 @@ pub fn launch_host_terminal(cwd: Option<PathBuf>, env: &[(String, String)]) -> R
 
 fn shell_single_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+fn resolve_terminal_override(cfg: &TskConfig, command: Option<&str>) -> Result<String> {
+    if let Some(cmd) = command {
+        return resolve_named_command(cmd).ok_or_else(|| {
+            TskError::Other(format!(
+                "terminal not found: {cmd} — install it or set [terminal].command"
+            ))
+        });
+    }
+    resolve_terminal_command(cfg)
 }
 
 pub fn resolve_terminal_command(cfg: &TskConfig) -> Result<String> {

@@ -43,9 +43,11 @@ Elephant is restarted automatically when `elephant.service` is active.
 
 ### Routing (`walker exec`)
 
-- **Terminals** (alacritty, kitty, foot, ghostty, etc.) → `tsk task terminal`
-- **Browsers** (chromium, firefox, …) → `tsk task browser` when in a task; otherwise browser with taskspace env
-- **Editors** (cursor, code) → `tsk task editor` when in a task; otherwise editor with taskspace env
+The selected app is preserved. Walker → VS Code opens VS Code; Walker → Firefox opens Firefox. TSK injects task env and extra args for that binary (task checkout for editors, Chromium `--new-window` on the task workspace). `tsk task editor` / `tsk task browser` with no selected app still use the preferred fallbacks (Cursor, then VS Code; configured browser).
+
+- **Terminals** (alacritty, kitty, foot, ghostty, etc.) → task terminal using the selected emulator
+- **Browsers** (chromium, firefox, …) → selected browser; Chromium-family shares the host profile by default (extensions and logins). Set `[browser].isolate_profile = true` in `~/.config/tsk/config.toml` for a per-task `--user-data-dir`
+- **Editors** (cursor, code) → selected editor, opening the task checkout when in a task
 - **Everything else** → `uwsm app -- <parsed Exec argv>` (or desktop id if Exec is missing) with task env and task repo as cwd. `--` keeps app flags such as `--no-sandbox` from being parsed as uwsm options; launching via argv also avoids uwsm rejecting desktop files that use both `%u` and `%U`.
 
 ## Verify

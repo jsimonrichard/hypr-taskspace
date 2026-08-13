@@ -31,3 +31,6 @@ title_flag = "--title"
 [browser]
 command = "chromium"
 user_data_flag = "--user-data-dir"
+# false = share the host Chromium profile (extensions, password manager).
+# true  = per-task --user-data-dir (blank profile, no shared logins).
+isolate_profile = false

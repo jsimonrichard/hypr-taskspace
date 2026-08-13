@@ -3,7 +3,7 @@
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use crate::binary::command_v_login;
+use crate::binary::{command_v_login, resolve_named_command};
 use crate::config::load_config;
 use crate::distrobox;
 use crate::error::{Result, TskError};
@@ -52,33 +52,45 @@ pub fn resolve_browser_command() -> Option<String> {
 
 /// Open the task checkout in Cursor/VS Code (inside Distrobox when isolation is on).
 pub fn launch_task_editor(task: &Task, state: &SessionState) -> Result<()> {
-    let editor = resolve_editor_command().ok_or_else(|| {
-        TskError::Other(
-            "no editor found (looked for cursor, code) — install Cursor/VS Code or launch manually"
-                .into(),
-        )
-    })?;
+    launch_task_editor_with(task, state, None)
+}
+
+/// Like [`launch_task_editor`], but use `command` when the caller selected a specific editor.
+pub fn launch_task_editor_with(
+    task: &Task,
+    state: &SessionState,
+    command: Option<&str>,
+) -> Result<()> {
+    let editor = resolve_editor_override(command)?;
     let path = task.repo_path.display().to_string();
     spawn_task_command(task, state, &editor, &[&path])
 }
 
 /// Open Chromium (or configured browser) inside the task container when isolation is on.
 pub fn launch_task_browser(task: &Task, state: &SessionState) -> Result<()> {
-    let browser = resolve_browser_command().ok_or_else(|| {
-        TskError::Other(
-            "no browser found (looked for chromium, chrome, brave, firefox) — set $BROWSER".into(),
-        )
-    })?;
+    launch_task_browser_with(task, state, None)
+}
+
+pub fn launch_task_browser_with(
+    task: &Task,
+    state: &SessionState,
+    command: Option<&str>,
+) -> Result<()> {
+    let browser = resolve_browser_override(command)?;
     spawn_task_command(task, state, &browser, &[])
 }
 
 /// Browser in default taskspace — taskspace env only (no Distrobox).
 pub fn launch_taskspace_browser(state: &SessionState, tasks_base_dir: &Path) -> Result<()> {
-    let browser = resolve_browser_command().ok_or_else(|| {
-        TskError::Other(
-            "no browser found (looked for chromium, chrome, brave, firefox) — set $BROWSER".into(),
-        )
-    })?;
+    launch_taskspace_browser_with(state, tasks_base_dir, None)
+}
+
+pub fn launch_taskspace_browser_with(
+    state: &SessionState,
+    tasks_base_dir: &Path,
+    command: Option<&str>,
+) -> Result<()> {
+    let browser = resolve_browser_override(command)?;
     let env = task_env::build_taskspace_env(state, tasks_base_dir);
     spawn_with_env(&browser, &[], &env)
 }
@@ -89,12 +101,16 @@ pub fn launch_taskspace_editor(
     tasks_base_dir: &Path,
     path: Option<&str>,
 ) -> Result<()> {
-    let editor = resolve_editor_command().ok_or_else(|| {
-        TskError::Other(
-            "no editor found (looked for cursor, code) — install Cursor/VS Code or launch manually"
-                .into(),
-        )
-    })?;
+    launch_taskspace_editor_with(state, tasks_base_dir, path, None)
+}
+
+pub fn launch_taskspace_editor_with(
+    state: &SessionState,
+    tasks_base_dir: &Path,
+    path: Option<&str>,
+    command: Option<&str>,
+) -> Result<()> {
+    let editor = resolve_editor_override(command)?;
     let env = task_env::build_taskspace_env(state, tasks_base_dir);
     let path = path
         .map(str::to_string)
@@ -105,6 +121,37 @@ pub fn launch_taskspace_editor(
         })
         .unwrap_or_else(|| ".".into());
     spawn_with_env(&editor, &[&path], &env)
+}
+
+fn resolve_editor_override(command: Option<&str>) -> Result<String> {
+    if let Some(cmd) = command {
+        return resolve_named_command(cmd).ok_or_else(|| {
+            TskError::Other(format!(
+                "editor not found: {cmd} — install it or launch manually"
+            ))
+        });
+    }
+    resolve_editor_command().ok_or_else(|| {
+        TskError::Other(
+            "no editor found (looked for cursor, code) — install Cursor/VS Code or launch manually"
+                .into(),
+        )
+    })
+}
+
+fn resolve_browser_override(command: Option<&str>) -> Result<String> {
+    if let Some(cmd) = command {
+        return resolve_named_command(cmd).ok_or_else(|| {
+            TskError::Other(format!(
+                "browser not found: {cmd} — install it or set $BROWSER"
+            ))
+        });
+    }
+    resolve_browser_command().ok_or_else(|| {
+        TskError::Other(
+            "no browser found (looked for chromium, chrome, brave, firefox) — set $BROWSER".into(),
+        )
+    })
 }
 
 fn spawn_with_env(program: &str, args: &[&str], env: &[(String, String)]) -> Result<()> {

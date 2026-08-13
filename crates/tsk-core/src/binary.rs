@@ -148,6 +148,19 @@ pub fn command_v_login(name: &str) -> Option<String> {
     (!path.is_empty()).then_some(path)
 }
 
+/// Resolve an explicit program from a desktop Exec line or desktop id.
+/// Absolute/relative paths that exist are used as-is; otherwise login-shell PATH.
+pub fn resolve_named_command(name: &str) -> Option<String> {
+    let name = name.trim();
+    if name.is_empty() {
+        return None;
+    }
+    if (name.contains('/') || name.starts_with('.')) && Path::new(name).is_file() {
+        return Some(name.to_string());
+    }
+    command_v_login(name)
+}
+
 pub fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
@@ -419,5 +432,18 @@ mod tests {
         assert!(!cargo.exists());
         assert!(alias.exists());
         assert!(packaged.exists());
+    }
+
+    #[test]
+    fn resolve_named_command_uses_existing_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("code");
+        fs::write(&bin, b"").unwrap();
+        assert_eq!(
+            resolve_named_command(&bin.to_string_lossy()),
+            Some(bin.to_string_lossy().into_owned())
+        );
+        assert!(resolve_named_command("/no/such/editor-bin").is_none());
+        assert!(resolve_named_command("").is_none());
     }
 }

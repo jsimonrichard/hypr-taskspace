@@ -1,12 +1,17 @@
 //! Taskspace-aware browser / link opening (Chromium-first).
+//!
+//! By default Chromium uses the host profile so extensions and logins (password
+//! manager, etc.) are shared across taskspaces. Set `[browser].isolate_profile`
+//! for a blank per-task `--user-data-dir`. Either way, a launch still opens or
+//! focuses a window on the current task workspace.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::thread;
 use std::time::Duration;
 
-use crate::binary::command_v_login;
+use crate::binary::{command_v_login, resolve_named_command};
 use crate::config::{load_config, TskConfig};
 use crate::error::{Result, TskError};
 use crate::hyprland::{self, HyprWindow};
@@ -33,7 +38,7 @@ const BROWSER_FALLBACKS: &[&str] = &[
     "microsoft-edge-stable",
 ];
 
-/// Per-task Chromium user-data directory (isolated profile).
+/// Per-task Chromium user-data directory (used only when profile isolation is on).
 pub fn default_browser_profile_dir(config: &TskConfig, task_id: &str) -> PathBuf {
     config.tasks_base_dir.join(task_id).join(".tsk/chromium")
 }
@@ -43,6 +48,13 @@ pub fn browser_profile_path(task: &Task, config: &TskConfig) -> PathBuf {
         .as_ref()
         .map(|p| PathBuf::from(p))
         .unwrap_or_else(|| default_browser_profile_dir(config, &task.id))
+}
+
+/// Isolated profile path when `[browser].isolate_profile` is on; otherwise `None`
+/// so Chromium uses the host profile (extensions + logins).
+fn task_chromium_profile_dir(task: &Task, cfg: &TskConfig) -> Option<PathBuf> {
+    cfg.browser_isolate_profile
+        .then(|| browser_profile_path(task, cfg))
 }
 
 /// Open one or more http(s) URLs in the taskspace browser, or delegate to system xdg-open.
@@ -77,9 +89,18 @@ pub fn open_urls(urls: &[&str], task_id: Option<&str>, host: bool) -> Result<()>
 
 /// Focus or launch the task browser (no URL).
 pub fn launch_task_browser(task: &Task) -> Result<()> {
+    launch_task_browser_with(task, None)
+}
+
+/// Like [`launch_task_browser`], but use `command` when the caller selected a specific browser.
+pub fn launch_task_browser_with(task: &Task, command: Option<&str>) -> Result<()> {
     let cfg = load_config()?;
     let state = crate::registry::Registry::new(None, cfg.clone())?.load_state()?;
-    open_urls_in_task(&cfg, &state, task, &[])
+    let browser = resolve_browser_override(&cfg, command)?;
+    if !is_chromium_family(&browser) {
+        return spawn_plain_browser(&browser, &cfg, &state, task);
+    }
+    open_urls_in_task_with_browser(&cfg, &state, task, &[], &browser)
 }
 
 fn open_urls_in_task(
@@ -88,13 +109,25 @@ fn open_urls_in_task(
     task: &Task,
     urls: &[&str],
 ) -> Result<()> {
-    let profile_dir = browser_profile_path(task, cfg);
-    std::fs::create_dir_all(&profile_dir).map_err(|source| TskError::Write {
-        path: profile_dir.clone(),
-        source,
-    })?;
-
     let browser = resolve_browser_command(cfg)?;
+    open_urls_in_task_with_browser(cfg, state, task, urls, &browser)
+}
+
+fn open_urls_in_task_with_browser(
+    cfg: &TskConfig,
+    state: &SessionState,
+    task: &Task,
+    urls: &[&str],
+    browser: &str,
+) -> Result<()> {
+    let profile_dir = task_chromium_profile_dir(task, cfg);
+    if let Some(ref profile_dir) = profile_dir {
+        std::fs::create_dir_all(profile_dir).map_err(|source| TskError::Write {
+            path: profile_dir.clone(),
+            source,
+        })?;
+    }
+
     let existing = find_task_browser_window(state, task);
     let known_browsers: HashSet<String> = hyprland::get_clients()
         .unwrap_or_default()
@@ -108,8 +141,9 @@ fn open_urls_in_task(
             focus_browser_window(window);
             return Ok(());
         }
-        spawn_chromium(&browser, &profile_dir, urls, false, true, cfg)?;
+        // Focus first so `--new-tab` lands in this window when sharing a profile.
         focus_browser_window(window);
+        spawn_chromium(browser, profile_dir.as_deref(), urls, false, true, cfg)?;
         return Ok(());
     }
 
@@ -118,16 +152,24 @@ fn open_urls_in_task(
         hyprland::switch_workspace_for_navigation(&target_ws);
     }
 
-    let new_window = urls.is_empty();
     let open_urls: Vec<&str> = if urls.is_empty() {
         vec![]
     } else {
         urls.to_vec()
     };
-    spawn_chromium(&browser, &profile_dir, &open_urls, new_window, false, cfg)?;
+    // Always a new window: with a shared host profile, omitting this would
+    // open a tab in whatever Chromium window is already running.
+    spawn_chromium(
+        browser,
+        profile_dir.as_deref(),
+        &open_urls,
+        true,
+        false,
+        cfg,
+    )?;
 
     if hyprland::available() && cfg.hyprland_enabled {
-        ensure_browser_on_workspace(&target_ws, &profile_dir, &known_browsers);
+        ensure_browser_on_workspace(&target_ws, profile_dir.as_deref(), &known_browsers);
     }
 
     Ok(())
@@ -174,7 +216,7 @@ fn focus_browser_window(window: &HyprWindow) {
 
 fn ensure_browser_on_workspace(
     workspace: &str,
-    profile_dir: &Path,
+    profile_dir: Option<&Path>,
     known_before: &HashSet<String>,
 ) {
     for _ in 0..20 {
@@ -206,7 +248,10 @@ fn ensure_browser_on_workspace(
     }
 }
 
-fn client_matches_profile(client: &HyprWindow, profile_dir: &Path) -> bool {
+fn client_matches_profile(client: &HyprWindow, profile_dir: Option<&Path>) -> bool {
+    let Some(profile_dir) = profile_dir else {
+        return true;
+    };
     let Some(pid) = client.pid else {
         return true;
     };
@@ -219,38 +264,58 @@ fn client_matches_profile(client: &HyprWindow, profile_dir: &Path) -> bool {
 
 fn spawn_chromium(
     browser: &str,
-    profile_dir: &Path,
+    profile_dir: Option<&Path>,
     urls: &[&str],
     new_window: bool,
     existing_instance: bool,
     cfg: &TskConfig,
 ) -> Result<()> {
-    let profile_dir = profile_dir
-        .canonicalize()
-        .unwrap_or_else(|_| profile_dir.to_path_buf());
-    let profile_flag = user_data_dir_flag(cfg, &profile_dir);
+    let profile_flag = profile_dir.map(|profile_dir| {
+        let profile_dir = profile_dir
+            .canonicalize()
+            .unwrap_or_else(|_| profile_dir.to_path_buf());
+        user_data_dir_flag(cfg, &profile_dir)
+    });
 
     let mut cmd = Command::new(browser);
-    cmd.arg(&profile_flag);
-    cmd.args(["--no-first-run", "--no-default-browser-check"]);
-
-    if existing_instance {
-        for url in urls {
-            cmd.arg(format!("--new-tab={url}"));
-        }
-    } else {
-        if new_window || urls.is_empty() {
-            cmd.arg("--new-window");
-        }
-        if !urls.is_empty() {
-            cmd.arg("--");
-            cmd.args(urls);
-        }
-    }
+    cmd.args(chromium_argv(
+        profile_flag.as_deref(),
+        urls,
+        new_window,
+        existing_instance,
+    ));
 
     cmd.spawn()
         .map_err(|e| TskError::Other(format!("failed to launch browser `{browser}`: {e}")))?;
     Ok(())
+}
+
+fn chromium_argv(
+    profile_flag: Option<&str>,
+    urls: &[&str],
+    new_window: bool,
+    existing_instance: bool,
+) -> Vec<String> {
+    let mut args = Vec::new();
+    if let Some(flag) = profile_flag {
+        args.push(flag.to_string());
+        args.push("--no-first-run".into());
+        args.push("--no-default-browser-check".into());
+    }
+    if existing_instance {
+        for url in urls {
+            args.push(format!("--new-tab={url}"));
+        }
+        return args;
+    }
+    if new_window || urls.is_empty() {
+        args.push("--new-window".into());
+    }
+    if !urls.is_empty() {
+        args.push("--".into());
+        args.extend(urls.iter().map(|u| (*u).to_string()));
+    }
+    args
 }
 
 fn user_data_dir_flag(cfg: &TskConfig, profile_dir: &Path) -> String {
@@ -261,6 +326,39 @@ fn user_data_dir_flag(cfg: &TskConfig, profile_dir: &Path) -> String {
     } else {
         format!("{flag}={path}")
     }
+}
+
+fn resolve_browser_override(cfg: &TskConfig, command: Option<&str>) -> Result<String> {
+    if let Some(cmd) = command {
+        return resolve_named_command(cmd).ok_or_else(|| {
+            TskError::Other(format!(
+                "browser not found: {cmd} — install it or set [browser].command"
+            ))
+        });
+    }
+    resolve_browser_command(cfg)
+}
+
+/// Chromium-family binaries accept `--user-data-dir` when profile isolation is on.
+pub fn is_chromium_family(program: &str) -> bool {
+    is_browser_class(program)
+}
+
+fn spawn_plain_browser(
+    browser: &str,
+    cfg: &TskConfig,
+    state: &SessionState,
+    task: &Task,
+) -> Result<()> {
+    let env = crate::task_env::build_task_env(state, task, &cfg.tasks_base_dir, None);
+    let mut cmd = Command::new(browser);
+    crate::task_env::apply_task_process_env(&mut cmd, &env, cfg);
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    cmd.spawn()
+        .map_err(|e| TskError::Other(format!("failed to launch browser `{browser}`: {e}")))?;
+    Ok(())
 }
 
 fn resolve_browser_command(cfg: &TskConfig) -> Result<String> {
@@ -370,10 +468,79 @@ mod tests {
     }
 
     #[test]
+    fn shared_profile_omits_user_data_dir() {
+        let args = chromium_argv(None, &[], true, false);
+        assert_eq!(args, vec!["--new-window"]);
+        assert!(args.iter().all(|a| !a.starts_with("--user-data-dir")));
+    }
+
+    #[test]
+    fn isolated_profile_includes_user_data_dir() {
+        let args = chromium_argv(
+            Some("--user-data-dir=/tmp/chromium-profile"),
+            &[],
+            true,
+            false,
+        );
+        assert_eq!(
+            args,
+            vec![
+                "--user-data-dir=/tmp/chromium-profile",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--new-window",
+            ]
+        );
+    }
+
+    #[test]
+    fn shared_profile_opens_urls_in_new_window() {
+        let args = chromium_argv(None, &["https://example.com"], true, false);
+        assert_eq!(args, vec!["--new-window", "--", "https://example.com"]);
+    }
+
+    #[test]
+    fn task_profile_dir_none_unless_isolated() {
+        let cfg = TskConfig::default();
+        let task = Task {
+            id: "tabc123".into(),
+            name: "test".into(),
+            status: crate::models::TaskStatus::Active,
+            repo_url: None,
+            repo_path: PathBuf::from("/tmp"),
+            source_repo_path: None,
+            branch: None,
+            container_name: "tsk-tabc123".into(),
+            container_isolation: false,
+            workspace_count: 3,
+            browser_profile: None,
+            created_at: chrono::Utc::now(),
+            last_active_at: chrono::Utc::now(),
+            listed_at: chrono::Utc::now(),
+            agent_notes_path: None,
+            ports: vec![],
+        };
+        assert!(task_chromium_profile_dir(&task, &cfg).is_none());
+
+        let mut isolated = cfg.clone();
+        isolated.browser_isolate_profile = true;
+        let path = task_chromium_profile_dir(&task, &isolated).unwrap();
+        assert!(path.to_string_lossy().ends_with(".tsk/chromium"));
+    }
+
+    #[test]
     fn is_browser_class_matches_chromium_variants() {
         assert!(is_browser_class("chromium"));
         assert!(is_browser_class("google-chrome"));
         assert!(is_browser_class("Brave-browser"));
         assert!(!is_browser_class("Alacritty"));
+    }
+
+    #[test]
+    fn chromium_family_excludes_firefox() {
+        assert!(is_chromium_family("/usr/bin/chromium"));
+        assert!(is_chromium_family("google-chrome-stable"));
+        assert!(!is_chromium_family("firefox"));
+        assert!(!is_chromium_family("/usr/lib/firefox/firefox"));
     }
 }

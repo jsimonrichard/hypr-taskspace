@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 use crate::apps::{
     resolve_browser_command, resolve_editor_command, BROWSER_CANDIDATES, EDITOR_CANDIDATES,
 };
+use crate::binary::resolve_named_command;
 use crate::config::load_config;
 use crate::context_sync;
 use crate::error::{Result, TskError};
@@ -160,8 +161,8 @@ pub fn walker_terminal(args: &[&str]) -> Result<()> {
 
 fn walker_open_terminal(_ctx: &WalkerLaunchContext, target: &LaunchTarget) -> Result<()> {
     if target.opens_terminal_emulator() {
-        let svc = TaskService::with_defaults()?;
-        return svc.open_terminal(None, false);
+        let requested = target.selected_program();
+        return TaskService::with_defaults()?.open_terminal_with(None, false, requested.as_deref());
     }
     walker_terminal(
         target
@@ -174,27 +175,45 @@ fn walker_open_terminal(_ctx: &WalkerLaunchContext, target: &LaunchTarget) -> Re
 }
 
 fn walker_open_browser(_ctx: &WalkerLaunchContext, target: &LaunchTarget) -> Result<()> {
+    let requested = target.selected_program();
     if target.opens_browser_app() {
-        return TaskService::with_defaults()?.open_browser(None, false);
+        return TaskService::with_defaults()?.open_browser_with(None, false, requested.as_deref());
     }
-    let browser = resolve_browser_command()
+    let browser = resolve_selected_or_default(requested.as_deref(), resolve_browser_command)
         .ok_or_else(|| TskError::Other("walker exec: browser not found".into()))?;
-    let extra: Vec<&str> = target.argv.iter().skip(1).map(String::as_str).collect();
+    let extra: Vec<&str> = target
+        .args_after_program()
+        .iter()
+        .map(String::as_str)
+        .collect();
     launch_with_env(_ctx, Some(&browser), &extra)
 }
 
 fn walker_open_editor(ctx: &WalkerLaunchContext, target: &LaunchTarget) -> Result<()> {
+    let requested = target.selected_program();
     if target.opens_editor_app() {
-        return TaskService::with_defaults()?.open_editor(None);
+        return TaskService::with_defaults()?.open_editor_with(None, requested.as_deref());
     }
-    let editor = resolve_editor_command()
+    let editor = resolve_selected_or_default(requested.as_deref(), resolve_editor_command)
         .ok_or_else(|| TskError::Other("walker exec: editor not found".into()))?;
     let cwd = std::env::current_dir()
         .ok()
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|| ".".into());
-    let path = target.argv.get(1).cloned().unwrap_or(cwd);
+    let path = target.args_after_program().first().cloned().unwrap_or(cwd);
     launch_with_env(ctx, Some(&editor), &[path.as_str()])
+}
+
+/// Prefer the program Walker selected. Do not fall back to a sibling app
+/// (e.g. `code` must not become `cursor`).
+fn resolve_selected_or_default(
+    requested: Option<&str>,
+    fallback: fn() -> Option<String>,
+) -> Option<String> {
+    if let Some(cmd) = requested {
+        return resolve_named_command(cmd);
+    }
+    fallback()
 }
 
 fn walker_launch_generic(ctx: &WalkerLaunchContext, target: &LaunchTarget) -> Result<()> {
@@ -629,7 +648,93 @@ impl LaunchTarget {
         }
         argv_starts_with_candidate(&self.argv, candidates)
     }
+
+    /// Program Walker asked to launch (`code`, `/usr/bin/firefox`, …).
+    fn selected_program(&self) -> Option<String> {
+        if let Some(prog) = program_from_argv(&self.argv) {
+            return Some(prog.to_string());
+        }
+        if let Some(try_exec) = self
+            .desktop
+            .as_ref()
+            .and_then(|d| d.try_exec.as_deref())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            return Some(try_exec.to_string());
+        }
+        self.desktop_id.as_deref().map(desktop_id_to_command)
+    }
+
+    fn args_after_program(&self) -> &[String] {
+        match program_index(&self.argv) {
+            Some(idx) if idx + 1 < self.argv.len() => &self.argv[idx + 1..],
+            _ => &[],
+        }
+    }
 }
+
+fn program_from_argv(argv: &[String]) -> Option<&str> {
+    let idx = program_index(argv)?;
+    argv.get(idx).map(String::as_str)
+}
+
+fn program_index(argv: &[String]) -> Option<usize> {
+    if argv.is_empty() {
+        return None;
+    }
+    let mut idx = 0;
+    if argv[0] == "env" {
+        idx = 1;
+        while idx < argv.len() {
+            let arg = &argv[idx];
+            if arg.starts_with('-') {
+                break;
+            }
+            if arg.contains('=') {
+                idx += 1;
+                continue;
+            }
+            break;
+        }
+    }
+    (idx < argv.len()).then_some(idx)
+}
+
+fn desktop_id_to_command(id: &str) -> String {
+    let id = id.strip_suffix(".desktop").unwrap_or(id);
+    for (desktop_id, command) in DESKTOP_ID_COMMANDS {
+        if desktop_id.eq_ignore_ascii_case(id) {
+            return (*command).to_string();
+        }
+    }
+    id.rsplit('.').next().unwrap_or(id).to_string()
+}
+
+const DESKTOP_ID_COMMANDS: &[(&str, &str)] = &[
+    ("cursor", "cursor"),
+    ("code", "code"),
+    ("codium", "codium"),
+    ("VSCodium", "codium"),
+    ("com.visualstudio.code", "code"),
+    ("chromium", "chromium"),
+    ("chromium-browser", "chromium"),
+    ("google-chrome", "google-chrome"),
+    ("google-chrome-stable", "google-chrome-stable"),
+    ("firefox", "firefox"),
+    ("brave-browser", "brave"),
+    ("Brave-browser", "brave"),
+    ("org.mozilla.firefox", "firefox"),
+    ("Alacritty", "alacritty"),
+    ("org.alacritty.Alacritty", "alacritty"),
+    ("kitty", "kitty"),
+    ("foot", "foot"),
+    ("com.mitchellh.ghostty", "ghostty"),
+    ("org.wezfurlong.wezterm", "wezterm"),
+    ("org.gnome.Console", "kgx"),
+    ("org.gnome.Terminal", "gnome-terminal"),
+    ("xfce4-terminal", "xfce4-terminal"),
+];
 
 fn argv_starts_with_candidate(argv: &[String], candidates: &[&str]) -> bool {
     let Some(program) = argv.first() else {
@@ -909,6 +1014,79 @@ mod tests {
         };
         assert_eq!(target.integration(), WalkerIntegration::TaskEditor);
         assert!(target.opens_editor_app());
+        assert_eq!(target.selected_program().as_deref(), Some("cursor"));
+    }
+
+    #[test]
+    fn code_desktop_selects_code_not_cursor() {
+        let target = LaunchTarget {
+            desktop_id: Some("code".into()),
+            desktop: Some(DesktopEntry {
+                id: "code".into(),
+                name: Some("Visual Studio Code".into()),
+                exec: Some("/usr/bin/code %F".into()),
+                terminal: false,
+                categories: vec!["Development".into(), "IDE".into(), "TextEditor".into()],
+                try_exec: None,
+            }),
+            argv: vec!["/usr/bin/code".into()],
+        };
+        assert_eq!(target.integration(), WalkerIntegration::TaskEditor);
+        assert_eq!(target.selected_program().as_deref(), Some("/usr/bin/code"));
+    }
+
+    #[test]
+    fn vscode_desktop_id_maps_to_code() {
+        let target = LaunchTarget {
+            desktop_id: Some("com.visualstudio.code".into()),
+            desktop: None,
+            argv: Vec::new(),
+        };
+        assert_eq!(target.selected_program().as_deref(), Some("code"));
+    }
+
+    #[test]
+    fn firefox_desktop_selects_firefox_not_chromium() {
+        let target = LaunchTarget {
+            desktop_id: Some("firefox".into()),
+            desktop: Some(DesktopEntry {
+                id: "firefox".into(),
+                name: Some("Firefox".into()),
+                exec: Some("firefox %u".into()),
+                terminal: false,
+                categories: vec!["Network".into(), "WebBrowser".into()],
+                try_exec: None,
+            }),
+            argv: vec!["firefox".into()],
+        };
+        assert_eq!(target.integration(), WalkerIntegration::TaskBrowser);
+        assert_eq!(target.selected_program().as_deref(), Some("firefox"));
+        assert!(!crate::browser::is_chromium_family("firefox"));
+        assert!(crate::browser::is_chromium_family("/usr/bin/chromium"));
+    }
+
+    #[test]
+    fn requested_editor_does_not_fall_back_to_preferred() {
+        assert!(
+            resolve_selected_or_default(Some("/no/such/code-bin"), resolve_editor_command)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn env_prefixed_exec_selects_real_program() {
+        let target = LaunchTarget {
+            desktop_id: Some("code".into()),
+            desktop: None,
+            argv: vec![
+                "env".into(),
+                "ELECTRON_OZONE_PLATFORM_HINT=auto".into(),
+                "/usr/bin/code".into(),
+                "--new-window".into(),
+            ],
+        };
+        assert_eq!(target.selected_program().as_deref(), Some("/usr/bin/code"));
+        assert_eq!(target.args_after_program(), &["--new-window".to_string()]);
     }
 
     #[test]
