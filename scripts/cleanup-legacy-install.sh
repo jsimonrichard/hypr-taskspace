@@ -25,9 +25,15 @@ echo "Cleaning legacy install artifacts under $DATA"
 echo "(keeping state.db, daemon.sock, install/ metadata)"
 echo
 
-# Old CLI copy (replaced by /usr/bin/tsk or ~/.cargo/bin/tsk)
+# Duplicate CLI copy under the data dir when the package is installed
 if [[ -f "$DATA/bin/tsk" ]]; then
   run "$DATA/bin/tsk"
+fi
+
+# cargo install copy that shadows /usr/bin/tsk
+CARGO_TSK="${CARGO_HOME:-$HOME/.cargo}/bin/tsk"
+if [[ -f "$SYSTEM_SHARE/hypr/bindings.conf" && -e "$CARGO_TSK" ]]; then
+  run "$CARGO_TSK"
 fi
 
 # Duplicate share tree when system package is installed

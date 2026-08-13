@@ -1,4 +1,4 @@
-//! System vs user-local share tree resolution (pacman vs cargo install).
+//! System vs user-local share tree resolution (package vs from-source).
 
 use std::path::{Path, PathBuf};
 

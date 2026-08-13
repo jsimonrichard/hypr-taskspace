@@ -91,6 +91,27 @@ cleanup_prod_daemon_orphans() {
   stop_socket_listener "$PROD_DATA/daemon.sock"
 }
 
+remove_packaged_path_shadows() {
+  local packaged="/usr/bin/tsk"
+  [[ -x "$packaged" ]] || return 0
+  local packaged_real
+  packaged_real="$(readlink -f "$packaged" 2>/dev/null || echo "$packaged")"
+  local path real
+  for path in \
+    "${CARGO_HOME:-$HOME/.cargo}/bin/tsk" \
+    "${XDG_BIN_HOME:-$HOME/.local/bin}/tsk" \
+    "${XDG_DATA_HOME:-$HOME/.local/share}/tsk/bin/tsk"; do
+    [[ -e "$path" ]] || continue
+    real="$(readlink -f "$path" 2>/dev/null || echo "$path")"
+    [[ "$real" == "$packaged_real" ]] && continue
+    if rm -f "$path" 2>/dev/null; then
+      echo "removed PATH shadow $path"
+    else
+      echo "could not remove $path (try: sudo rm $path)" >&2
+    fi
+  done
+}
+
 stop_orphan_tsk_daemons() {
   local systemd_pid=""
   if systemctl --user is-active --quiet tskd.service 2>/dev/null; then
@@ -269,6 +290,7 @@ teardown_dev_session() {
   # Drop the session marker before restarting prod so systemd does not re-exec the dev build.
   stop_dev_session
   rm -f "$DEV_DATA/bin/tsk"
+  remove_packaged_path_shadows
   cleanup_prod_daemon_orphans
   stop_orphan_tsk_daemons
   start_prod_tskd
@@ -367,6 +389,7 @@ case "$cmd" in
     run_cli dev uninstall all "$@"
     stop_dev_session
     rm -f "$DEV_DATA/bin/tsk"
+    remove_packaged_path_shadows
     ;;
   status)
     run_cli dev status "$@"

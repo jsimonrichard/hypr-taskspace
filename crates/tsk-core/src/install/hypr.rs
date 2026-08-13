@@ -53,10 +53,20 @@ pub fn install_hypr_status(cfg: &TskConfig) -> Result<Value> {
     let m = manifest::load_manifest(&metadata_dir, "hypr")?;
     let share = effective_share_dir(cfg);
     let bindings = share.join("hypr/bindings.conf");
-    let has_source = cfg.install_hypr_config_path.is_file()
-        && fs::read_to_string(&cfg.install_hypr_config_path)
-            .map(|s| s.contains(marker))
-            .unwrap_or(false);
+    let content = cfg
+        .install_hypr_config_path
+        .is_file()
+        .then(|| fs::read_to_string(&cfg.install_hypr_config_path).ok())
+        .flatten()
+        .unwrap_or_default();
+    let bindings_str = bindings.to_string_lossy();
+    let has_source = content.contains(marker)
+        && content.lines().any(|line| {
+            let trimmed = line.trim();
+            !trimmed.starts_with('#')
+                && trimmed.contains("source")
+                && trimmed.contains(bindings_str.as_ref())
+        });
     Ok(json!({
         "installed": m.is_some(),
         "profile": format!("{:?}", profile).to_lowercase(),
@@ -74,11 +84,20 @@ pub fn install_hypr(cfg: &TskConfig, options: &InstallHyprOptions) -> Result<Vec
     let backup_dir = metadata_dir
         .join("install/hypr/backups")
         .join(backup_timestamp());
-    let source_line = format!(
-        "source = {}  # {marker} (installed {})",
-        cfg.install_hypr_source_line,
-        Utc::now().date_naive()
+    let source_targets = hypr_managed_source_paths(
+        cfg,
+        profile.include_omarchy_unbinds_for(options.omarchy_integration),
     );
+    let installed_at = Utc::now().date_naive();
+    let source_lines: Vec<String> = source_targets
+        .iter()
+        .map(|path| {
+            format!(
+                "source = {}  # {marker} (installed {installed_at})",
+                path.display()
+            )
+        })
+        .collect();
 
     if options.dry_run {
         let mut lines = Vec::new();
@@ -98,8 +117,9 @@ pub fn install_hypr(cfg: &TskConfig, options: &InstallHyprOptions) -> Result<Vec
             )?);
         }
         lines.push(format!(
-            "would append to {}",
-            cfg.install_hypr_config_path.display()
+            "would update {}:\n  {}",
+            cfg.install_hypr_config_path.display(),
+            source_lines.join("\n  ")
         ));
         if options.omarchy_integration {
             if let Some(entry) =
@@ -158,7 +178,7 @@ pub fn install_hypr(cfg: &TskConfig, options: &InstallHyprOptions) -> Result<Vec
             path: config_path.clone(),
             source,
         })?
-        .write_all(format!("\n{source_line}\n").as_bytes())
+        .write_all(format!("\n{}\n", source_lines.join("\n")).as_bytes())
         .map_err(|source| TskError::Write {
             path: config_path.clone(),
             source,
@@ -180,7 +200,7 @@ pub fn install_hypr(cfg: &TskConfig, options: &InstallHyprOptions) -> Result<Vec
         templates_installed: vec![json!({"from": share_src.join("hypr"), "to": cfg.install_hypr_share_dir.join("hypr")})],
         user_files_backed_up: backed_up,
         user_files_modified: if modified {
-            vec![json!({"path": config_path, "actions": [{"type": "append", "line": source_line}]})]
+            vec![json!({"path": config_path, "actions": [{"type": "append", "line": source_lines.join("\n")}]})]
         } else {
             vec![]
         },
@@ -199,10 +219,17 @@ pub fn install_hypr(cfg: &TskConfig, options: &InstallHyprOptions) -> Result<Vec
         );
     }
 
+    let mut actions = vec![format!(
+        "updated {}:\n  {}",
+        config_path.display(),
+        source_lines.join("\n  ")
+    )];
+
     if options.skip_reload {
-        return Ok(Vec::new());
+        return Ok(actions);
     }
-    reload::apply_after_hypr()
+    actions.extend(reload::apply_after_hypr()?);
+    Ok(actions)
 }
 
 pub fn uninstall_hypr(cfg: &TskConfig, keep_files: bool) -> Result<Vec<String>> {
@@ -322,11 +349,16 @@ fn ensure_prod_source_line(config_path: &Path, prod_cfg: &TskConfig) -> Result<b
     if content.contains(marker) {
         return Ok(false);
     }
-    let source_line = format!(
-        "source = {}  # {marker} (installed {})",
-        prod_cfg.install_hypr_source_line,
-        Utc::now().date_naive()
-    );
+    let source_lines: Vec<String> = hypr_managed_source_paths(prod_cfg, omarchy_desktop_present())
+        .iter()
+        .map(|path| {
+            format!(
+                "source = {}  # {marker} (installed {})",
+                path.display(),
+                Utc::now().date_naive()
+            )
+        })
+        .collect();
     fs::OpenOptions::new()
         .append(true)
         .open(config_path)
@@ -334,12 +366,56 @@ fn ensure_prod_source_line(config_path: &Path, prod_cfg: &TskConfig) -> Result<b
             path: config_path.to_path_buf(),
             source,
         })?
-        .write_all(format!("\n{source_line}\n").as_bytes())
+        .write_all(format!("\n{}\n", source_lines.join("\n")).as_bytes())
         .map_err(|source| TskError::Write {
             path: config_path.to_path_buf(),
             source,
         })?;
     Ok(true)
+}
+
+/// Hyprland `source =` targets for a tsk-managed install.
+///
+/// Packaged installs source `/usr/share/tsk/hypr/bindings.conf` directly so
+/// `makepkg` updates apply on the next reload. If that file does not already
+/// source Omarchy unbinds / the escape hatch, those files are sourced around it.
+pub fn hypr_managed_source_paths(cfg: &TskConfig, omarchy: bool) -> Vec<PathBuf> {
+    let share = effective_share_dir(cfg);
+    let bindings = if uses_packaged_share(cfg) {
+        share.join("hypr/bindings.conf")
+    } else {
+        PathBuf::from(&cfg.install_hypr_source_line)
+    };
+    if !omarchy {
+        return vec![bindings];
+    }
+    omarchy_hypr_source_paths(&share, &bindings)
+}
+
+fn omarchy_hypr_source_paths(share: &Path, bindings: &Path) -> Vec<PathBuf> {
+    let body = fs::read_to_string(bindings).unwrap_or_default();
+    let mut paths = Vec::new();
+    let unbind = share.join("hypr/integrations/omarchy-unbind.conf");
+    if unbind.is_file() && !source_line_mentions(&body, "omarchy-unbind.conf") {
+        paths.push(unbind);
+    }
+    paths.push(bindings.to_path_buf());
+    let hatch = share.join("hypr/integrations/omarchy-escape-hatch.conf");
+    if hatch.is_file() && !source_line_mentions(&body, "omarchy-escape-hatch.conf") {
+        paths.push(hatch);
+    }
+    paths
+}
+
+fn source_line_mentions(body: &str, filename: &str) -> bool {
+    body.lines().any(|line| {
+        let trimmed = line.trim();
+        !trimmed.starts_with('#') && trimmed.contains("source") && trimmed.contains(filename)
+    })
+}
+
+fn omarchy_desktop_present() -> bool {
+    crate::xdg::expand("~/.local/share/omarchy").is_dir()
 }
 
 fn remove_legacy_dev_manifest(cfg: &TskConfig, integration: &str) -> Result<()> {
@@ -425,12 +501,83 @@ mod tests {
         let path = dir.path().join("hyprland.conf");
         fs::write(&path, "source = ~/.config/hypr/base.conf\n").unwrap();
         let mut cfg = TskConfig::default();
-        cfg.install_hypr_source_line = "~/.local/share/tsk/hypr/bindings.conf".into();
+        cfg.install_hypr_share_dir = crate::xdg::expand("~/.local/share/tsk-dev");
+        cfg.install_hypr_source_line = "~/.local/share/tsk-dev/hypr/bindings.conf".into();
         assert!(ensure_prod_source_line(&path, &cfg).unwrap());
         let body = fs::read_to_string(&path).unwrap();
         assert!(body.contains("tsk-managed"));
-        assert!(body.contains("~/.local/share/tsk/hypr/bindings.conf"));
+        assert!(body.contains("~/.local/share/tsk-dev/hypr/bindings.conf"));
         assert!(!ensure_prod_source_line(&path, &cfg).unwrap());
+    }
+
+    #[test]
+    fn hypr_managed_source_paths_uses_config_when_not_packaged() {
+        let mut cfg = TskConfig::default();
+        cfg.install_hypr_share_dir = crate::xdg::expand("~/.local/share/tsk-dev");
+        cfg.install_hypr_source_line = "~/.local/share/tsk-dev/hypr/bindings.conf".into();
+        let paths = hypr_managed_source_paths(&cfg, false);
+        assert_eq!(paths.len(), 1);
+        assert!(paths[0].to_string_lossy().contains("tsk-dev"));
+    }
+
+    #[test]
+    fn hypr_managed_source_paths_uses_packaged_share() {
+        if !uses_packaged_share(&TskConfig::default()) {
+            return;
+        }
+        let cfg = TskConfig::default();
+        let paths = hypr_managed_source_paths(&cfg, false);
+        assert_eq!(
+            paths,
+            vec![std::path::PathBuf::from("/usr/share/tsk/hypr/bindings.conf")]
+        );
+    }
+
+    #[test]
+    fn omarchy_sources_unbind_when_bindings_do_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let share = dir.path();
+        let hypr = share.join("hypr/integrations");
+        fs::create_dir_all(&hypr).unwrap();
+        let bindings = share.join("hypr/bindings.conf");
+        fs::write(&bindings, "bind = SUPER, 1, exec, tsk workspace switch 1\n").unwrap();
+        fs::write(hypr.join("omarchy-unbind.conf"), "unbind = SUPER, 1\n").unwrap();
+        fs::write(hypr.join("omarchy-escape-hatch.conf"), "bind = SUPER CTRL, RETURN, exec, true\n")
+            .unwrap();
+        let paths = omarchy_hypr_source_paths(share, &bindings);
+        assert_eq!(
+            paths,
+            vec![
+                hypr.join("omarchy-unbind.conf"),
+                bindings.clone(),
+                hypr.join("omarchy-escape-hatch.conf"),
+            ]
+        );
+    }
+
+    #[test]
+    fn omarchy_skips_extra_sources_when_bindings_already_include_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let share = dir.path();
+        let hypr = share.join("hypr/integrations");
+        fs::create_dir_all(&hypr).unwrap();
+        let bindings = share.join("hypr/bindings.conf");
+        fs::write(
+            &bindings,
+            "source = /usr/share/tsk/hypr/integrations/omarchy-unbind.conf\nsource = /usr/share/tsk/hypr/integrations/omarchy-escape-hatch.conf\n",
+        )
+        .unwrap();
+        fs::write(hypr.join("omarchy-unbind.conf"), "").unwrap();
+        fs::write(hypr.join("omarchy-escape-hatch.conf"), "").unwrap();
+        let paths = omarchy_hypr_source_paths(share, &bindings);
+        assert_eq!(paths, vec![bindings]);
+    }
+
+    #[test]
+    fn shipped_bindings_template_sources_omarchy_unbind() {
+        let raw = include_str!("../../../../share/hypr/bindings.conf");
+        assert!(source_line_mentions(raw, "omarchy-unbind.conf"));
+        assert!(source_line_mentions(raw, "omarchy-escape-hatch.conf"));
     }
 
     #[test]

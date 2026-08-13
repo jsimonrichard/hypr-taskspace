@@ -113,8 +113,8 @@ pub fn install_systemd(cfg: &TskConfig, options: &InstallSystemdOptions) -> Resu
 }
 
 pub fn uninstall_systemd(_cfg: &TskConfig) -> Result<Vec<String>> {
+    let mut actions = Vec::new();
     if packaged_systemd_unit_installed() && !user_service_unit_path().is_file() {
-        let mut actions = Vec::new();
         let _ = systemctl(&["stop", SERVICE_NAME]);
         let _ = systemctl(&["disable", SERVICE_NAME]);
         actions.push(format!(
@@ -125,8 +125,6 @@ pub fn uninstall_systemd(_cfg: &TskConfig) -> Result<Vec<String>> {
     }
 
     let unit_path = user_service_unit_path();
-    let mut actions = Vec::new();
-
     if unit_path.is_file() {
         let _ = systemctl(&["stop", SERVICE_NAME]);
         let _ = systemctl(&["disable", SERVICE_NAME]);

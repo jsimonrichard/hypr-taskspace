@@ -58,7 +58,7 @@ This copies `share/` templates to `~/.local/share/tsk/`, builds `libtsk_waybar.s
 | | Path |
 |---|------|
 | Runtime data | `~/.local/share/tsk/` (`state.db`, `daemon.sock`) |
-| CLI | on `PATH` (`~/.cargo/bin/tsk` or `/usr/bin/tsk`) |
+| CLI | on `PATH` (`/usr/bin/tsk` when packaged — it must be first if a cargo copy is also installed) |
 | Waybar module | `~/.local/share/tsk/lib/` (cargo) or `/usr/share/tsk/lib/` (pacman) |
 | Hypr templates | same share tree as the module |
 
@@ -79,7 +79,7 @@ source = ~/.local/share/tsk/hypr/bindings.conf
 # source = /usr/share/tsk/hypr/bindings.conf
 ```
 
-Resolve keybind conflicts your way. Omarchy users may source `…/hypr/integrations/omarchy-unbind.conf` before `bindings.conf`.
+Resolve keybind conflicts your way. The shipped `bindings.conf` sources `hypr/integrations/omarchy-unbind.conf` before the tsk binds.
 
 Run `hyprctl reload` after editing.
 

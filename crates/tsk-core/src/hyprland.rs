@@ -108,6 +108,24 @@ pub fn hyprctl_json(args: &[&str]) -> Result<Value> {
     })
 }
 
+/// `hyprctl` stdout without `-j`. Use this when Hyprland's JSON for a query is malformed.
+pub fn hyprctl_output(args: &[&str]) -> Result<String> {
+    if !available() {
+        return Err(TskError::HyprlandUnavailable);
+    }
+    with_hypr_ipc(|| {
+        hypr_log::log("query", &format!("hyprctl {}", args.join(" ")));
+        let output = retry_on_interrupted(|| Command::new("hyprctl").args(args).output())
+            .map_err(|e| TskError::Hyprctl(e.to_string()))?;
+        if !output.status.success() {
+            return Err(TskError::Hyprctl(
+                String::from_utf8_lossy(&output.stderr).into_owned(),
+            ));
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    })
+}
+
 fn retry_on_interrupted<T, F>(mut f: F) -> std::io::Result<T>
 where
     F: FnMut() -> std::io::Result<T>,

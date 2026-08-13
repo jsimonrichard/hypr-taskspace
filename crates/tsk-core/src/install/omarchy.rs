@@ -31,7 +31,7 @@ pub fn install_omarchy_prod(cfg: &TskConfig, options: &OmarchyInstallOptions) ->
             profile: Some(profile),
             omarchy_integration: true,
             skip_waybar: false,
-            skip_reload: false,
+            skip_reload: true,
             quiet: false,
             bundled_waybar_source: None,
         },
@@ -72,6 +72,22 @@ pub fn install_omarchy_prod(cfg: &TskConfig, options: &OmarchyInstallOptions) ->
         },
     )?;
     actions.extend(walker);
+
+    if crate::install::systemd::is_systemd_unit_installed() {
+        let systemd = crate::install::systemd::install_systemd(
+            cfg,
+            &crate::install::systemd::InstallSystemdOptions {
+                dry_run: options.dry_run,
+                enable: true,
+                start: true,
+            },
+        )?;
+        actions.extend(systemd);
+    }
+
+    if !options.dry_run {
+        actions.extend(crate::install::reload::apply_after_install(true, true)?);
+    }
 
     Ok(actions)
 }

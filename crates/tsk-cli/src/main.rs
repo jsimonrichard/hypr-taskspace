@@ -9,14 +9,14 @@ use tsk_core::{
     load_config, load_dev_config, maybe_reexec_dev_session, normalize_desktop_env, ping_daemon,
     reconcile_stale_dev_session,
     profile_for_config,
-    run_doctor_checks, stop_daemon,
+    run_doctor_checks, format_doctor_report, stop_daemon,
     systemd_restart, systemd_start, systemd_stop, systemctl_is_active, tail_hypr_log, tail_raw,
     trace_path, uninstall_hypr, uninstall_waybar, version_info, workspace_module_key, DaemonClient,
     DaemonServer, InstallBinsOptions, InstallHyprOptions, InstallProfile,
     InstallWaybarOptions, InstallWalkerOptions, OmarchyInstallOptions, TskError, Registry, Result, TaskService, TaskStatus,
     walker_exec, walker_terminal, walker_watch_launch,
-    TaskRepoSource, detect_vcs_root, find_repo, find_repo_by_path, load_repos, register_repo, repo_label,
-    ensure_repo_removable, unregister_repo, clear_hypr_log, is_http_url,
+    TaskRepoSource,     detect_vcs_root, find_repo, find_repo_by_path, load_repos, register_repo, repo_label,
+    ensure_repo_removable, unregister_repo, clear_hypr_log, is_http_url, effective_share_dir,
 };
 
 #[derive(Parser)]
@@ -33,7 +33,11 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     Status,
-    Doctor,
+    Doctor {
+        /// Print passing checks as well as failures.
+        #[arg(short, long)]
+        verbose: bool,
+    },
     /// List or restore window placement
     Windows {
         #[arg(long, help = "Filter list by task id (with `list` or bare `windows`)")]
@@ -475,7 +479,7 @@ fn run() -> Result<()> {
     };
     match command {
         Commands::Status => cmd_status(),
-        Commands::Doctor => cmd_doctor(),
+        Commands::Doctor { verbose } => cmd_doctor(verbose),
         Commands::Windows { task, command } => match command {
             None => cmd_windows_list(task.as_deref()),
             Some(WindowsCommands::List { task: list_task }) => {
@@ -727,18 +731,11 @@ fn cmd_status() -> Result<()> {
     Ok(())
 }
 
-fn cmd_doctor() -> Result<()> {
+fn cmd_doctor(verbose: bool) -> Result<()> {
     let cfg = load_config()?;
     let checks = run_doctor_checks(&cfg)?;
-    let mut ok = true;
-    for check in checks {
-        let mark = if check.passed { "ok" } else { "FAIL" };
-        println!("[{mark}] {}: {}", check.label, check.detail);
-        if !check.passed {
-            ok = false;
-        }
-    }
-    if !ok {
+    println!("{}", format_doctor_report(&checks, verbose));
+    if checks.iter().any(|c| !c.passed) {
         std::process::exit(1);
     }
     Ok(())
@@ -860,11 +857,11 @@ fn cmd_install_omarchy(dry_run: bool, workspace: Option<std::path::PathBuf>) -> 
         println!("Applied: {}.", actions.join(", "));
     }
     println!();
-    println!("Omarchy prod integration installed to {}.", cfg.install_hypr_share_dir.display());
+    println!("Omarchy prod integration installed to {}.", effective_share_dir(&cfg).display());
     println!("  Hyprland: source line + Omarchy unbinds");
     println!("  Waybar: cffi/tsk module, styles, restart");
     println!("  Walker: Elephant launch_prefix + terminal_cmd");
-    println!("Next: scripts/install-systemd.sh  (or systemctl --user enable --now tskd.service when using the pacman package)");
+    println!("  systemd: tskd.service enabled");
     Ok(())
 }
 
@@ -1036,7 +1033,16 @@ fn cmd_dev_install_waybar_inner(
 
 fn cmd_dev_uninstall_all() -> Result<()> {
     cmd_dev_uninstall_waybar()?;
-    cmd_dev_uninstall_hypr(false)
+    cmd_dev_uninstall_hypr(false)?;
+    match tsk_core::remove_packaged_path_shadows() {
+        Ok(actions) => {
+            for line in actions {
+                println!("{line}");
+            }
+        }
+        Err(err) => eprintln!("warning: {err}"),
+    }
+    Ok(())
 }
 
 fn cmd_dev_uninstall_hypr(keep_files: bool) -> Result<()> {

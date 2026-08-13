@@ -53,6 +53,7 @@ pub fn install_walker_status(cfg: &TskConfig) -> Result<Value> {
         "config_path": path,
         "launch_prefix_set": content.contains(&expected_prefix),
         "terminal_cmd_set": content.contains(&expected_terminal),
+        "expected_launch_prefix": expected_prefix,
     }))
 }
 

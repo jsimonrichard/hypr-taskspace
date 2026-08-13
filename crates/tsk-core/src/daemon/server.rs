@@ -79,6 +79,7 @@ impl DaemonServer {
         // only deletes+rebinds the socket leaves the first process's Hyprland listener
         // running against the shared DB — that is the dual-daemon revert bug.
         let _lock = acquire_daemon_lock(&socket_path)?;
+        refuse_existing_daemon()?;
 
         if socket_path.exists() {
             if ping_daemon_at(&socket_path).unwrap_or(false) {
@@ -623,6 +624,83 @@ fn process_alive(pid: i32) -> bool {
     unsafe { libc::kill(pid, 0) == 0 }
 }
 
+/// A live `tsk daemon run` process.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DaemonProcess {
+    pub pid: u32,
+    pub cmdline: String,
+}
+
+/// Live `tsk daemon run` processes, including this one if it already matches.
+pub fn running_daemon_processes() -> Vec<DaemonProcess> {
+    let Ok(entries) = fs::read_dir("/proc") else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(pid) = name.to_str().and_then(|s| s.parse::<u32>().ok()) else {
+            continue;
+        };
+        let Ok(raw) = fs::read(entry.path().join("cmdline")) else {
+            continue;
+        };
+        let argv = parse_proc_cmdline(&raw);
+        if !is_tsk_daemon_run(&argv) {
+            continue;
+        }
+        out.push(DaemonProcess {
+            pid,
+            cmdline: argv.join(" "),
+        });
+    }
+    out.sort_by_key(|p| p.pid);
+    out
+}
+
+fn other_daemon_processes() -> Vec<DaemonProcess> {
+    let self_pid = std::process::id();
+    running_daemon_processes()
+        .into_iter()
+        .filter(|p| p.pid != self_pid)
+        .collect()
+}
+
+fn refuse_existing_daemon() -> Result<()> {
+    let others = other_daemon_processes();
+    if others.is_empty() {
+        return Ok(());
+    }
+    let detail = others
+        .iter()
+        .map(|p| format!("pid {} ({})", p.pid, p.cmdline))
+        .collect::<Vec<_>>()
+        .join("; ");
+    Err(TskError::Other(format!(
+        "tsk daemon already running ({detail}) — stop the other instance first"
+    )))
+}
+
+fn parse_proc_cmdline(raw: &[u8]) -> Vec<String> {
+    raw.split(|b| *b == 0)
+        .filter(|part| !part.is_empty())
+        .map(|part| String::from_utf8_lossy(part).into_owned())
+        .collect()
+}
+
+fn is_tsk_daemon_run(argv: &[String]) -> bool {
+    let Some(tsk_idx) = argv.iter().position(|arg| {
+        Path::new(arg)
+            .file_name()
+            .and_then(|name| name.to_str())
+            == Some("tsk")
+    }) else {
+        return false;
+    };
+    argv.get(tsk_idx + 1).map(String::as_str) == Some("daemon")
+        && argv.get(tsk_idx + 2).map(String::as_str) == Some("run")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -646,6 +724,36 @@ mod tests {
         assert!(second.is_err(), "second lock should fail while first is held");
         drop(first);
         acquire_daemon_lock(&socket).expect("lock after release");
+    }
+
+    #[test]
+    fn is_tsk_daemon_run_matches_daemon_run_only() {
+        let packaged = ["/usr/bin/tsk", "daemon", "run"].map(str::to_string);
+        let cargo = ["/home/u/.cargo/bin/tsk", "daemon", "run"].map(str::to_string);
+        let status = ["/usr/bin/tsk", "daemon", "status"].map(str::to_string);
+        let start = ["/usr/bin/tsk", "daemon", "start"].map(str::to_string);
+        let doctor = ["/usr/bin/tsk", "doctor"].map(str::to_string);
+        let cargo_run = ["cargo", "run", "--", "daemon", "run"].map(str::to_string);
+        assert!(is_tsk_daemon_run(&packaged));
+        assert!(is_tsk_daemon_run(&cargo));
+        assert!(!is_tsk_daemon_run(&status));
+        assert!(!is_tsk_daemon_run(&start));
+        assert!(!is_tsk_daemon_run(&doctor));
+        assert!(!is_tsk_daemon_run(&cargo_run));
+    }
+
+    #[test]
+    fn parse_proc_cmdline_splits_on_nul() {
+        let argv = parse_proc_cmdline(b"/usr/bin/tsk\0daemon\0run\0");
+        assert_eq!(
+            argv,
+            vec![
+                "/usr/bin/tsk".to_string(),
+                "daemon".to_string(),
+                "run".to_string()
+            ]
+        );
+        assert!(is_tsk_daemon_run(&argv));
     }
 
     #[test]

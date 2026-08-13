@@ -22,7 +22,7 @@ pub struct InstallBinsOptions {
     pub dry_run: bool,
     pub workspace_root: Option<PathBuf>,
     pub profile: Option<InstallProfile>,
-    /// Prepend Omarchy unbind sources to installed bindings (prod Omarchy preset).
+    /// Include Omarchy unbind sources in Hyprland (prod Omarchy preset).
     pub omarchy_integration: bool,
     pub skip_waybar: bool,
     /// Skip Hyprland/Waybar reload (caller will apply once at the end).
@@ -58,8 +58,8 @@ pub fn install_bins(cfg: &TskConfig, options: &InstallBinsOptions) -> Result<Vec
     let tsk_cmd = resolve_tsk_command(cfg);
 
     if options.dry_run {
-        return Ok(vec![
-            format!("would verify tsk on PATH ({tsk_cmd})"),
+        let mut lines = vec![
+            format!("would verify tsk command ({tsk_cmd})"),
             if deploy_user_share {
                 format!(
                     "would deploy share templates from {} → {}",
@@ -97,22 +97,30 @@ pub fn install_bins(cfg: &TskConfig, options: &InstallBinsOptions) -> Result<Vec
                 "would install taskspace xdg-open wrapper at {}",
                 task_bin_dir(cfg).join("xdg-open").display()
             ),
-            "would reload Hyprland config".into(),
-            if options.skip_waybar {
+            if options.skip_reload {
+                String::new()
+            } else {
+                "would reload Hyprland config".into()
+            },
+            if options.skip_waybar || options.skip_reload {
                 String::new()
             } else {
                 "would restart Waybar".into()
             },
-        ]
-        .into_iter()
-        .filter(|s| !s.is_empty())
-        .collect());
+        ];
+        if crate::share::system_share_available() {
+            for path in crate::binary::packaged_path_shadow_candidates() {
+                if path.exists() {
+                    lines.push(format!("would remove PATH shadow {}", path.display()));
+                }
+            }
+        }
+        return Ok(lines.into_iter().filter(|s| !s.is_empty()).collect());
     }
 
-    let (path_ok, path_detail) = crate::binary::path_tsk_is_usable(cfg);
-    if !path_ok {
+    if !Path::new(&tsk_cmd).is_file() {
         return Err(TskError::Other(format!(
-            "tsk not found on PATH ({path_detail}) — install the CLI first (e.g. cargo install --path crates/tsk-cli or your package manager)"
+            "tsk command not found ({tsk_cmd}) — install the package first"
         )));
     }
 
@@ -122,8 +130,6 @@ pub fn install_bins(cfg: &TskConfig, options: &InstallBinsOptions) -> Result<Vec
         copy_share_tree(
             cfg,
             &template_src,
-            profile,
-            options.omarchy_integration,
             &resolve_tsk_command(cfg),
         )?;
         if !system_share {
@@ -141,6 +147,7 @@ pub fn install_bins(cfg: &TskConfig, options: &InstallBinsOptions) -> Result<Vec
     }
     install_xdg_open_wrapper(&share_src, &resolve_tsk_command(cfg), cfg)?;
     remove_legacy_global_xdg_open_wrapper()?;
+    let shadow_actions = crate::binary::remove_packaged_path_shadows()?;
 
     let mut actions = vec![
         if deploy_user_share {
@@ -156,13 +163,14 @@ pub fn install_bins(cfg: &TskConfig, options: &InstallBinsOptions) -> Result<Vec
                 cfg.install_hypr_share_dir.display()
             )
         },
-        format!("using tsk at {path_detail}"),
+        format!("using tsk at {tsk_cmd}"),
         format!(
             "installed taskspace xdg-open wrapper at {}",
             task_bin_dir(cfg).join("xdg-open").display()
         ),
         format!("runtime data in {}", cfg.data_dir.display()),
     ];
+    actions.extend(shadow_actions);
     if !options.skip_reload {
         actions.extend(reload::apply_after_hypr()?);
         if !options.skip_waybar {
@@ -402,8 +410,6 @@ fn remove_legacy_global_xdg_open_wrapper() -> Result<()> {
 fn copy_share_tree(
     cfg: &TskConfig,
     share_src: &Path,
-    profile: InstallProfile,
-    omarchy_integration: bool,
     tsk_cmd: &str,
 ) -> Result<()> {
     let share_dir = &cfg.install_hypr_share_dir;
@@ -413,8 +419,6 @@ fn copy_share_tree(
         &share_src.join("hypr"),
         &share_dir.join("hypr"),
         &share_str,
-        profile,
-        omarchy_integration,
         tsk_cmd,
     )?;
     copy_dir_files_flat(&share_src.join("waybar"), &share_dir.join("waybar"), &share_str)?;
@@ -425,8 +429,6 @@ fn copy_hypr_tree(
     src: &Path,
     dest: &Path,
     share_str: &str,
-    profile: InstallProfile,
-    omarchy_integration: bool,
     tsk_cmd: &str,
 ) -> Result<()> {
     if !src.is_dir() {
@@ -452,8 +454,6 @@ fn copy_hypr_tree(
                 &path,
                 &dest.join(path.file_name().unwrap()),
                 share_str,
-                profile,
-                omarchy_integration,
                 tsk_cmd,
             )?;
             continue;
@@ -469,17 +469,6 @@ fn copy_hypr_tree(
         let body = if name == "bindings.conf" {
             let mut out = substitute_share(&raw, share_str);
             out = out.replace(TSK_CMD_PLACEHOLDER, tsk_cmd);
-            if profile.include_omarchy_unbinds_for(omarchy_integration) {
-                let unbinds = format!(
-                    "source = {}/hypr/integrations/omarchy-unbind.conf\n\n",
-                    share_str
-                );
-                let escape_hatch = format!(
-                    "\nsource = {}/hypr/integrations/omarchy-escape-hatch.conf\n",
-                    share_str
-                );
-                out = format!("{unbinds}{out}{escape_hatch}");
-            }
             remap_packaged_share_paths(&out, share_str)
         } else if raw.contains(TSK_SHARE_PLACEHOLDER) || raw.contains(TSK_CMD_PLACEHOLDER) {
             remap_packaged_share_paths(
@@ -549,15 +538,17 @@ fn remap_packaged_share_paths(content: &str, share_dir: &str) -> String {
     content.replace(crate::share::SYSTEM_SHARE_DIR, share_dir)
 }
 
-/// Deploy user-local Hypr/Waybar templates even when the pacman share tree exists.
+/// Deploy user-local Hypr/Waybar templates only when there is no packaged share.
+///
+/// A stale `install.hypr.share_dir = ~/.local/share/tsk` in config.toml must not
+/// fork a second tree — Hyprland would keep sourcing it after `makepkg` updates
+/// `/usr/share/tsk`.
 fn should_deploy_user_share(
-    cfg: &TskConfig,
+    _cfg: &TskConfig,
     system_share: bool,
-    omarchy_integration: bool,
+    _omarchy_integration: bool,
 ) -> bool {
     !system_share
-        || omarchy_integration
-        || cfg.install_hypr_share_dir != effective_share_dir(cfg)
 }
 
 #[cfg(test)]
@@ -574,7 +565,8 @@ mod tests {
         }
         let mut cfg = TskConfig::default();
         cfg.install_hypr_share_dir = expand("~/.local/share/tsk");
-        assert!(should_deploy_user_share(&cfg, true, true));
+        // Omarchy must not fork a second share tree when the package is installed.
+        assert!(!should_deploy_user_share(&cfg, true, true));
     }
 
     #[test]
@@ -584,23 +576,20 @@ mod tests {
         }
         let mut cfg = TskConfig::default();
         cfg.install_hypr_share_dir = expand("~/.local/share/tsk");
-        assert!(should_deploy_user_share(&cfg, true, false));
+        assert!(
+            !should_deploy_user_share(&cfg, true, false),
+            "packaged share must not copy into a second tree under ~/.local/share/tsk"
+        );
     }
 
     #[test]
     fn bindings_include_omarchy_unbind_source_when_requested() {
-        let raw = "source = @TSK_SHARE@/hypr/window-rules.conf\n$tsk = @TSK_CMD@\n";
+        let raw = include_str!("../../../../share/hypr/bindings.conf");
         let share = "/home/u/.local/share/tsk";
-        let mut out = substitute_share(raw, share);
-        out = out.replace(TSK_CMD_PLACEHOLDER, "/usr/bin/tsk");
-        if InstallProfile::Prod.include_omarchy_unbinds_for(true) {
-            let unbinds = format!("source = {share}/hypr/integrations/omarchy-unbind.conf\n\n");
-            let escape_hatch =
-                format!("\nsource = {share}/hypr/integrations/omarchy-escape-hatch.conf\n");
-            out = format!("{unbinds}{out}{escape_hatch}");
-        }
-        assert!(out.starts_with("source = /home/u/.local/share/tsk/hypr/integrations/omarchy-unbind.conf"));
+        let out = substitute_share(raw, share).replace(TSK_CMD_PLACEHOLDER, "/usr/bin/tsk");
+        assert!(out.contains("source = /home/u/.local/share/tsk/hypr/integrations/omarchy-unbind.conf"));
         assert!(out.contains("source = /home/u/.local/share/tsk/hypr/integrations/omarchy-escape-hatch.conf"));
+        assert!(out.contains("$tsk = /usr/bin/tsk"));
     }
 
     #[test]

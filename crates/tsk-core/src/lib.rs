@@ -48,13 +48,14 @@ pub use dev_session::{
 };
 pub use daemon::{
     daemon_pid_path, daemon_request, daemon_socket_path, ensure_daemon, is_daemon_running,
-    ping_daemon, ping_daemon_at, stop_daemon, DaemonClient, DaemonServer,
+    ping_daemon, ping_daemon_at, running_daemon_processes, stop_daemon, DaemonClient,
+    DaemonProcess, DaemonServer,
 };
 pub use error::{TskError, Result};
 pub use install::{
     install_bins, install_hypr, install_hypr_status, install_systemd, install_systemd_status,
     install_walker, install_walker_status, install_waybar, install_waybar_status,
-    is_systemd_unit_installed, render_service_unit, run_doctor_checks, systemd_restart,
+    is_systemd_unit_installed, render_service_unit, run_doctor_checks, format_doctor_report, systemd_restart,
     systemd_start, systemd_stop, systemctl_is_active, systemctl_is_enabled, uninstall_hypr,
     uninstall_systemd, uninstall_walker, uninstall_waybar, InstallBinsOptions, DoctorCheck,
     InstallHyprOptions, InstallProfile, InstallSystemdOptions, InstallWaybarOptions,
@@ -95,8 +96,8 @@ pub use share::{
 };
 pub use binary::{
     command_v_login, maybe_reexec_dev_session, path_tsk_binary, path_tsk_is_usable,
-    peel_tsk_wrapper, resolve_tsk_binary, resolve_tsk_command, resolve_tsk_spawn_binary,
-    waybar_module_path,
+    peel_tsk_wrapper, remove_packaged_path_shadows, resolve_tsk_binary, resolve_tsk_command,
+    resolve_tsk_spawn_binary, waybar_module_path,
 };
 pub use xdg::normalize_desktop_env;
 pub use apps::{launch_task_editor};

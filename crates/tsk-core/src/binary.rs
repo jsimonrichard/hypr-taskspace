@@ -7,7 +7,7 @@ use std::fs;
 
 use crate::config::TskConfig;
 use crate::dev_session::{dev_session_active, dev_session_binary};
-use crate::error::Result;
+use crate::error::{Result, TskError};
 
 /// Active dev session, then `TSK` env (when the file exists), then `PATH`.
 pub fn resolve_tsk_binary(_cfg: &TskConfig) -> PathBuf {
@@ -170,8 +170,10 @@ pub fn path_tsk_is_usable(_cfg: &TskConfig) -> (bool, String) {
         if path.is_file() {
             return (true, format!("TSK={}", path.display()));
         }
-        // Stale override (e.g. removed ~/.local/share/tsk/bin/tsk after pacman install).
         if let Some(found) = path_tsk_binary() {
+            if let Some(detail) = packaged_path_mismatch(&found) {
+                return (false, detail);
+            }
             return (
                 true,
                 format!(
@@ -182,6 +184,10 @@ pub fn path_tsk_is_usable(_cfg: &TskConfig) -> (bool, String) {
             );
         }
         if let Some(login) = command_v_login("tsk") {
+            let found = PathBuf::from(&login);
+            if let Some(detail) = packaged_path_mismatch(&found) {
+                return (false, detail);
+            }
             return (
                 true,
                 format!(
@@ -200,19 +206,100 @@ pub fn path_tsk_is_usable(_cfg: &TskConfig) -> (bool, String) {
     }
 
     if let Some(found) = path_tsk_binary() {
+        if let Some(detail) = packaged_path_mismatch(&found) {
+            return (false, detail);
+        }
         return (true, found.display().to_string());
     }
 
     if let Some(login) = command_v_login("tsk") {
+        let found = PathBuf::from(&login);
+        if let Some(detail) = packaged_path_mismatch(&found) {
+            return (false, detail);
+        }
         return (true, login);
     }
 
     (
         false,
-        format!(
-            "no tsk on PATH — install with cargo install --path crates/tsk-cli or your package manager"
-        ),
+        "no tsk on PATH — install the package or put tsk on PATH".into(),
     )
+}
+
+const PACKAGED_TSK: &str = "/usr/bin/tsk";
+
+fn packaged_path_mismatch(found: &Path) -> Option<String> {
+    if !crate::share::system_share_available() {
+        return None;
+    }
+    let packaged = Path::new(PACKAGED_TSK);
+    if !packaged.is_file() {
+        return None;
+    }
+    if same_executable(found, packaged) {
+        return None;
+    }
+    Some(format!(
+        "{} is first on PATH; expected {PACKAGED_TSK}",
+        found.display()
+    ))
+}
+
+fn same_executable(a: &Path, b: &Path) -> bool {
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => a == b,
+    }
+}
+
+/// Extra `tsk` copies that sit earlier on PATH than `/usr/bin/tsk`.
+pub fn packaged_path_shadow_candidates() -> Vec<PathBuf> {
+    vec![
+        crate::xdg::expand("~/.cargo/bin/tsk"),
+        crate::xdg::expand("~/.local/bin/tsk"),
+        crate::xdg::expand("~/.local/share/tsk/bin/tsk"),
+    ]
+}
+
+/// When the distro package is installed, delete extra `tsk` binaries that would
+/// shadow `/usr/bin/tsk` (cargo install, leftover share-tree copies).
+pub fn remove_packaged_path_shadows() -> Result<Vec<String>> {
+    if !crate::share::system_share_available() {
+        return Ok(Vec::new());
+    }
+    let packaged = Path::new(PACKAGED_TSK);
+    if !packaged.is_file() {
+        return Ok(Vec::new());
+    }
+    remove_shadowing_tsk_copies(packaged, &packaged_path_shadow_candidates())
+}
+
+fn remove_shadowing_tsk_copies(packaged: &Path, candidates: &[PathBuf]) -> Result<Vec<String>> {
+    let mut actions = Vec::new();
+    for path in candidates {
+        if !path.exists() {
+            continue;
+        }
+        if same_executable(path, packaged) {
+            continue;
+        }
+        fs::remove_file(path).map_err(|source| {
+            if source.kind() == std::io::ErrorKind::PermissionDenied {
+                TskError::Other(format!(
+                    "could not remove {} (permission denied) — run: sudo rm {}",
+                    path.display(),
+                    path.display()
+                ))
+            } else {
+                TskError::Write {
+                    path: path.clone(),
+                    source,
+                }
+            }
+        })?;
+        actions.push(format!("removed PATH shadow {}", path.display()));
+    }
+    Ok(actions)
 }
 
 /// Legacy share-tree path (helpers only — not the main CLI).
@@ -322,5 +409,21 @@ mod tests {
         } else {
             std::env::remove_var("PATH");
         }
+    }
+
+    #[test]
+    fn remove_shadowing_tsk_copies_deletes_distinct_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let packaged = dir.path().join("usr-bin-tsk");
+        let cargo = dir.path().join("cargo-tsk");
+        let alias = dir.path().join("alias-tsk");
+        fs::write(&packaged, b"packaged").unwrap();
+        fs::write(&cargo, b"stale cargo").unwrap();
+        std::os::unix::fs::symlink(&packaged, &alias).unwrap();
+        let actions = remove_shadowing_tsk_copies(&packaged, &[cargo.clone(), alias.clone()]).unwrap();
+        assert_eq!(actions, vec![format!("removed PATH shadow {}", cargo.display())]);
+        assert!(!cargo.exists());
+        assert!(alias.exists());
+        assert!(packaged.exists());
     }
 }

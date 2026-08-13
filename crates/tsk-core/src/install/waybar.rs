@@ -173,10 +173,16 @@ pub fn install_waybar(cfg: &TskConfig, options: &InstallWaybarOptions) -> Result
     })];
     manifest::save_manifest(&install_metadata_dir(cfg, profile_for_config(cfg)), &m)?;
 
+    let mut actions = vec![format!(
+        "patched {} (module_path = {})",
+        plan.config_path.display(),
+        plan.module_path.display()
+    )];
     if options.skip_reload {
-        return Ok(Vec::new());
+        return Ok(actions);
     }
-    Ok(reload::apply_after_waybar())
+    actions.extend(reload::apply_after_waybar());
+    Ok(actions)
 }
 
 pub fn uninstall_waybar(cfg: &TskConfig) -> Result<Vec<String>> {

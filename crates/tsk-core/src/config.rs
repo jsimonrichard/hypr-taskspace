@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
@@ -412,7 +412,14 @@ pub fn load_config_at(path: &std::path::Path) -> Result<TskConfig> {
     })?;
     let parsed: RawConfig =
         toml::from_str(&raw).map_err(|e| TskError::Config(e.to_string()))?;
-    Ok(parse_config(parsed))
+    let mut cfg = parse_config(parsed);
+    if is_prod_config_path(path) {
+        apply_packaged_prod_share_override(&mut cfg);
+        if packaged_prod_share_toml_needs_repair(&raw) {
+            repair_packaged_prod_share_file(path, &raw);
+        }
+    }
+    Ok(cfg)
 }
 
 /// Prod config file — ignores `TSK_CONFIG` / dev auto-detection.
@@ -422,6 +429,80 @@ pub fn load_prod_config() -> Result<TskConfig> {
         load_config_at(&path)
     } else {
         Ok(TskConfig::default())
+    }
+}
+
+fn is_prod_config_path(path: &Path) -> bool {
+    let prod = expand("~/.config/tsk/config.toml");
+    path == prod
+        || path
+            .canonicalize()
+            .ok()
+            .zip(prod.canonicalize().ok())
+            .is_some_and(|(a, b)| a == b)
+}
+
+/// When the distro package is installed, use `/usr/share/tsk` even if config still
+/// points `install.hypr.share_dir` at the user data directory.
+fn apply_packaged_prod_share_override(cfg: &mut TskConfig) {
+    if crate::install::profile::is_dev_config(cfg) {
+        return;
+    }
+    if !crate::share::system_share_available() {
+        return;
+    }
+    let system = crate::share::system_share_dir();
+    let source = system.join("hypr/bindings.conf");
+    if crate::share::is_system_share(&cfg.install_hypr_share_dir)
+        && Path::new(&cfg.install_hypr_source_line).starts_with(crate::share::SYSTEM_SHARE_DIR)
+    {
+        return;
+    }
+    cfg.install_hypr_share_dir = system;
+    cfg.install_hypr_source_line = source.to_string_lossy().into_owned();
+}
+
+fn packaged_prod_share_toml_needs_repair(raw: &str) -> bool {
+    if !crate::share::system_share_available() {
+        return false;
+    }
+    let Ok(parsed) = toml::from_str::<RawConfig>(raw) else {
+        return false;
+    };
+    let cfg = parse_config(parsed);
+    if crate::install::profile::is_dev_config(&cfg) {
+        return false;
+    }
+    !crate::share::is_system_share(&cfg.install_hypr_share_dir)
+        || !Path::new(&cfg.install_hypr_source_line).starts_with(crate::share::SYSTEM_SHARE_DIR)
+}
+
+fn repair_packaged_prod_share_file(path: &Path, raw: &str) {
+    let Ok(mut root) = toml::from_str::<toml::Table>(raw) else {
+        return;
+    };
+    set_nested_str(
+        &mut root,
+        &["install", "hypr", "share_dir"],
+        crate::share::SYSTEM_SHARE_DIR,
+    );
+    set_nested_str(
+        &mut root,
+        &["install", "hypr", "source_line"],
+        &format!("{}/hypr/bindings.conf", crate::share::SYSTEM_SHARE_DIR),
+    );
+    let Ok(repaired) = toml::to_string_pretty(&toml::Value::Table(root)) else {
+        return;
+    };
+    match fs::write(path, &repaired) {
+        Ok(()) => eprintln!(
+            "repaired stale prod config (install.hypr paths → /usr/share/tsk): {}",
+            path.display()
+        ),
+        Err(source) => eprintln!(
+            "note: prod config install.hypr paths should be /usr/share/tsk (using that in-memory; could not write {}: {source})",
+            path.display()
+        ),
     }
 }
 
@@ -653,5 +734,41 @@ require_sourced_last = true
             expand("~/.local/share/tsk-dev")
         );
         assert!(dev.contains("require_sourced_last = true"));
+    }
+
+    #[test]
+    fn apply_packaged_prod_share_override_rewrites_user_local_share_paths() {
+        if !crate::share::system_share_available() {
+            return;
+        }
+        let mut cfg = TskConfig::default();
+        cfg.install_hypr_share_dir = expand("~/.local/share/tsk");
+        cfg.install_hypr_source_line = expand("~/.local/share/tsk/hypr/bindings.conf")
+            .to_string_lossy()
+            .into_owned();
+        apply_packaged_prod_share_override(&mut cfg);
+        assert_eq!(cfg.install_hypr_share_dir, crate::share::system_share_dir());
+        assert!(cfg
+            .install_hypr_source_line
+            .starts_with(crate::share::SYSTEM_SHARE_DIR));
+    }
+
+    #[test]
+    fn packaged_prod_share_toml_detects_user_local_share_paths() {
+        if !crate::share::system_share_available() {
+            return;
+        }
+        let stale = r#"
+[install.hypr]
+share_dir = "~/.local/share/tsk"
+source_line = "~/.local/share/tsk/hypr/bindings.conf"
+"#;
+        assert!(packaged_prod_share_toml_needs_repair(stale));
+        let current = r#"
+[install.hypr]
+share_dir = "/usr/share/tsk"
+source_line = "/usr/share/tsk/hypr/bindings.conf"
+"#;
+        assert!(!packaged_prod_share_toml_needs_repair(current));
     }
 }
