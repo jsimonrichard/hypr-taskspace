@@ -46,7 +46,7 @@ Elephant is restarted automatically when `elephant.service` is active.
 - **Terminals** (alacritty, kitty, foot, ghostty, etc.) → `tsk task terminal`
 - **Browsers** (chromium, firefox, …) → `tsk task browser` when in a task; otherwise browser with taskspace env
 - **Editors** (cursor, code) → `tsk task editor` when in a task; otherwise editor with taskspace env
-- **Everything else** → `uwsm app <desktop-id>` (or direct exec) with task env and task repo as cwd
+- **Everything else** → `uwsm app -- <parsed Exec argv>` (or desktop id if Exec is missing) with task env and task repo as cwd. `--` keeps app flags such as `--no-sandbox` from being parsed as uwsm options; launching via argv also avoids uwsm rejecting desktop files that use both `%u` and `%U`.
 
 ## Verify
 

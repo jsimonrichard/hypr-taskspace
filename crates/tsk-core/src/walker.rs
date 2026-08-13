@@ -116,7 +116,10 @@ struct DesktopEntry {
     try_exec: Option<String>,
 }
 
-/// Elephant / uwsm passes through the same argv it would give `uwsm app`.
+/// Elephant passes the desktop id or Exec argv it would have given `uwsm app`.
+/// Generic launches become `uwsm app -- <command…>` so app flags (e.g. `--no-sandbox`)
+/// are not parsed as uwsm options, and broken desktop Exec lines (`%u` + `%U`) are
+/// not re-validated by uwsm.
 pub fn walker_exec(args: &[&str]) -> Result<()> {
     if args.is_empty() {
         return Err(TskError::Other(
@@ -198,10 +201,9 @@ fn walker_launch_generic(ctx: &WalkerLaunchContext, target: &LaunchTarget) -> Re
     let label = launch_label(target, &target.argv);
     if let Some(uwsm) = command_v("uwsm") {
         let mut cmd = Command::new(&uwsm);
-        cmd.arg("app");
         apply_launch_env(&mut cmd, ctx);
         cmd.current_dir(&ctx.cwd);
-        push_uwsm_args(&mut cmd, target);
+        cmd.args(uwsm_app_args(target));
         return spawn_watched(cmd, label);
     }
 
@@ -244,16 +246,19 @@ fn apply_launch_env(cmd: &mut Command, ctx: &WalkerLaunchContext) {
     task_env::apply_env(cmd, &ctx.env);
 }
 
-fn push_uwsm_args(cmd: &mut Command, target: &LaunchTarget) {
-    if let Some(id) = target.desktop_id.as_deref() {
-        cmd.arg(id);
-        return;
-    }
+/// Args after the `uwsm` binary: `app -- <command or desktop-id>`.
+///
+/// Prefer parsed Exec argv over a desktop id. uwsm re-reads the desktop file when
+/// given an id, and rejects entries that use both `%u` and `%U` (Todoist AppImage).
+/// `--` is required so flags like `--no-sandbox` are not treated as uwsm options.
+fn uwsm_app_args(target: &LaunchTarget) -> Vec<String> {
+    let mut args = vec!["app".into(), "--".into()];
     if !target.argv.is_empty() {
-        for arg in &target.argv {
-            cmd.arg(arg);
-        }
+        args.extend(target.argv.iter().cloned());
+    } else if let Some(id) = target.desktop_id.as_deref() {
+        args.push(id.to_string());
     }
+    args
 }
 
 fn launch_label(target: &LaunchTarget, argv: &[String]) -> String {
@@ -811,6 +816,22 @@ mod tests {
     }
 
     #[test]
+    fn parse_desktop_exec_strips_conflicting_field_codes() {
+        let argv =
+            parse_desktop_exec("env DESKTOPINTEGRATION=false /usr/bin/todoist %u --no-sandbox %U")
+                .unwrap();
+        assert_eq!(
+            argv,
+            vec![
+                "env",
+                "DESKTOPINTEGRATION=false",
+                "/usr/bin/todoist",
+                "--no-sandbox",
+            ]
+        );
+    }
+
+    #[test]
     fn parse_desktop_exec_handles_quotes() {
         let argv = parse_desktop_exec("cursor '/some path'").unwrap();
         assert_eq!(argv, vec!["cursor", "/some path"]);
@@ -938,5 +959,60 @@ mod tests {
             argv: argv.clone(),
         };
         assert_eq!(launch_label(&target, &argv), "todoist --no-sandbox");
+    }
+
+    #[test]
+    fn uwsm_app_args_separates_command_flags_from_uwsm() {
+        let target = LaunchTarget {
+            desktop_id: None,
+            desktop: None,
+            argv: vec!["todoist".into(), "--no-sandbox".into()],
+        };
+        assert_eq!(
+            uwsm_app_args(&target),
+            vec!["app", "--", "todoist", "--no-sandbox"]
+        );
+    }
+
+    #[test]
+    fn uwsm_app_args_prefers_parsed_exec_over_desktop_id() {
+        let target = LaunchTarget {
+            desktop_id: Some("todoist".into()),
+            desktop: Some(DesktopEntry {
+                id: "todoist".into(),
+                name: Some("Todoist".into()),
+                exec: Some(
+                    "env DESKTOPINTEGRATION=false /usr/bin/todoist %u --no-sandbox %U".into(),
+                ),
+                ..Default::default()
+            }),
+            argv: vec![
+                "env".into(),
+                "DESKTOPINTEGRATION=false".into(),
+                "/usr/bin/todoist".into(),
+                "--no-sandbox".into(),
+            ],
+        };
+        assert_eq!(
+            uwsm_app_args(&target),
+            vec![
+                "app",
+                "--",
+                "env",
+                "DESKTOPINTEGRATION=false",
+                "/usr/bin/todoist",
+                "--no-sandbox",
+            ]
+        );
+    }
+
+    #[test]
+    fn uwsm_app_args_falls_back_to_desktop_id() {
+        let target = LaunchTarget {
+            desktop_id: Some("todoist".into()),
+            desktop: None,
+            argv: Vec::new(),
+        };
+        assert_eq!(uwsm_app_args(&target), vec!["app", "--", "todoist"]);
     }
 }
