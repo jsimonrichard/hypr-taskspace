@@ -4,6 +4,7 @@ pub mod apps;
 pub mod binary;
 pub mod boot_id;
 pub mod browser;
+pub mod browser_session;
 pub mod config;
 pub mod context_sync;
 pub mod daemon;
@@ -51,6 +52,10 @@ pub use browser::{
     default_browser_profile_dir, delegate_to_system_xdg_open, is_http_url, launch_task_browser,
     open_urls, resolve_system_xdg_open,
 };
+pub use browser_session::{
+    capture_and_save, live_windows_path, read_live_windows, read_task_session, restore_saved,
+    session_path,
+};
 pub use config::{
     ensure_config, load_config, load_config_at, load_dev_config, load_prod_config, TskConfig,
 };
@@ -72,13 +77,15 @@ pub use hyprland_events::{
     parse_focusedmon_v2, parse_workspace_v2, socket2_path, HyprlandEventListener,
 };
 pub use install::{
-    dev_config_path, dev_share_dir, format_doctor_report, install_bins, install_hypr,
+    chromium_present, detected_integrations, dev_config_path, dev_share_dir, format_doctor_report,
+    install_all, install_bins, install_chromium, install_chromium_status, install_hypr,
     install_hypr_status, install_metadata_dir, install_omarchy_prod, install_systemd,
     install_systemd_status, install_walker, install_walker_status, install_waybar,
-    install_waybar_status, is_dev_config, is_systemd_unit_installed, profile_for_config,
-    render_service_unit, run_doctor_checks, systemctl_is_active, systemctl_is_enabled,
-    systemd_restart, systemd_start, systemd_stop, uninstall_hypr, uninstall_systemd,
-    uninstall_walker, uninstall_waybar, DoctorCheck, InstallBinsOptions, InstallHyprOptions,
+    install_waybar_status, is_dev_config, is_systemd_unit_installed, omarchy_desktop_present,
+    profile_for_config, render_service_unit, run_doctor_checks, run_native_host,
+    systemctl_is_active, systemctl_is_enabled, systemd_restart, systemd_start, systemd_stop,
+    uninstall_hypr, uninstall_systemd, uninstall_walker, uninstall_waybar, DoctorCheck,
+    InstallAllOptions, InstallBinsOptions, InstallChromiumOptions, InstallHyprOptions,
     InstallProfile, InstallSystemdOptions, InstallWalkerOptions, InstallWaybarOptions,
     OmarchyInstallOptions,
 };

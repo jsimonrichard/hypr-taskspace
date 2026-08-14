@@ -1,7 +1,10 @@
 //! Install helpers — binaries, Waybar integration, manifests, backups.
 
+pub mod all;
 pub mod backup;
 pub mod bins;
+pub mod chromium;
+pub mod detect;
 pub mod doctor;
 pub mod hypr;
 pub mod jsonc;
@@ -14,7 +17,12 @@ pub mod systemd;
 pub mod walker;
 pub mod waybar;
 
+pub use all::{install_all, install_detected, InstallAllOptions};
 pub use bins::{install_bins, InstallBinsOptions};
+pub use chromium::{
+    install_chromium, install_chromium_status, run_native_host, InstallChromiumOptions,
+};
+pub use detect::{chromium_present, detected_integrations, omarchy_desktop_present};
 pub use doctor::{format_doctor_report, run_doctor_checks, DoctorCheck};
 pub use hypr::{
     install_hypr, install_hypr_status, strip_managed_source_lines, uninstall_hypr,

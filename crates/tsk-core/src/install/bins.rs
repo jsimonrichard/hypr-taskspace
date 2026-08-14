@@ -416,6 +416,18 @@ fn copy_share_tree(cfg: &TskConfig, share_src: &Path, tsk_cmd: &str) -> Result<(
         &share_dir.join("waybar"),
         &share_str,
     )?;
+    copy_hypr_tree(
+        &share_src.join("chromium"),
+        &share_dir.join("chromium"),
+        &share_str,
+        tsk_cmd,
+    )?;
+    copy_hypr_tree(
+        &share_src.join("bin"),
+        &share_dir.join("bin"),
+        &share_str,
+        tsk_cmd,
+    )?;
     Ok(())
 }
 

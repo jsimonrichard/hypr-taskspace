@@ -52,7 +52,7 @@ pub fn browser_profile_path(task: &Task, config: &TskConfig) -> PathBuf {
 
 /// Isolated profile path when `[browser].isolate_profile` is on; otherwise `None`
 /// so Chromium uses the host profile (extensions + logins).
-fn task_chromium_profile_dir(task: &Task, cfg: &TskConfig) -> Option<PathBuf> {
+pub(crate) fn task_chromium_profile_dir(task: &Task, cfg: &TskConfig) -> Option<PathBuf> {
     cfg.browser_isolate_profile
         .then(|| browser_profile_path(task, cfg))
 }
@@ -103,6 +103,40 @@ pub fn launch_task_browser_with(task: &Task, command: Option<&str>) -> Result<()
     open_urls_in_task_with_browser(&cfg, &state, task, &[], &browser)
 }
 
+/// Open URLs in a new Chromium window and move it to `workspace`.
+pub fn open_new_window_with_urls(
+    cfg: &TskConfig,
+    workspace: &str,
+    urls: &[&str],
+    profile_dir: Option<&Path>,
+) -> Result<()> {
+    let browser = resolve_browser_command(cfg)?;
+    let known_browsers: HashSet<String> = hyprland::get_clients()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|c| is_browser_class(&c.class_name))
+        .map(|c| c.address.clone())
+        .collect();
+
+    if hyprland::available() && cfg.hyprland_enabled {
+        hyprland::switch_workspace_for_navigation(workspace);
+    }
+
+    if is_chromium_family(&browser) {
+        spawn_chromium(&browser, profile_dir, urls, true, false, cfg)?;
+        if hyprland::available() && cfg.hyprland_enabled {
+            ensure_browser_on_workspace(workspace, profile_dir, &known_browsers);
+        }
+        return Ok(());
+    }
+
+    let mut cmd = Command::new(&browser);
+    cmd.args(urls);
+    cmd.spawn()
+        .map_err(|e| TskError::Other(format!("failed to launch browser `{browser}`: {e}")))?;
+    Ok(())
+}
+
 fn open_urls_in_task(
     cfg: &TskConfig,
     state: &SessionState,
@@ -145,6 +179,21 @@ fn open_urls_in_task_with_browser(
         focus_browser_window(window);
         spawn_chromium(browser, profile_dir.as_deref(), urls, false, true, cfg)?;
         return Ok(());
+    }
+
+    if is_chromium_family(browser) {
+        let restored = crate::browser_session::restore_pending(cfg, task)?;
+        if restored > 0 {
+            if !urls.is_empty() {
+                if let Some(window) = find_task_browser_window(state, task) {
+                    focus_browser_window(&window);
+                    spawn_chromium(browser, profile_dir.as_deref(), urls, false, true, cfg)?;
+                } else {
+                    spawn_chromium(browser, profile_dir.as_deref(), urls, true, false, cfg)?;
+                }
+            }
+            return Ok(());
+        }
     }
 
     let target_ws = target_workspace_for_browser(state, task);

@@ -1,21 +1,23 @@
 use clap::{Parser, Subcommand};
 
 use tsk_core::{
-    allowed_workspace_names, analyze_recent_latency, build_all_modules, clear_hypr_log, clear_log,
-    daemon_socket_path, detect_vcs_root, diagnose_socket2, effective_share_dir, enable_for_process,
-    ensure_repo_removable, find_repo, find_repo_by_path, format_doctor_report, format_report,
-    format_version_long, hypr_log_path, hyprland, install_bins, install_hypr, install_hypr_status,
+    allowed_workspace_names, analyze_recent_latency, build_all_modules, capture_and_save,
+    clear_hypr_log, clear_log, daemon_socket_path, detect_vcs_root, diagnose_socket2,
+    effective_share_dir, enable_for_process, ensure_repo_removable, find_repo, find_repo_by_path,
+    format_doctor_report, format_report, format_version_long, hypr_log_path, hyprland, install_all,
+    install_bins, install_chromium, install_chromium_status, install_hypr, install_hypr_status,
     install_omarchy_prod, install_systemd_status, install_walker, install_walker_status,
     install_waybar, install_waybar_status, is_daemon_running, is_dev_config, is_http_url,
-    is_systemd_unit_installed, launch_task_tui, load_config, load_dev_config, load_repos,
-    maybe_reexec_dev_session, normalize_desktop_env, ping_daemon, profile_for_config,
-    reconcile_stale_dev_session, register_repo, repo_label, run_doctor_checks, stop_daemon,
+    is_systemd_unit_installed, launch_task_tui, live_windows_path, load_config, load_dev_config,
+    load_repos, maybe_reexec_dev_session, normalize_desktop_env, ping_daemon, profile_for_config,
+    read_live_windows, read_task_session, reconcile_stale_dev_session, register_repo, repo_label,
+    restore_saved, run_doctor_checks, run_native_host, session_path, stop_daemon,
     systemctl_is_active, systemd_restart, systemd_start, systemd_stop, tail_hypr_log, tail_raw,
     trace_path, uninstall_hypr, uninstall_waybar, unregister_repo, version_info, walker_exec,
     walker_terminal, walker_watch_launch, workspace_module_key, DaemonClient, DaemonServer,
-    InstallBinsOptions, InstallHyprOptions, InstallProfile, InstallWalkerOptions,
-    InstallWaybarOptions, OmarchyInstallOptions, Registry, Result, TaskRepoSource, TaskService,
-    TaskStatus, TskError,
+    InstallAllOptions, InstallBinsOptions, InstallChromiumOptions, InstallHyprOptions,
+    InstallProfile, InstallWalkerOptions, InstallWaybarOptions, OmarchyInstallOptions, Registry,
+    Result, TaskRepoSource, TaskService, TaskStatus, TskError,
 };
 
 #[derive(Parser)]
@@ -44,7 +46,7 @@ enum Commands {
         #[command(subcommand)]
         command: Option<WindowsCommands>,
     },
-    /// Omarchy Hyprland & Waybar integration (see docs/install.md)
+    /// Desktop, launcher, and browser integrations
     Install {
         #[command(subcommand)]
         command: ProdInstallCommands,
@@ -103,6 +105,30 @@ enum Commands {
         #[arg(long, help = "Target a specific task by name or id")]
         task: Option<String>,
     },
+    /// Chromium helper (session snapshot / restore / native host)
+    Chromium {
+        #[command(subcommand)]
+        command: ChromiumCommands,
+    },
+    /// Chromium native-messaging host (stdio). Invoked by older tsk-chromium-host wrappers.
+    #[command(name = "chromium-host", hide = true)]
+    ChromiumHost,
+}
+
+#[derive(Subcommand)]
+enum ChromiumCommands {
+    /// Show live extension snapshot and saved task session
+    Status,
+    /// Write the current task's Chromium tabs to `.tsk/browser-session.json`
+    Snapshot,
+    /// Reopen saved Chromium windows now (normally happens on first launch)
+    Restore {
+        #[arg(value_name = "NAME_OR_ID")]
+        name_or_id: Option<String>,
+    },
+    /// Native-messaging host (stdio)
+    #[command(hide = true)]
+    Host,
 }
 
 #[derive(Subcommand)]
@@ -127,6 +153,15 @@ enum WindowsCommands {
 
 #[derive(Subcommand)]
 enum ProdInstallCommands {
+    /// Install every detected integration (Omarchy, Chromium, Walker)
+    All {
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long, help = "Minimal output")]
+        quiet: bool,
+        #[arg(long)]
+        workspace: Option<std::path::PathBuf>,
+    },
     /// Omarchy Hyprland & Waybar integration preset (prod)
     Omarchy {
         #[arg(long)]
@@ -136,6 +171,13 @@ enum ProdInstallCommands {
     },
     /// Walker / Elephant launch_prefix integration (prod)
     Walker {
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long, help = "Minimal output")]
+        quiet: bool,
+    },
+    /// Chromium helper extension + native messaging host
+    Chromium {
         #[arg(long)]
         dry_run: bool,
         #[arg(long, help = "Minimal output")]
@@ -491,10 +533,18 @@ fn run() -> Result<()> {
             Some(WindowsCommands::Restore { dry_run }) => cmd_windows_restore(dry_run),
         },
         Commands::Install { command } => match command {
+            ProdInstallCommands::All {
+                dry_run,
+                quiet,
+                workspace,
+            } => cmd_install_all(dry_run, quiet, workspace),
             ProdInstallCommands::Omarchy { dry_run, workspace } => {
                 cmd_install_omarchy(dry_run, workspace)
             }
             ProdInstallCommands::Walker { dry_run, quiet } => cmd_install_walker(dry_run, quiet),
+            ProdInstallCommands::Chromium { dry_run, quiet } => {
+                cmd_install_chromium(dry_run, quiet)
+            }
         },
         Commands::Dev { command } => match command {
             DevCommands::Install {
@@ -652,6 +702,13 @@ fn run() -> Result<()> {
             ResetCommands::Layout => cmd_reset_layout(),
         },
         Commands::Open { urls, host, task } => cmd_open(&urls, host, task.as_deref()),
+        Commands::Chromium { command } => match command {
+            ChromiumCommands::Status => cmd_chromium_status(),
+            ChromiumCommands::Snapshot => cmd_chromium_snapshot(),
+            ChromiumCommands::Restore { name_or_id } => cmd_chromium_restore(name_or_id.as_deref()),
+            ChromiumCommands::Host => run_native_host(),
+        },
+        Commands::ChromiumHost => run_native_host(),
     }
 }
 
@@ -841,6 +898,34 @@ fn cmd_install_bins(
     Ok(())
 }
 
+fn cmd_install_all(
+    dry_run: bool,
+    quiet: bool,
+    workspace: Option<std::path::PathBuf>,
+) -> Result<()> {
+    let cfg = load_config()?;
+    let actions = install_all(
+        &cfg,
+        &InstallAllOptions {
+            dry_run,
+            quiet,
+            workspace_root: workspace,
+        },
+    )?;
+    for line in &actions {
+        println!("{line}");
+    }
+    if dry_run {
+        return Ok(());
+    }
+    if !quiet {
+        println!();
+        println!("Detected integrations installed. Run `tsk doctor` to verify.");
+        println!("Restart Chromium if the helper extension was installed.");
+    }
+    Ok(())
+}
+
 fn cmd_install_omarchy(dry_run: bool, workspace: Option<std::path::PathBuf>) -> Result<()> {
     let cfg = load_config()?;
     let actions = install_omarchy_prod(
@@ -890,6 +975,26 @@ fn cmd_install_walker(dry_run: bool, quiet: bool) -> Result<()> {
         println!(
             "Walker integration installed — restart Walker if apps still launch without task env."
         );
+    }
+    Ok(())
+}
+
+fn cmd_install_chromium(dry_run: bool, quiet: bool) -> Result<()> {
+    let cfg = load_config()?;
+    let actions = install_chromium(
+        &cfg,
+        &InstallChromiumOptions {
+            dry_run,
+            quiet,
+            skip_if_missing: false,
+            assume_present: false,
+            user_data_dir: None,
+        },
+    )?;
+    if dry_run || !quiet {
+        for line in actions {
+            println!("{line}");
+        }
     }
     Ok(())
 }
@@ -1143,6 +1248,30 @@ fn cmd_integration_status(cfg: tsk_core::TskConfig) -> Result<()> {
         );
     } else {
         println!("Walker integration: not installed");
+    }
+    let chromium = install_chromium_status(&cfg)?;
+    if chromium
+        .get("installed")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        println!("Chromium integration: installed");
+        if let Some(id) = chromium.get("extension_id").and_then(|v| v.as_str()) {
+            println!("  extension id: {id}");
+        }
+        if let Some(p) = chromium.get("external_json").and_then(|v| v.as_str()) {
+            println!("  external: {p}");
+        }
+    } else if chromium
+        .get("detected")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+    {
+        println!(
+            "Chromium integration: not installed (Chromium detected — `tsk install chromium`)"
+        );
+    } else {
+        println!("Chromium integration: not detected");
     }
     if profile.install_systemd() {
         let s = install_systemd_status(&cfg)?;
@@ -1536,6 +1665,132 @@ fn cmd_task_browser(name_or_id: Option<&str>, host: bool, url: Option<&str>) -> 
         return client()?.open_url(&refs, task_id.as_deref(), host);
     }
     client()?.open_browser(task_id.as_deref(), host)
+}
+
+fn resolve_current_or_named_task(name_or_id: Option<&str>) -> Result<tsk_core::Task> {
+    let svc = client()?;
+    if let Some(name) = name_or_id {
+        return svc.resolve_task(name);
+    }
+    let state = svc.load_state()?;
+    let id = state
+        .current_task_id
+        .ok_or_else(|| TskError::Other("No current task (switch to a taskspace first)".into()))?;
+    svc.resolve_task(&id)
+}
+
+fn cmd_chromium_status() -> Result<()> {
+    let cfg = load_config()?;
+    let path = live_windows_path(&cfg);
+    println!("Live snapshot: {}", path.display());
+    match read_live_windows(&cfg)? {
+        Some(live) => {
+            println!("  updated: {}", live.updated_at);
+            println!("  windows: {}", live.windows.len());
+            for window in &live.windows {
+                let active = window
+                    .tabs
+                    .iter()
+                    .find(|t| t.active)
+                    .or_else(|| window.tabs.first());
+                let title = active.map(|t| t.title.as_str()).unwrap_or("");
+                let mark = if window.focused { "focused" } else { "       " };
+                println!(
+                    "    #{} {mark}  {} tab(s)  {title}",
+                    window.id,
+                    window.tabs.len()
+                );
+                for tab in &window.tabs {
+                    let prefix = if tab.active { "*" } else { " " };
+                    println!("      {prefix} {}", tab.url);
+                }
+            }
+        }
+        None => {
+            println!("  (missing — extension has not written a snapshot yet)");
+            println!("  Rebuild tsk, run `tsk install chromium`, fully quit Chromium,");
+            println!("  reopen it, then change a tab and run this command again.");
+        }
+    }
+
+    match resolve_current_or_named_task(None) {
+        Ok(task) => {
+            let saved = session_path(&cfg, &task.id);
+            println!();
+            println!("Current task: {} ({})", task.name, task.id);
+            println!("Saved session: {}", saved.display());
+            match read_task_session(&cfg, &task.id)? {
+                Some(session) => {
+                    println!("  saved: {}", session.saved_at);
+                    println!(
+                        "  pending: {}",
+                        if session.pending {
+                            "yes (frozen until the next Chromium launch)"
+                        } else {
+                            "no (updated live; next launch with no window reopens these tabs)"
+                        }
+                    );
+                    println!("  windows: {}", session.windows.len());
+                    for window in &session.windows {
+                        println!(
+                            "    workspace {}  {}  ({} url(s))",
+                            window.workspace,
+                            window.title,
+                            window.urls.len()
+                        );
+                        for url in &window.urls {
+                            println!("      {url}");
+                        }
+                    }
+                }
+                None => println!(
+                    "  (none — open a tab in this taskspace and wait a second, or run `tsk chromium snapshot`)"
+                ),
+            }
+        }
+        Err(_) => {
+            println!();
+            println!("Current task: (none)");
+        }
+    }
+    Ok(())
+}
+
+fn cmd_chromium_snapshot() -> Result<()> {
+    let cfg = load_config()?;
+    let task = resolve_current_or_named_task(None)?;
+    if read_live_windows(&cfg)?.is_none() {
+        return Err(TskError::Other(
+            "No live Chromium snapshot yet. Run `tsk chromium status` for setup steps.".into(),
+        ));
+    }
+    let session = capture_and_save(&cfg, &task)?;
+    let path = session_path(&cfg, &task.id);
+    let tabs: usize = session.windows.iter().map(|w| w.urls.len()).sum();
+    println!(
+        "Saved {} window(s), {tabs} tab(s) for {} → {}",
+        session.windows.len(),
+        task.name,
+        path.display()
+    );
+    if session.windows.is_empty() {
+        println!(
+            "Nothing matched. Confirm a Chromium window is on this task's workspace and `tsk chromium status` shows that tab."
+        );
+    }
+    Ok(())
+}
+
+fn cmd_chromium_restore(name_or_id: Option<&str>) -> Result<()> {
+    let cfg = load_config()?;
+    let task = resolve_current_or_named_task(name_or_id)?;
+    let opened = restore_saved(&cfg, &task)?;
+    if opened == 0 {
+        println!("No saved Chromium session for {} ({})", task.name, task.id);
+    } else {
+        println!("Reopened {opened} Chromium window(s) for {}", task.name);
+    }
+    Ok(())
 }
 
 fn cmd_open(urls: &[String], host: bool, task: Option<&str>) -> Result<()> {

@@ -81,6 +81,33 @@ fn has_instance() -> bool {
     std::env::var("HYPRLAND_INSTANCE_SIGNATURE").is_ok() && std::env::var("XDG_RUNTIME_DIR").is_ok()
 }
 
+/// Chromium's native-messaging host often has `XDG_RUNTIME_DIR` but not
+/// `HYPRLAND_INSTANCE_SIGNATURE`. Point hyprctl at the running instance.
+pub fn ensure_instance_env() {
+    if cfg!(test) {
+        return;
+    }
+    if std::env::var("HYPRLAND_INSTANCE_SIGNATURE").is_ok() {
+        return;
+    }
+    let Ok(runtime) = std::env::var("XDG_RUNTIME_DIR") else {
+        return;
+    };
+    let hypr_dir = std::path::Path::new(&runtime).join("hypr");
+    let Ok(entries) = std::fs::read_dir(&hypr_dir) else {
+        return;
+    };
+    let mut names: Vec<String> = entries
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.path().join(".socket.sock").is_file())
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .collect();
+    names.sort();
+    if let Some(name) = names.into_iter().next() {
+        std::env::set_var("HYPRLAND_INSTANCE_SIGNATURE", name);
+    }
+}
+
 pub fn hyprctl_json(args: &[&str]) -> Result<Value> {
     if !available() {
         return Err(TskError::HyprlandUnavailable);

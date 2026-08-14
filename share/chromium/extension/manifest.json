@@ -1,0 +1,10 @@
+{
+  "manifest_version": 3,
+  "name": "TSK Taskspace",
+  "version": "0.0.0",
+  "description": "Taskspace browser helper — window/tab session owned by tsk.",
+  "permissions": ["alarms", "nativeMessaging", "tabs", "windows"],
+  "background": {
+    "service_worker": "background.js"
+  }
+}

@@ -2,7 +2,7 @@
 
 Production setup is **manual** for Hyprland and Waybar integration because keybinds depend on your existing config — except on **Omarchy**, where an automated preset is available.
 
-Static files (templates, Waybar `.so`, systemd unit) come from **your package manager** or **repo scripts** — not from `tsk install` (except `install omarchy`, which patches your Hypr/Waybar configs).
+Static files (templates, Waybar `.so`, systemd unit) come from **your package manager** or **repo scripts** — not from `tsk install` (except the `install` subcommands, which patch user configs).
 
 ## Arch Linux (pacman)
 
@@ -16,6 +16,23 @@ Templates live under `/usr/share/tsk/`; runtime data (`state.db`, `daemon.sock`)
 See **[packaging.md](packaging.md)** for paths and manual integration steps.
 
 ---
+
+## Detected integrations (`tsk install all`)
+
+```bash
+tsk install all
+tsk install all --dry-run
+```
+
+This looks at the machine and runs the matching installers:
+
+| Detected | Command run |
+|---|---|
+| `~/.local/share/omarchy` | `tsk install omarchy` (Hypr, Waybar, Walker, systemd) |
+| Chromium on PATH or `~/.config/chromium` | `tsk install chromium` |
+| `~/.config/elephant/elephant.toml` (and no Omarchy) | `tsk install walker` |
+
+Omarchy already installs Walker, so Elephant is not patched twice.
 
 ## Omarchy (automated prod install)
 
@@ -31,6 +48,30 @@ tsk doctor
 This patches Hyprland and Waybar (source line, Omarchy unbinds, `cffi/tsk` module, styles, restart) with config backups for rollback. Share assets must already be installed (pacman or `scripts/install-user-share.sh`).
 
 Dry-run: `tsk install omarchy --dry-run`
+
+## Chromium helper extension
+
+Orthogonal to Omarchy. Registers a packed helper extension and a native-messaging host in the **host** Chromium profile (`~/.config/chromium`):
+
+```bash
+tsk install chromium
+```
+
+Restart Chromium afterwards (fully quit first). The extension is loaded via `External Extensions/<id>.json` (not by writing into `Default/Extensions/`).
+
+The CRX version comes from the workspace package version in `Cargo.toml`. Bump that for a release — do not edit `share/chromium/extension/manifest.json`. From-source installs append a revision (`0.1.0.3`, …) so `tsk install chromium` updates Chromium without a version bump.
+
+Test the helper without archiving a task:
+
+```bash
+tsk chromium status      # live tabs + per-task snapshot
+# close the Chromium window, then open Chromium from Walker
+# or: tsk task browser / tsk chromium restore
+```
+
+The helper writes `~/tsk-tasks/<id>/.tsk/browser-session.json` automatically as tabs change. Archiving freezes that snapshot; restoring a task leaves it pending. The first Chromium launch in that taskspace (Walker or `tsk task browser`) reopens the tabs.
+
+`status` is the first thing to check: if `live-windows.json` is missing, the extension is not reaching the native host.
 
 ---
 

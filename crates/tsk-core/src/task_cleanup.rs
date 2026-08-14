@@ -137,6 +137,9 @@ pub fn purge_task_session_keys(state: &mut SessionState, task_id: &str) {
 
 /// Window close, container stop, and checkout detach for archive — does not touch session state.
 pub fn run_archive_teardown(config: &TskConfig, task: &Task) -> Result<()> {
+    if let Err(err) = crate::browser_session::capture_and_save(config, task) {
+        eprintln!("tsk: archive browser session: {err}");
+    }
     let _closed = close_task_windows(config, task)?;
     if let Err(err) = stop_task_container(task) {
         eprintln!(

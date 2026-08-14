@@ -13,6 +13,7 @@ sub() {
 
 install -d "${pkgdir}${share}/hypr/integrations"
 install -d "${pkgdir}${share}/waybar"
+install -d "${pkgdir}${share}/chromium/extension"
 install -d "${pkgdir}${share}/lib"
 install -d "${pkgdir}${share}/bin"
 
@@ -34,6 +35,21 @@ for file in "${repo_share}/waybar/"*; do
   [[ -f "$file" ]] || continue
   sub "$file" >"${pkgdir}${share}/waybar/$(basename "$file")"
 done
+
+# Chromium helper extension (unpacked source; packed at `tsk install chromium`)
+if [[ -d "${repo_share}/chromium" ]]; then
+  while IFS= read -r -d '' file; do
+    rel="${file#"${repo_share}/chromium/"}"
+    dest="${pkgdir}${share}/chromium/${rel}"
+    install -d "$(dirname "$dest")"
+    sub "$file" >"$dest"
+  done < <(find "${repo_share}/chromium" -type f -print0)
+fi
+
+if [[ -f "${repo_share}/bin/tsk-chromium-host" ]]; then
+  sub "${repo_share}/bin/tsk-chromium-host" >"${pkgdir}${share}/bin/tsk-chromium-host"
+  chmod 755 "${pkgdir}${share}/bin/tsk-chromium-host"
+fi
 
 install -Dm644 "${srcdir}/docs/packaging.md" \
   "${pkgdir}/usr/share/doc/hypr-taskspace/INTEGRATION.md"

@@ -14,6 +14,8 @@ This installs:
 | `/usr/bin/tsk` | CLI |
 | `/usr/share/tsk/hypr/` | Hyprland bindings + window rules |
 | `/usr/share/tsk/waybar/` | Waybar CFFI snippet + styles |
+| `/usr/share/tsk/chromium/` | Helper extension source (packed by `tsk install chromium`) |
+| `/usr/share/tsk/bin/tsk-chromium-host` | Native-messaging wrapper |
 | `/usr/share/tsk/lib/libtsk_waybar.so` | Waybar module |
 | `/usr/lib/systemd/user/tskd.service` | User daemon unit |
 | `/usr/share/tsk/config.toml.example` | Suggested user config |

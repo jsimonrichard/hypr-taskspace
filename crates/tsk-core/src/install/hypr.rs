@@ -419,7 +419,7 @@ fn source_line_mentions(body: &str, filename: &str) -> bool {
 }
 
 fn omarchy_desktop_present() -> bool {
-    crate::xdg::expand("~/.local/share/omarchy").is_dir()
+    crate::install::detect::omarchy_desktop_present()
 }
 
 fn remove_legacy_dev_manifest(cfg: &TskConfig, integration: &str) -> Result<()> {

@@ -8,10 +8,11 @@ use crate::daemon_socket_path;
 use crate::error::Result;
 use crate::hyprland;
 use crate::hyprland_events::diagnose_socket2;
+use crate::install::detect::chromium_present;
 use crate::install::waybar::CFFI_MODULE;
 use crate::install::{
-    install_hypr_status, install_systemd_status, install_walker_status, install_waybar_status,
-    manifest,
+    install_chromium_status, install_hypr_status, install_systemd_status, install_walker_status,
+    install_waybar_status, manifest,
 };
 use crate::is_daemon_running;
 use crate::share::{effective_share_dir, uses_packaged_share};
@@ -138,6 +139,27 @@ pub fn run_doctor_checks(cfg: &TskConfig) -> Result<Vec<DoctorCheck>> {
             format!("{walker_path} — expected launch_prefix = \"{expected}\"")
         },
     });
+
+    if chromium_present() {
+        let chromium = install_chromium_status(cfg)?;
+        let ok = chromium
+            .get("installed")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        checks.push(DoctorCheck {
+            label: "Chromium helper extension".into(),
+            passed: ok,
+            detail: if ok {
+                chromium
+                    .get("external_json")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("installed")
+                    .to_string()
+            } else {
+                "Chromium detected — run `tsk install chromium` (or `tsk install all`)".into()
+            },
+        });
+    }
 
     checks.push(DoctorCheck {
         label: "SUPER+1 runs tsk workspace switch (not Omarchy)".into(),

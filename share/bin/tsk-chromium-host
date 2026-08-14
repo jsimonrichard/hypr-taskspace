@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Chromium native-messaging host — stdio JSON framed by tsk.
+set -euo pipefail
+
+TSK_CMD="${TSK:-@TSK_CMD@}"
+if [[ "$TSK_CMD" == "@TSK_CMD@" ]]; then
+  TSK_CMD="$(command -v tsk 2>/dev/null || true)"
+fi
+if [[ -z "$TSK_CMD" && -x /usr/bin/tsk ]]; then
+  TSK_CMD=/usr/bin/tsk
+fi
+if [[ -z "$TSK_CMD" ]]; then
+  echo "tsk-chromium-host: tsk not found" >&2
+  exit 1
+fi
+
+exec "$TSK_CMD" chromium-host
