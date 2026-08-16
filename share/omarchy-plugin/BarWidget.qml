@@ -19,8 +19,16 @@ BarWidget {
     visible_workspace_count: 5,
     occupied_workspace_indices: [],
     active_workspace: 1,
-    active_workspace_name: null
+    active_workspace_name: null,
+    global_workspace_slots: []
   })
+  // Hoisted so Repeater delegates bind to a real QML property, not a nested
+  // JSON field (those don't always retrigger).
+  property var globalWorkspaceSlots: []
+
+  // Match Waybar `#cffi-tsk #tsk-workspaces label.global` (`share/waybar/tsk-style.css`).
+  readonly property color globalSlotColor: "#7ab392"
+  readonly property color globalSlotEmptyColor: Qt.rgba(122 / 255, 179 / 255, 146 / 255, 0.55)
 
   function refresh() {
     if (!statusProc.running) statusProc.running = true
@@ -29,10 +37,23 @@ BarWidget {
   function applyStatus(text) {
     try {
       const parsed = JSON.parse(text || "{}")
-      if (parsed && typeof parsed === "object") root.status = parsed
+      if (!parsed || typeof parsed !== "object") return
+      root.status = parsed
+      const raw = parsed.global_workspace_slots
+      const next = []
+      if (raw && raw.length) {
+        for (let i = 0; i < raw.length; i++) next.push(Number(raw[i]))
+      }
+      root.globalWorkspaceSlots = next
     } catch (e) {
     }
   }
+
+  // Bumped on Hyprland events so occupancy/focus bindings re-run even when
+  // nested `toplevels` lists don't notify on their own.
+  property int hyprRev: 0
+  readonly property int minVisibleSlots: 5
+  readonly property string focusedWorkspaceName: Hyprland.focusedWorkspace ? String(Hyprland.focusedWorkspace.name) : ""
 
   function workspaceByName(name) {
     const values = Hyprland.workspaces.values
@@ -42,26 +63,52 @@ BarWidget {
     return null
   }
 
-  function visibleSlots() {
+  readonly property int focusedSlotIndex: {
     const names = root.status.workspaces || []
-    const visible = Math.max(1, Number(root.status.visible_workspace_count) || names.length)
-    const active = Number(root.status.active_workspace) || 1
-    const slots = []
-    for (let i = 0; i < names.length; i++) {
-      const index = i + 1
-      if (index <= visible || index === active) slots.push(index)
+    const focusedName = root.focusedWorkspaceName
+    if (focusedName) {
+      for (let i = 0; i < names.length; i++) {
+        if (names[i] === focusedName) return i + 1
+      }
     }
+    return Number(root.status.active_workspace) || 1
+  }
+
+  readonly property int highestOccupiedSlot: {
+    const _ = root.hyprRev
+    const __ = Hyprland.workspaces.values.length
+    const names = root.status.workspaces || []
+    let highest = 0
+    for (let i = 0; i < names.length; i++) {
+      if (root.slotOccupied(i + 1)) highest = i + 1
+    }
+    return highest
+  }
+
+  // Live copy of Waybar `visible_default_workspace_count`: min 5, expand to
+  // the focused or highest occupied slot. Do not use JSON `visible_workspace_count`
+  // here — that lags on `tsk bar status` / the 2s poll.
+  readonly property var slotModel: {
+    const names = root.status.workspaces || []
+    const total = names.length
+    const visible = Math.min(
+      Math.max(root.minVisibleSlots, root.focusedSlotIndex, root.highestOccupiedSlot),
+      total,
+      10
+    )
+    const slots = []
+    for (let i = 1; i <= visible; i++) slots.push(i)
     return slots
   }
 
   function slotLabel(index) {
-    const focusedName = Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.name : ""
     const name = (root.status.workspaces || [])[index - 1]
-    if (name && focusedName === name) return "\uDB85\uDCFB"
+    if (name && root.focusedWorkspaceName === name) return "\uDB85\uDCFB"
     return index === 10 ? "0" : String(index)
   }
 
   function slotOccupied(index) {
+    const _ = root.hyprRev
     const name = (root.status.workspaces || [])[index - 1]
     const workspace = name ? root.workspaceByName(name) : null
     if (workspace) return workspace.toplevels.values.length > 0
@@ -71,10 +118,26 @@ BarWidget {
 
   function slotFocused(index) {
     const name = (root.status.workspaces || [])[index - 1]
-    if (!name || !Hyprland.focusedWorkspace) {
+    if (!name || !root.focusedWorkspaceName) {
       return Number(root.status.active_workspace) === index
     }
-    return Hyprland.focusedWorkspace.name === name
+    return root.focusedWorkspaceName === name
+  }
+
+  function slotGlobal(index) {
+    const slots = root.globalWorkspaceSlots
+    const n = Number(index)
+    for (let i = 0; i < slots.length; i++) {
+      if (Number(slots[i]) === n) return true
+    }
+    // Same rule as Waybar: a purely numeric workspace name in the global set.
+    const name = String((root.status.workspaces || [])[index - 1] || "")
+    if (!/^[0-9]+$/.test(name)) return false
+    const named = Number(name)
+    for (let i = 0; i < slots.length; i++) {
+      if (Number(slots[i]) === named) return true
+    }
+    return false
   }
 
   function taskLabel() {
@@ -126,6 +189,23 @@ BarWidget {
     onLoaded: root.refresh()
   }
 
+  Connections {
+    target: Hyprland
+    function onRawEvent(event) {
+      if (!event || !event.name) return
+      const name = String(event.name)
+      if (name === "workspace" || name === "workspacev2"
+          || name === "focusedmon" || name === "focusedmonv2"
+          || name === "openwindow" || name === "closewindow"
+          || name === "movewindow" || name === "movewindowv2"
+          || name === "createworkspace" || name === "createworkspacev2"
+          || name === "destroyworkspace" || name === "destroyworkspacev2"
+          || name === "renameworkspace") {
+        root.hyprRev++
+      }
+    }
+  }
+
   Timer {
     interval: 2000
     running: true
@@ -137,7 +217,7 @@ BarWidget {
     id: grid
     anchors.fill: parent
     anchors.rightMargin: root.trailingGap
-    columns: root.vertical ? 1 : (1 + root.visibleSlots().length)
+    columns: root.vertical ? 1 : (1 + root.slotModel.length)
     columnSpacing: root.vertical ? 0 : Style.space(1)
     rowSpacing: root.vertical ? Style.space(2) : 0
 
@@ -151,17 +231,24 @@ BarWidget {
     }
 
     Repeater {
-      model: root.visibleSlots()
+      model: root.slotModel
 
       WidgetButton {
         required property int modelData
 
         readonly property bool occupied: root.slotOccupied(modelData)
         readonly property bool focused: root.slotFocused(modelData)
+        readonly property bool isGlobal: root.slotGlobal(modelData)
 
         bar: root.bar
         text: root.slotLabel(modelData)
-        opacity: occupied || focused ? 1 : 0.5
+        // WidgetButton.foreground tracks the bar theme. Custom colors go
+        // through active/activeColor (same path as urgent indicators).
+        active: isGlobal
+        useActiveColor: isGlobal
+        activeColor: occupied || focused ? root.globalSlotColor : root.globalSlotEmptyColor
+        opacity: occupied || focused || isGlobal ? 1 : 0.5
+        tooltipText: isGlobal ? (String(modelData) + " (global)") : ""
         horizontalMargin: 6
         verticalPadding: 6
         fixedWidth: root.vertical ? root.barSize : Style.space(20)
