@@ -29,7 +29,7 @@ cd packaging/arch && makepkg -si
 systemctl --user enable --now tskd.service
 ```
 
-Then run `tsk install omarchy` (Lua bindings + bar plugin + menu launch prefix). Non-Omarchy Hyprland can source `/usr/share/tsk/hypr/bindings.conf` and optionally merge Waybar snippets under `/usr/share/tsk/waybar/`.
+Then run `tsk install omarchy` (Lua bindings + bar plugin + overlay + menu launch prefix). Use `tsk install omarchy --tui` to keep the bar widget but open the ratatui TUI from **SUPER+Tab** and the task label. Non-Omarchy Hyprland can source `/usr/share/tsk/hypr/bindings.conf` and optionally merge Waybar snippets under `/usr/share/tsk/waybar/`.
 
 **Cargo / from source:**
 
@@ -46,7 +46,8 @@ Wire Hyprland to `~/.local/share/tsk/` the same way (`tsk install omarchy` on Om
 ```bash
 tsk install all                      # Omarchy + Chromium, whichever are present
 # or individually:
-tsk install omarchy
+tsk install omarchy                  # overlay control UI (default)
+# tsk install omarchy --tui          # ratatui TUI instead
 tsk install chromium
 tsk doctor
 ```
@@ -55,21 +56,23 @@ Full steps, config examples, and uninstall: **[docs/install.md](docs/install.md)
 
 ## Daily use
 
-### Task manager (TUI)
+### Task manager
 
-The task manager is a **ratatui** terminal UI for creating, switching, and archiving tasks without memorizing CLI flags.
+On **Omarchy**, **SUPER+Tab** and the bar task label open the control UI chosen at install time. `tsk install omarchy` (the default) toggles a modal `tsk.taskspace` overlay (exclusive keyboard focus, click-scrim to dismiss). A second press closes it instead of opening another window. Type to filter, arrows to move, **Enter** to switch, **Esc** to dismiss. **Tab** or **←/→** cycle Tasks / Archived / Repos. **Alt+N** creates a task (or opens the desktop folder picker to register a repo), **Alt+E** renames, **Alt+D** archives or unregisters, **Alt+Shift+D** deletes, **Alt+R** restores. `tsk install omarchy --tui` keeps the bar widget and opens the floating ratatui window instead.
+
+The **ratatui** TUI is still there for creating, renaming, and archiving tasks, and as the fallback when the overlay is not installed.
 
 **Open it:**
 
 | Method | Command / binding |
 |--------|-------------------|
-| Hyprland keybind | **SUPER+Tab** (default in shipped Lua / `bindings.conf`) |
-| Omarchy bar | click the task label |
+| Hyprland keybind | **SUPER+Tab** (`tsk task tui-launch` — overlay or TUI from the Omarchy install choice) |
+| Omarchy bar | click the task label (same overlay toggle) |
 | Waybar (legacy) | click the task label |
-| New terminal window | `tsk task tui-launch` |
+| Overlay / TUI window | `omarchy-shell shell toggle tsk.taskspace` or `tsk task tui-launch` |
 | Current terminal | `tsk task tui` |
 
-`tsk task tui-launch` (and **SUPER+Tab**) spawn a floating terminal (`org.tsk.task-tui`). `tsk task tui` runs in whatever terminal you are already in.
+On Omarchy, **SUPER+Tab** and the bar call `tsk task tui-launch`, which opens the overlay after `tsk install omarchy` or the floating TUI after `tsk install omarchy --tui`. Set `TSK_TASK_TUI=terminal` to force the floating `org.tsk.task-tui` window for one shot. `tsk task tui` always runs in the current terminal.
 
 **Panels** — use **Tab** / **Shift+Tab**, or **h** / **l** / arrow keys to move between:
 
@@ -142,7 +145,7 @@ tsk repo root                        # detected git/jj root for cwd
 
 ### Keybindings (Hyprland)
 
-These match the defaults in `share/hypr/omarchy.lua` (Omarchy) and `share/hypr/bindings.conf` (legacy Hyprland `.conf`). `tsk install omarchy` `dofile`s the Lua file from `~/.config/hypr/bindings.lua` after unbinding Omarchy workspace and browser keys. Pacman and manual installs use the same templates from `/usr/share/tsk/hypr/` or `~/.local/share/tsk/hypr/`; remap freely, but the underlying commands stay the same (`tsk task tui-launch`, `tsk workspace switch 3`, `tsk launch chromium.desktop`, …).
+These match the defaults in `share/hypr/omarchy.lua` (Omarchy) and `share/hypr/bindings.conf` (legacy Hyprland `.conf`). `tsk install omarchy` `dofile`s the Lua file from `~/.config/hypr/bindings.lua` after unbinding Omarchy workspace and browser keys. Pacman and manual installs use the same templates from `/usr/share/tsk/hypr/` or `~/.local/share/tsk/hypr/`; remap freely. Omarchy **SUPER+Tab** is `tsk task tui-launch` (overlay or TUI from the install choice); other default commands stay `tsk workspace switch 3`, `tsk launch chromium.desktop`, and so on.
 
 | Action | Default binding |
 |--------|---------|
@@ -182,7 +185,7 @@ systemctl --user status tskd.service
 hyprctl reload                       # after changing Lua or Hypr source lines
 ```
 
-If the Omarchy bar widget is stale, run `omarchy-shell shell call tsk.taskspace refresh` (or `tsk doctor`). Waybar CFFI is optional/legacy for non-Omarchy Hyprland.
+If the Omarchy bar widget or overlay is stale, run `omarchy-shell shell call tsk.taskspace refresh` (or `tsk doctor`). Waybar CFFI is optional/legacy for non-Omarchy Hyprland.
 
 ## More documentation
 

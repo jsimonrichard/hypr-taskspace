@@ -88,3 +88,6 @@ o.bind("SUPER + SHIFT + ALT + B", "Taskspace launch browser (private)", run("lau
 -- https://wiki.hypr.land/Configuring/Basics/Window-Rules/
 o.window("org.tsk.task-tui", { float = true, center = true, size = { 880, 520 } })
 o.window({ title = "^tsk tasks$" }, { float = true, center = true, size = { 880, 520 } })
+
+-- Overlay task switcher (tsk.taskspace). Same no-anim treatment as omarchy.menu.
+hl.layer_rule({ match = { namespace = "tsk-taskspace" }, no_anim = true, animation = "none" })

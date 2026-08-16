@@ -1,5 +1,6 @@
 //! Omarchy Quattro shell plugin + cloned-menu launch prefix.
 
+use std::collections::HashSet;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -8,7 +9,7 @@ use std::process::{Command, Stdio};
 use crate::binary::{command_v_login, resolve_tsk_command};
 use crate::config::TskConfig;
 use crate::error::{Result, TskError};
-use crate::install::profile::InstallProfile;
+use crate::install::profile::{install_metadata_dir, profile_for_config, InstallProfile};
 use crate::share::effective_share_dir;
 use crate::xdg::{ensure_parent, expand};
 
@@ -17,11 +18,44 @@ pub const WORKSPACES_ID: &str = "omarchy.workspaces";
 pub const TSK_MANAGED_LAUNCH: &str = "tsk-managed-launch";
 
 const STOCK_LAUNCH: &str = "if (root.appLibrary) root.appLibrary.launch(appId, label)";
+const OVERLAY_FILES: &[&str] = &["Taskspace.qml", "TaskspaceModel.js"];
+
+/// Which Omarchy control surface SUPER+Tab and the bar task label open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ControlUi {
+    /// Modal `tsk.taskspace` overlay inside omarchy-shell.
+    #[default]
+    Shell,
+    /// Floating ratatui window (`tsk task tui-launch`).
+    Tui,
+}
+
+impl ControlUi {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Shell => "shell",
+            Self::Tui => "tui",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim() {
+            "shell" | "overlay" => Some(Self::Shell),
+            "tui" | "terminal" => Some(Self::Tui),
+            _ => None,
+        }
+    }
+
+    pub fn includes_overlay(self) -> bool {
+        matches!(self, Self::Shell)
+    }
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct InstallPluginOptions {
     pub dry_run: bool,
     pub quiet: bool,
+    pub control_ui: ControlUi,
 }
 
 pub fn plugins_dir() -> PathBuf {
@@ -70,6 +104,43 @@ pub fn plugin_source_dir(cfg: &TskConfig) -> PathBuf {
     effective_share_dir(cfg).join("omarchy-plugin")
 }
 
+pub fn overlay_qml_path() -> PathBuf {
+    plugin_install_dir().join("Taskspace.qml")
+}
+
+pub fn overlay_installed() -> bool {
+    overlay_qml_path().is_file()
+}
+
+pub fn control_ui_path(cfg: &TskConfig) -> PathBuf {
+    install_metadata_dir(cfg, profile_for_config(cfg)).join("install/omarchy/control-ui")
+}
+
+pub fn load_control_ui(cfg: &TskConfig) -> Option<ControlUi> {
+    fs::read_to_string(control_ui_path(cfg))
+        .ok()
+        .and_then(|text| ControlUi::parse(&text))
+}
+
+pub fn save_control_ui(cfg: &TskConfig, ui: ControlUi) -> Result<PathBuf> {
+    let path = control_ui_path(cfg);
+    ensure_parent(&path)?;
+    fs::write(&path, format!("{}\n", ui.as_str())).map_err(|source| TskError::Write {
+        path: path.clone(),
+        source,
+    })?;
+    Ok(path)
+}
+
+/// Toggle the `tsk.taskspace` overlay via omarchy-shell. Returns true when the
+/// IPC call was delivered (the shell still no-ops if the plugin is disabled).
+pub fn toggle_omarchy_overlay() -> bool {
+    if !omarchy_shell_present() || !overlay_installed() {
+        return false;
+    }
+    run_logged(&["omarchy-shell", "shell", "toggle", PLUGIN_ID]).is_ok()
+}
+
 pub fn install_omarchy_plugin(
     cfg: &TskConfig,
     profile: InstallProfile,
@@ -87,8 +158,16 @@ pub fn install_omarchy_plugin(
 
     let dest = plugin_install_dir();
     let tsk_cmd = resolve_tsk_command(cfg);
+    let control_ui = options.control_ui;
     if options.dry_run {
         actions.push(format!("would copy {} → {}", src.display(), dest.display()));
+        actions.push(format!(
+            "would set Omarchy control UI to {}",
+            control_ui.as_str()
+        ));
+        if !control_ui.includes_overlay() {
+            actions.push("would install bar-widget only (no overlay)".into());
+        }
         actions.push(format!(
             "would enable {PLUGIN_ID} and disable {WORKSPACES_ID}"
         ));
@@ -96,8 +175,14 @@ pub fn install_omarchy_plugin(
         return Ok(actions);
     }
 
-    copy_plugin_tree(&src, &dest, &tsk_cmd)?;
+    copy_plugin_tree(&src, &dest, &tsk_cmd, control_ui)?;
+    let saved = save_control_ui(cfg, control_ui)?;
     actions.push(format!("installed plugin {}", dest.display()));
+    actions.push(format!(
+        "control UI {} ({})",
+        control_ui.as_str(),
+        saved.display()
+    ));
 
     let _ = run_logged(&["omarchy", "plugin", "validate", &dest.to_string_lossy()]);
     let _ = run_logged(&["omarchy-shell", "shell", "rescanPlugins"]);
@@ -144,12 +229,13 @@ pub fn uninstall_omarchy_plugin() -> Result<Vec<String>> {
     Ok(actions)
 }
 
-fn copy_plugin_tree(src: &Path, dest: &Path, tsk_cmd: &str) -> Result<()> {
+fn copy_plugin_tree(src: &Path, dest: &Path, tsk_cmd: &str, control_ui: ControlUi) -> Result<()> {
     ensure_parent(&dest.join("_"))?;
     fs::create_dir_all(dest).map_err(|source| TskError::Write {
         path: dest.to_path_buf(),
         source,
     })?;
+    let mut wanted = HashSet::new();
     for entry in fs::read_dir(src).map_err(|source| TskError::Read {
         path: src.to_path_buf(),
         source,
@@ -162,16 +248,39 @@ fn copy_plugin_tree(src: &Path, dest: &Path, tsk_cmd: &str) -> Result<()> {
         if !path.is_file() {
             continue;
         }
+        let name = path.file_name().unwrap().to_owned();
+        let name_str = name.to_string_lossy();
+        if !control_ui.includes_overlay() && OVERLAY_FILES.contains(&name_str.as_ref()) {
+            continue;
+        }
+        wanted.insert(name.clone());
         let raw = fs::read_to_string(&path).map_err(|source| TskError::Read {
             path: path.clone(),
             source,
         })?;
-        let body = raw.replace("@TSK_CMD@", tsk_cmd);
-        let target = dest.join(path.file_name().unwrap());
+        let body = if name_str == "manifest.json" {
+            manifest_for_control_ui(&raw, control_ui)
+        } else {
+            raw.replace("@TSK_CMD@", tsk_cmd)
+        };
+        let target = dest.join(&name);
         fs::write(&target, body).map_err(|source| TskError::Write {
             path: target,
             source,
         })?;
+    }
+    for entry in fs::read_dir(dest).map_err(|source| TskError::Read {
+        path: dest.to_path_buf(),
+        source,
+    })? {
+        let entry = entry.map_err(|source| TskError::Read {
+            path: dest.to_path_buf(),
+            source,
+        })?;
+        let path = entry.path();
+        if path.is_file() && !wanted.contains(&entry.file_name()) {
+            let _ = fs::remove_file(path);
+        }
     }
     Ok(())
 }
@@ -295,6 +404,27 @@ fn js_string(s: &str) -> String {
     format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
+fn manifest_for_control_ui(raw: &str, control_ui: ControlUi) -> String {
+    if control_ui.includes_overlay() {
+        return raw.to_string();
+    }
+    let Ok(mut value) = serde_json::from_str::<serde_json::Value>(raw) else {
+        return raw.to_string();
+    };
+    let Some(obj) = value.as_object_mut() else {
+        return raw.to_string();
+    };
+    obj.insert("kinds".into(), serde_json::json!(["bar-widget"]));
+    obj.remove("keepLoaded");
+    if let Some(entry_points) = obj
+        .get_mut("entryPoints")
+        .and_then(|value| value.as_object_mut())
+    {
+        entry_points.remove("overlay");
+    }
+    serde_json::to_string_pretty(&value).unwrap_or_else(|_| raw.to_string())
+}
+
 pub fn plugin_enabled_in_shell_json() -> bool {
     layout_contains_id(&shell_json_path(), PLUGIN_ID)
 }
@@ -396,5 +526,25 @@ mod tests {
         assert!(changed);
         assert!(restored.contains(STOCK_LAUNCH));
         assert!(!restored.contains(TSK_MANAGED_LAUNCH));
+    }
+
+    #[test]
+    fn manifest_for_tui_drops_overlay_kind() {
+        let raw = r#"{
+  "id": "tsk.taskspace",
+  "kinds": ["bar-widget", "overlay"],
+  "keepLoaded": true,
+  "entryPoints": {
+    "barWidget": "BarWidget.qml",
+    "overlay": "Taskspace.qml"
+  }
+}"#;
+        let out = manifest_for_control_ui(raw, ControlUi::Tui);
+        let value: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(value["kinds"], serde_json::json!(["bar-widget"]));
+        assert!(value.get("keepLoaded").is_none());
+        assert_eq!(value["entryPoints"]["barWidget"], "BarWidget.qml");
+        assert!(value["entryPoints"].get("overlay").is_none());
+        assert_eq!(manifest_for_control_ui(raw, ControlUi::Shell), raw);
     }
 }

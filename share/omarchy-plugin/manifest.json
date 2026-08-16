@@ -4,12 +4,15 @@
   "name": "Taskspace",
   "version": "1.0.0",
   "author": "hypr-taskspace",
-  "description": "Task label and named workspaces for hypr-taskspace",
+  "description": "Task label, named workspaces, and a modal task switcher for hypr-taskspace",
   "kinds": [
-    "bar-widget"
+    "bar-widget",
+    "overlay"
   ],
+  "keepLoaded": true,
   "entryPoints": {
-    "barWidget": "BarWidget.qml"
+    "barWidget": "BarWidget.qml",
+    "overlay": "Taskspace.qml"
   },
   "barWidget": {
     "displayName": "Taskspace",

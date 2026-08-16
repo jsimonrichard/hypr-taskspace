@@ -10,7 +10,7 @@ use crate::error::{Result, TskError};
 use crate::install::backup;
 use crate::install::bins::{install_bins, InstallBinsOptions};
 use crate::install::hypr::{install_hypr, InstallHyprOptions};
-use crate::install::plugin::{install_omarchy_plugin, InstallPluginOptions};
+use crate::install::plugin::{install_omarchy_plugin, ControlUi, InstallPluginOptions};
 use crate::install::profile::InstallProfile;
 use crate::xdg::expand;
 
@@ -18,6 +18,7 @@ use crate::xdg::expand;
 pub struct OmarchyInstallOptions {
     pub dry_run: bool,
     pub workspace_root: Option<PathBuf>,
+    pub control_ui: ControlUi,
 }
 
 pub fn install_omarchy_prod(
@@ -59,6 +60,7 @@ pub fn install_omarchy_prod(
         &InstallPluginOptions {
             dry_run: options.dry_run,
             quiet: false,
+            control_ui: options.control_ui,
         },
     )?;
     actions.extend(plugin);

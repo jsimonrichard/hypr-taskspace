@@ -13,7 +13,7 @@ This installs:
 |------|---------|
 | `/usr/bin/tsk` | CLI |
 | `/usr/share/tsk/hypr/` | Hyprland Lua + `.conf` bindings + window rules |
-| `/usr/share/tsk/omarchy-plugin/` | Omarchy bar-widget (`tsk.taskspace`) |
+| `/usr/share/tsk/omarchy-plugin/` | Omarchy bar-widget + overlay (`tsk.taskspace`) |
 | `/usr/share/tsk/waybar/` | Waybar CFFI snippet + styles |
 | `/usr/share/tsk/chromium/` | Helper extension source (packed by `tsk install chromium`) |
 | `/usr/share/tsk/bin/tsk-chromium-host` | Native-messaging wrapper |
@@ -28,7 +28,7 @@ Runtime data always lives under **`~/.local/share/tsk/`** (`state.db`, `daemon.s
 
 ### Omarchy (Quattro)
 
-Prefer `tsk install omarchy`. It `dofile`s `/usr/share/tsk/hypr/omarchy.lua` from `~/.config/hypr/bindings.lua` and copies the bar plugin. Do not edit `hyprland.conf`.
+Prefer `tsk install omarchy` (or `tsk install omarchy --tui`). It `dofile`s `/usr/share/tsk/hypr/omarchy.lua` from `~/.config/hypr/bindings.lua` and copies the bar plugin. Do not edit `hyprland.conf`.
 
 ### Hyprland (legacy `.conf`)
 

@@ -26,6 +26,10 @@ pub const TUI_WINDOW_TITLE: &str = "tsk tasks";
 pub const TUI_WINDOW_CLASS: &str = "org.tsk.task-tui";
 
 pub fn launch_task_tui() -> Result<()> {
+    if prefer_omarchy_overlay() && crate::install::plugin::toggle_omarchy_overlay() {
+        return Ok(());
+    }
+
     let cfg = load_config()?;
     let registry = Registry::new(None, cfg.clone())?;
     let state = registry.load_state()?;
@@ -308,6 +312,35 @@ pub fn spawn_terminal_command(
     Ok(())
 }
 
+/// `TSK_TASK_TUI=terminal` forces the floating ratatui window even on Omarchy.
+/// `tsk install omarchy --tui` persists the same choice for SUPER+Tab / the bar.
+fn prefer_omarchy_overlay() -> bool {
+    let control = load_config()
+        .ok()
+        .and_then(|cfg| crate::install::plugin::load_control_ui(&cfg));
+    prefer_omarchy_overlay_with(
+        std::env::var("TSK_TASK_TUI").ok().as_deref(),
+        control,
+        crate::install::plugin::overlay_installed(),
+    )
+}
+
+fn prefer_omarchy_overlay_with(
+    tui_mode: Option<&str>,
+    control: Option<crate::install::plugin::ControlUi>,
+    overlay_installed: bool,
+) -> bool {
+    match tui_mode {
+        Some("terminal") => return false,
+        Some("overlay") => return true,
+        _ => {}
+    }
+    match control {
+        Some(crate::install::plugin::ControlUi::Tui) => false,
+        Some(crate::install::plugin::ControlUi::Shell) | None => overlay_installed,
+    }
+}
+
 fn terminal_base_name(term: &str) -> &str {
     Path::new(term)
         .file_name()
@@ -322,5 +355,32 @@ mod tests {
     #[test]
     fn fallbacks_include_xdg_terminal_exec() {
         assert!(TERMINAL_FALLBACKS.contains(&"xdg-terminal-exec"));
+    }
+
+    #[test]
+    fn terminal_escape_skips_omarchy_overlay() {
+        use crate::install::plugin::ControlUi;
+        assert!(!prefer_omarchy_overlay_with(Some("terminal"), None, true));
+        assert!(prefer_omarchy_overlay_with(None, None, true));
+        assert!(prefer_omarchy_overlay_with(
+            Some("overlay"),
+            Some(ControlUi::Tui),
+            false
+        ));
+        assert!(!prefer_omarchy_overlay_with(
+            None,
+            Some(ControlUi::Tui),
+            true
+        ));
+        assert!(prefer_omarchy_overlay_with(
+            None,
+            Some(ControlUi::Shell),
+            true
+        ));
+        assert!(!prefer_omarchy_overlay_with(
+            None,
+            Some(ControlUi::Shell),
+            false
+        ));
     }
 }

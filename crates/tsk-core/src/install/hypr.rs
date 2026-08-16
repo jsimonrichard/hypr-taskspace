@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use chrono::Utc;
 use serde_json::{json, Value};
 
+use crate::binary::resolve_tsk_command;
 use crate::config::TskConfig;
 use crate::error::{Result, TskError};
 use crate::install::backup::{self, backup_timestamp};
@@ -54,11 +55,12 @@ pub fn hypr_user_config_path(cfg: &TskConfig) -> PathBuf {
     }
 }
 
-pub fn lua_managed_block(share: &Path, marker: &str) -> String {
+pub fn lua_managed_block(share: &Path, marker: &str, tsk_cmd: &str) -> String {
     let lua = share.join("hypr/omarchy.lua");
     format!(
-        "-- {marker} begin\ndofile({})\n-- {marker} end\n",
-        lua_string(&lua.to_string_lossy())
+        "-- {marker} begin\ndofile({})\nhl.unbind(\"SUPER + TAB\")\no.bind(\"SUPER + TAB\", \"Task manager\", {})\n-- {marker} end\n",
+        lua_string(&lua.to_string_lossy()),
+        lua_string(&format!("{tsk_cmd} task tui-launch")),
     )
 }
 
@@ -109,7 +111,7 @@ fn upsert_lua_block(content: &str, block: &str, marker: &str) -> String {
     body
 }
 
-fn write_lua_managed_block(path: &Path, share: &Path, marker: &str) -> Result<bool> {
+fn write_lua_managed_block(path: &Path, share: &Path, marker: &str, tsk_cmd: &str) -> Result<bool> {
     ensure_parent(path)?;
     let existing = if path.is_file() {
         fs::read_to_string(path).map_err(|source| TskError::Read {
@@ -119,7 +121,7 @@ fn write_lua_managed_block(path: &Path, share: &Path, marker: &str) -> Result<bo
     } else {
         String::new()
     };
-    let block = lua_managed_block(share, marker);
+    let block = lua_managed_block(share, marker, tsk_cmd);
     if existing.contains(&format!("-- {marker} begin")) && existing.contains("omarchy.lua") {
         let updated = upsert_lua_block(&existing, &block, marker);
         if updated == existing {
@@ -186,7 +188,8 @@ fn install_hypr_lua(
 ) -> Result<Vec<String>> {
     let share = effective_share_dir(cfg);
     let config_path = hypr_user_config_path(cfg);
-    let block = lua_managed_block(&share, marker);
+    let tsk_cmd = resolve_tsk_command(cfg);
+    let block = lua_managed_block(&share, marker, &tsk_cmd);
 
     if options.dry_run {
         let mut lines = Vec::new();
@@ -241,7 +244,7 @@ fn install_hypr_lua(
     if profile == InstallProfile::Dev {
         strip_lua_file(&config_path, InstallProfile::Prod.manage_marker())?;
     }
-    write_lua_managed_block(&config_path, &share, marker)?;
+    write_lua_managed_block(&config_path, &share, marker, &tsk_cmd)?;
 
     let share_src = bins::resolve_share_templates(options.workspace_root.as_deref(), profile)?;
     let m = Manifest {
@@ -800,6 +803,14 @@ mod tests {
         fs::write(hypr.join("omarchy-escape-hatch.conf"), "").unwrap();
         let paths = omarchy_hypr_source_paths(share, &bindings);
         assert_eq!(paths, vec![bindings]);
+    }
+
+    #[test]
+    fn lua_managed_block_rebinds_task_manager() {
+        let block = lua_managed_block(Path::new("/usr/share/tsk"), "tsk-managed", "/usr/bin/tsk");
+        assert!(block.contains("dofile(\"/usr/share/tsk/hypr/omarchy.lua\")"));
+        assert!(block.contains("hl.unbind(\"SUPER + TAB\")"));
+        assert!(block.contains("/usr/bin/tsk task tui-launch"));
     }
 
     #[test]

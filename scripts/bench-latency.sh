@@ -54,14 +54,14 @@ echo
 echo "=== CLI paths (TERMINAL=/bin/false — no real windows) ==="
 bench5 "task terminal" env TERMINAL=/bin/false "$TSK" task terminal
 bench5 "task terminal --host" env TERMINAL=/bin/false "$TSK" task terminal --host
-bench5 "tui-launch" env TERMINAL=/bin/false "$TSK" task tui-launch
+bench5 "tui-launch" env TERMINAL=/bin/false TSK_TASK_TUI=terminal "$TSK" task tui-launch
 bench5 "status" "$TSK" status
 
 echo
 echo "=== Optional: real terminal spawn (set BENCH_REAL_TERMINAL=1) ==="
 if [[ "${BENCH_REAL_TERMINAL:-}" == "1" ]]; then
   bench5 "task terminal (real)" "$TSK" task terminal
-  bench5 "tui-launch (real)" "$TSK" task tui-launch
+  bench5 "tui-launch (real)" env TSK_TASK_TUI=terminal "$TSK" task tui-launch
 fi
 
 echo

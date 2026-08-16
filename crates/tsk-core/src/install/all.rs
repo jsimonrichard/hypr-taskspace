@@ -5,6 +5,7 @@ use crate::error::{Result, TskError};
 use crate::install::chromium::{install_chromium, InstallChromiumOptions};
 use crate::install::detect::{detected_integrations, DetectedIntegrations};
 use crate::install::omarchy::{install_omarchy_prod, OmarchyInstallOptions};
+use crate::install::plugin::ControlUi;
 use crate::install::walker::{install_walker, InstallWalkerOptions};
 
 #[derive(Debug, Clone, Default)]
@@ -12,6 +13,7 @@ pub struct InstallAllOptions {
     pub dry_run: bool,
     pub quiet: bool,
     pub workspace_root: Option<std::path::PathBuf>,
+    pub control_ui: ControlUi,
 }
 
 pub fn install_all(cfg: &TskConfig, options: &InstallAllOptions) -> Result<Vec<String>> {
@@ -38,6 +40,7 @@ pub fn install_detected(
             &OmarchyInstallOptions {
                 dry_run: options.dry_run,
                 workspace_root: options.workspace_root.clone(),
+                control_ui: options.control_ui,
             },
         )?;
         actions.extend(omarchy);

@@ -10,7 +10,9 @@ use crate::hypr_log;
 use crate::hyprland;
 use crate::models::{ContextMode, SessionState, Task, TaskStatus};
 use crate::registry::Registry;
+use crate::repos::{is_scratch_task, task_source_repo_path};
 use crate::state_notify::{self, StateChangeKind};
+use crate::vcs::repo_label;
 use crate::workspace_nav;
 use crate::workspaces::{default_taskspace_workspace_names, task_taskspace_workspace_names};
 use crate::xdg::{ensure_parent, tsk_runtime_dir};
@@ -886,6 +888,7 @@ impl TaskService {
             workspaces: default_taskspace_workspace_names(state.default_workspace_count),
             current: state.context_mode == ContextMode::Default,
             status: "system".into(),
+            repo_name: None,
         });
 
         for task in state.tasks.values() {
@@ -900,6 +903,7 @@ impl TaskService {
                 current: state.context_mode == ContextMode::Task
                     && state.current_task_id.as_deref() == Some(task.id.as_str()),
                 status: task.status.as_str().into(),
+                repo_name: menu_repo_name(task),
             });
         }
         Ok(items)
@@ -918,6 +922,16 @@ pub struct MenuTask {
     pub workspaces: Vec<String>,
     pub current: bool,
     pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_name: Option<String>,
+}
+
+pub fn menu_repo_name(task: &Task) -> Option<String> {
+    if is_scratch_task(task) {
+        Some("scratch".into())
+    } else {
+        Some(repo_label(task_source_repo_path(task)))
+    }
 }
 
 #[cfg(test)]

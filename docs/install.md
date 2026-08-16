@@ -1,6 +1,6 @@
 # Install (production)
 
-Production setup is **manual** for non-Omarchy Hyprland (and optional Waybar) because keybinds depend on your existing config. On **Omarchy 4 (Quattro)**, `tsk install omarchy` wires Lua bindings, the `tsk.taskspace` bar widget, and a cloned menu launch prefix.
+Production setup is **manual** for non-Omarchy Hyprland (and optional Waybar) because keybinds depend on your existing config. On **Omarchy 4 (Quattro)**, `tsk install omarchy` wires Lua bindings, the `tsk.taskspace` bar widget, the overlay task switcher, and a cloned menu launch prefix. Pass `--tui` to use the ratatui window as the control UI instead of the overlay.
 
 Static files (templates, optional Waybar `.so`, systemd unit) come from **your package manager** or **repo scripts** — not from `tsk install` (except the `install` subcommands, which patch user configs).
 
@@ -28,7 +28,7 @@ This looks at the machine and runs the matching installers:
 
 | Detected | Command run |
 |---|---|
-| `~/.config/hypr/hyprland.lua` or `omarchy-shell` | `tsk install omarchy` (Lua, bar plugin, menu `tsk launch`, systemd) |
+| `~/.config/hypr/hyprland.lua` or `omarchy-shell` | `tsk install omarchy` (Lua, bar plugin, overlay or `--tui`, menu `tsk launch`, systemd) |
 | Chromium on PATH or `~/.config/chromium` | `tsk install chromium` |
 | `~/.config/elephant/elephant.toml` (and no Omarchy) | `tsk install walker` |
 
@@ -40,7 +40,8 @@ If you use Omarchy 4 (Quattro) with `hyprland.lua` and omarchy-shell:
 
 ```bash
 # Ensure share assets exist first (pacman, or scripts/install-user-share.sh)
-tsk install omarchy
+tsk install omarchy          # overlay control UI (default)
+# tsk install omarchy --tui  # ratatui TUI instead
 scripts/install-systemd.sh
 tsk doctor
 ```
@@ -48,13 +49,13 @@ tsk doctor
 This:
 
 - Copies `share/hypr/omarchy.lua` into the share tree and appends a marked `dofile` block to `~/.config/hypr/bindings.lua` (does **not** edit `hyprland.conf`)
-- Copies `share/omarchy-plugin/` to `~/.config/omarchy/plugins/tsk.taskspace/`, enables it, and disables `omarchy.workspaces`
+- Copies `share/omarchy-plugin/` to `~/.config/omarchy/plugins/tsk.taskspace/` (bar-widget; overlay unless `--tui`), enables it, and disables `omarchy.workspaces`
 - Clones `omarchy.menu` if needed and patches app launch to `tsk launch <id>.desktop` (keeps OSD via `beginLaunchFeedback`)
 - Rebinds browser keys off `omarchy-launch-browser` onto `tsk launch chromium.desktop`
 
 Share assets must already be installed (pacman or `scripts/install-user-share.sh`).
 
-Dry-run: `tsk install omarchy --dry-run`
+Dry-run: `tsk install omarchy --dry-run` (add `--tui` to preview the TUI control-UI layout)
 
 Omarchy menu updates may require re-running `tsk install omarchy` to re-apply the clone patch. Uninstall restores `appLibrary.launch(...)` rather than deleting a clone you may have edited.
 
@@ -126,6 +127,8 @@ Waybar loads the module from a path under the share tree (see `share/waybar/cffi
 ```lua
 -- tsk-managed begin
 dofile("/usr/share/tsk/hypr/omarchy.lua")
+hl.unbind("SUPER + TAB")
+o.bind("SUPER + TAB", "Task manager", "/usr/bin/tsk task tui-launch")
 -- tsk-managed end
 ```
 
@@ -146,7 +149,7 @@ Run `hyprctl reload` after editing.
 
 ### 4. Bar integration
 
-**Omarchy:** `tsk install omarchy` installs the `tsk.taskspace` bar-widget (task label + named workspaces). It replaces `omarchy.workspaces`, which only understands numeric IDs 1–10.
+**Omarchy:** `tsk install omarchy` installs the `tsk.taskspace` plugin (bar-widget + overlay task switcher). It replaces `omarchy.workspaces`, which only understands numeric IDs 1–10. **SUPER+Tab** and the bar task label call `tsk task tui-launch`, which opens the overlay by default or the floating TUI after `tsk install omarchy --tui`.
 
 **Waybar (optional / legacy):** merge the CFFI snippet from your share tree (`waybar/cffi-module.jsonc`) into `~/.config/waybar/config.jsonc`. Append `waybar/tsk-style.css` to your Waybar `style.css`.
 

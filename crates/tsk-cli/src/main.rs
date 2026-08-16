@@ -15,10 +15,10 @@ use tsk_core::{
     run_native_host, session_path, stop_daemon, systemctl_is_active, systemd_restart,
     systemd_start, systemd_stop, tail_hypr_log, tail_raw, trace_path, uninstall_hypr,
     uninstall_waybar, unregister_repo, version_info, walker_exec, walker_terminal,
-    walker_watch_launch, workspace_module_key, DaemonClient, DaemonServer, InstallAllOptions,
-    InstallBinsOptions, InstallChromiumOptions, InstallHyprOptions, InstallPluginOptions,
-    InstallProfile, InstallWalkerOptions, InstallWaybarOptions, OmarchyInstallOptions, Registry,
-    Result, TaskRepoSource, TaskService, TaskStatus, TskError,
+    walker_watch_launch, workspace_module_key, ControlUi, DaemonClient, DaemonServer,
+    InstallAllOptions, InstallBinsOptions, InstallChromiumOptions, InstallHyprOptions,
+    InstallPluginOptions, InstallProfile, InstallWalkerOptions, InstallWaybarOptions,
+    OmarchyInstallOptions, Registry, Result, TaskRepoSource, TaskService, TaskStatus, TskError,
 };
 
 #[derive(Parser)]
@@ -172,13 +172,23 @@ enum ProdInstallCommands {
         quiet: bool,
         #[arg(long)]
         workspace: Option<std::path::PathBuf>,
+        #[arg(
+            long,
+            help = "On Omarchy, use the ratatui TUI instead of the shell overlay"
+        )]
+        tui: bool,
     },
-    /// Omarchy Hyprland & Waybar integration preset (prod)
+    /// Omarchy Hyprland, bar plugin, and task manager UI
     Omarchy {
         #[arg(long)]
         dry_run: bool,
         #[arg(long)]
         workspace: Option<std::path::PathBuf>,
+        #[arg(
+            long,
+            help = "Use the ratatui TUI instead of the Omarchy shell overlay"
+        )]
+        tui: bool,
     },
     /// Walker / Elephant launch_prefix integration (prod)
     Walker {
@@ -422,7 +432,10 @@ enum RepoCommands {
         dir: Option<std::path::PathBuf>,
     },
     /// List registered repos
-    List,
+    List {
+        #[arg(long)]
+        json: bool,
+    },
     /// Remove a repo from tsk bookmarks (does not modify the checkout)
     Remove { id_or_path: String },
     /// Show the git/jj repo root for a directory (default: cwd)
@@ -557,10 +570,13 @@ fn run() -> Result<()> {
                 dry_run,
                 quiet,
                 workspace,
-            } => cmd_install_all(dry_run, quiet, workspace),
-            ProdInstallCommands::Omarchy { dry_run, workspace } => {
-                cmd_install_omarchy(dry_run, workspace)
-            }
+                tui,
+            } => cmd_install_all(dry_run, quiet, workspace, tui),
+            ProdInstallCommands::Omarchy {
+                dry_run,
+                workspace,
+                tui,
+            } => cmd_install_omarchy(dry_run, workspace, tui),
             ProdInstallCommands::Walker { dry_run, quiet } => cmd_install_walker(dry_run, quiet),
             ProdInstallCommands::Chromium { dry_run, quiet } => {
                 cmd_install_chromium(dry_run, quiet)
@@ -668,7 +684,7 @@ fn run() -> Result<()> {
         },
         Commands::Repo { command } => match command {
             RepoCommands::Add { dir } => cmd_repo_add(dir.as_deref()),
-            RepoCommands::List => cmd_repo_list(),
+            RepoCommands::List { json } => cmd_repo_list(json),
             RepoCommands::Remove { id_or_path } => cmd_repo_remove(&id_or_path),
             RepoCommands::Root { dir } => cmd_repo_root(dir.as_deref()),
         },
@@ -929,6 +945,7 @@ fn cmd_install_all(
     dry_run: bool,
     quiet: bool,
     workspace: Option<std::path::PathBuf>,
+    tui: bool,
 ) -> Result<()> {
     let cfg = load_config()?;
     let actions = install_all(
@@ -937,6 +954,11 @@ fn cmd_install_all(
             dry_run,
             quiet,
             workspace_root: workspace,
+            control_ui: if tui {
+                ControlUi::Tui
+            } else {
+                ControlUi::Shell
+            },
         },
     )?;
     for line in &actions {
@@ -953,13 +975,23 @@ fn cmd_install_all(
     Ok(())
 }
 
-fn cmd_install_omarchy(dry_run: bool, workspace: Option<std::path::PathBuf>) -> Result<()> {
+fn cmd_install_omarchy(
+    dry_run: bool,
+    workspace: Option<std::path::PathBuf>,
+    tui: bool,
+) -> Result<()> {
     let cfg = load_config()?;
+    let control_ui = if tui {
+        ControlUi::Tui
+    } else {
+        ControlUi::Shell
+    };
     let actions = install_omarchy_prod(
         &cfg,
         &OmarchyInstallOptions {
             dry_run,
             workspace_root: workspace,
+            control_ui,
         },
     )?;
     if dry_run {
@@ -976,10 +1008,16 @@ fn cmd_install_omarchy(dry_run: bool, workspace: Option<std::path::PathBuf>) -> 
         "Omarchy prod integration installed to {}.",
         effective_share_dir(&cfg).display()
     );
-    println!("  Hyprland: source line + Omarchy unbinds");
-    println!("  Waybar: cffi/tsk module, styles, restart");
-    println!("  Walker: Elephant launch_prefix + terminal_cmd");
-    println!("  systemd: tskd.service enabled");
+    println!("  Hyprland: Lua dofile + Omarchy unbinds");
+    match control_ui {
+        ControlUi::Tui => {
+            println!("  Control UI: ratatui TUI (SUPER+Tab / bar → tsk task tui-launch)")
+        }
+        ControlUi::Shell => {
+            println!("  Control UI: Omarchy shell overlay (tsk.taskspace)")
+        }
+    }
+    println!("  systemd: tskd.service enabled when packaged");
     Ok(())
 }
 
@@ -1061,7 +1099,11 @@ fn cmd_dev_install_plugin_inner(dry_run: bool, quiet: bool) -> Result<()> {
     let actions = install_omarchy_plugin(
         &cfg,
         InstallProfile::Dev,
-        &InstallPluginOptions { dry_run, quiet },
+        &InstallPluginOptions {
+            dry_run,
+            quiet,
+            ..Default::default()
+        },
     )?;
     if dry_run {
         for line in actions {
@@ -1495,8 +1537,26 @@ fn cmd_repo_add(dir: Option<&std::path::Path>) -> Result<()> {
     Ok(())
 }
 
-fn cmd_repo_list() -> Result<()> {
+fn cmd_repo_list(json: bool) -> Result<()> {
     let repos = load_repos([])?;
+    if json {
+        let items: Vec<_> = repos
+            .iter()
+            .map(|repo| {
+                serde_json::json!({
+                    "id": repo.id,
+                    "name": repo.name,
+                    "path": repo.path,
+                    "url": repo.url,
+                })
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string(&items).map_err(|e| TskError::Other(e.to_string()))?
+        );
+        return Ok(());
+    }
     if repos.is_empty() {
         println!("No repos registered — run `tsk repo add` from a checkout");
         return Ok(());
@@ -1611,6 +1671,7 @@ fn cmd_task_list(json: bool, include_archived: bool) -> Result<()> {
                         "status": t.status.as_str(),
                         "kind": "task",
                         "current": false,
+                        "repo_name": tsk_core::menu_repo_name(&t),
                     })
                 })
                 .collect();

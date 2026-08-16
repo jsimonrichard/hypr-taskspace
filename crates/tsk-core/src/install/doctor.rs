@@ -81,7 +81,7 @@ pub fn run_doctor_checks(cfg: &TskConfig) -> Result<Vec<DoctorCheck>> {
     });
 
     if quattro {
-        push_omarchy_shell_checks(&mut checks);
+        push_omarchy_shell_checks(&mut checks, cfg);
     } else {
         checks.push(DoctorCheck {
             label: "Waybar CFFI module configured".into(),
@@ -331,13 +331,34 @@ pub fn run_doctor_checks(cfg: &TskConfig) -> Result<Vec<DoctorCheck>> {
     Ok(checks)
 }
 
-fn push_omarchy_shell_checks(checks: &mut Vec<DoctorCheck>) {
+fn push_omarchy_shell_checks(checks: &mut Vec<DoctorCheck>, cfg: &TskConfig) {
     let plugin_dir = crate::install::plugin::plugin_install_dir();
+    let control_ui = crate::install::plugin::load_control_ui(cfg)
+        .unwrap_or(crate::install::plugin::ControlUi::Shell);
     checks.push(DoctorCheck {
         label: "Omarchy plugin tsk.taskspace".into(),
         passed: plugin_dir.is_dir() && crate::install::plugin::plugin_enabled_in_shell_json(),
         detail: plugin_dir.display().to_string(),
     });
+    checks.push(DoctorCheck {
+        label: "Omarchy control UI".into(),
+        passed: true,
+        detail: match control_ui {
+            crate::install::plugin::ControlUi::Tui => {
+                "tui (SUPER+Tab / bar open tsk task tui-launch)".into()
+            }
+            crate::install::plugin::ControlUi::Shell => "shell overlay (tsk.taskspace)".into(),
+        },
+    });
+    if control_ui.includes_overlay() {
+        checks.push(DoctorCheck {
+            label: "Omarchy overlay Taskspace.qml".into(),
+            passed: crate::install::plugin::overlay_installed(),
+            detail: crate::install::plugin::overlay_qml_path()
+                .display()
+                .to_string(),
+        });
+    }
     checks.push(DoctorCheck {
         label: "omarchy.workspaces not in left bar".into(),
         passed: !crate::install::plugin::workspaces_in_left_layout(),

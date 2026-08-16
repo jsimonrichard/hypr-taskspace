@@ -85,9 +85,9 @@ pub use install::{
     profile_for_config, quattro_hypr_present, render_service_unit, run_doctor_checks,
     run_native_host, systemctl_is_active, systemctl_is_enabled, systemd_restart, systemd_start,
     systemd_stop, uninstall_hypr, uninstall_omarchy_plugin, uninstall_systemd, uninstall_walker,
-    uninstall_waybar, DoctorCheck, InstallAllOptions, InstallBinsOptions, InstallChromiumOptions,
-    InstallHyprOptions, InstallPluginOptions, InstallProfile, InstallSystemdOptions,
-    InstallWalkerOptions, InstallWaybarOptions, OmarchyInstallOptions,
+    uninstall_waybar, ControlUi, DoctorCheck, InstallAllOptions, InstallBinsOptions,
+    InstallChromiumOptions, InstallHyprOptions, InstallPluginOptions, InstallProfile,
+    InstallSystemdOptions, InstallWalkerOptions, InstallWaybarOptions, OmarchyInstallOptions,
 };
 pub use models::{ContextMode, SessionState, Task, TaskStatus};
 pub use registry::Registry;
@@ -98,7 +98,7 @@ pub use repos::{
     save_repo_config, task_belongs_to_repo, task_source_repo_path, tasks_for_repo, unregister_repo,
     RegisteredRepo, RepoConfig, SCRATCH_TASK_LIST_LABEL,
 };
-pub use service::{MenuTask, TaskService};
+pub use service::{menu_repo_name, MenuTask, TaskService};
 pub use share::{
     default_prod_share_dir, effective_share_dir, is_system_share, packaged_systemd_unit_installed,
     packaged_systemd_unit_path, system_share_available, system_share_dir, uses_packaged_share,

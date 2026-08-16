@@ -32,7 +32,10 @@ pub use hypr::{
     strip_managed_source_lines, uninstall_hypr, InstallHyprOptions,
 };
 pub use omarchy::{install_omarchy_prod, OmarchyInstallOptions};
-pub use plugin::{install_omarchy_plugin, uninstall_omarchy_plugin, InstallPluginOptions};
+pub use plugin::{
+    install_omarchy_plugin, load_control_ui, uninstall_omarchy_plugin, ControlUi,
+    InstallPluginOptions,
+};
 pub use profile::{
     dev_config_path, dev_share_dir, install_metadata_dir, is_dev_config, is_dev_share_dir,
     profile_for_config, InstallProfile,
