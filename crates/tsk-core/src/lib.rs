@@ -79,15 +79,15 @@ pub use hyprland_events::{
 pub use install::{
     chromium_present, detected_integrations, dev_config_path, dev_share_dir, format_doctor_report,
     install_all, install_bins, install_chromium, install_chromium_status, install_hypr,
-    install_hypr_status, install_metadata_dir, install_omarchy_prod, install_systemd,
-    install_systemd_status, install_walker, install_walker_status, install_waybar,
+    install_hypr_status, install_metadata_dir, install_omarchy_plugin, install_omarchy_prod,
+    install_systemd, install_systemd_status, install_walker, install_walker_status, install_waybar,
     install_waybar_status, is_dev_config, is_systemd_unit_installed, omarchy_desktop_present,
-    profile_for_config, render_service_unit, run_doctor_checks, run_native_host,
-    systemctl_is_active, systemctl_is_enabled, systemd_restart, systemd_start, systemd_stop,
-    uninstall_hypr, uninstall_systemd, uninstall_walker, uninstall_waybar, DoctorCheck,
-    InstallAllOptions, InstallBinsOptions, InstallChromiumOptions, InstallHyprOptions,
-    InstallProfile, InstallSystemdOptions, InstallWalkerOptions, InstallWaybarOptions,
-    OmarchyInstallOptions,
+    profile_for_config, quattro_hypr_present, render_service_unit, run_doctor_checks,
+    run_native_host, systemctl_is_active, systemctl_is_enabled, systemd_restart, systemd_start,
+    systemd_stop, uninstall_hypr, uninstall_omarchy_plugin, uninstall_systemd, uninstall_walker,
+    uninstall_waybar, DoctorCheck, InstallAllOptions, InstallBinsOptions, InstallChromiumOptions,
+    InstallHyprOptions, InstallPluginOptions, InstallProfile, InstallSystemdOptions,
+    InstallWalkerOptions, InstallWaybarOptions, OmarchyInstallOptions,
 };
 pub use models::{ContextMode, SessionState, Task, TaskStatus};
 pub use registry::Registry;
@@ -131,12 +131,14 @@ pub use version::{
     build_version_info, format_version_long, format_version_short, version_info, VersionInfo,
 };
 pub use walker::{
-    walker_exec, walker_launch_prefix, walker_terminal, walker_terminal_cmd, walker_watch_launch,
+    launch_exec, walker_exec, walker_launch_prefix, walker_terminal, walker_terminal_cmd,
+    walker_watch_launch,
 };
 pub use waybar::{
-    build_all_modules, build_all_modules_for_active_name, fetch_occupied_indices,
-    fetch_occupied_names, workspace_label, workspace_module_key, WaybarModuleJson,
-    WaybarModulesCache, ACTIVE_WORKSPACE_ICON, WAYBAR_MODULE_COUNT, WAYBAR_SIGNAL,
+    build_all_modules, build_all_modules_for_active_name, build_bar_status, build_waybar_data_with,
+    fetch_occupied_indices, fetch_occupied_names, workspace_label, workspace_module_key,
+    WaybarData, WaybarModuleJson, WaybarModulesCache, ACTIVE_WORKSPACE_ICON, WAYBAR_MODULE_COUNT,
+    WAYBAR_SIGNAL,
 };
 pub use window_registry::{restore_windows, sync_window_registry, RestoreMove, RestoreReport};
 pub use workspace_nav::{

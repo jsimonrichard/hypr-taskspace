@@ -1,6 +1,6 @@
 //! Detect desktop integrations that `tsk install all` can wire up.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::binary::command_v_login;
 use crate::install::walker::elephant_config_path;
@@ -17,8 +17,19 @@ pub fn omarchy_dir() -> PathBuf {
     expand("~/.local/share/omarchy")
 }
 
+pub fn quattro_hypr_present() -> bool {
+    expand("~/.config/hypr/hyprland.lua").is_file()
+}
+
+pub fn hypr_bindings_lua_path() -> PathBuf {
+    expand("~/.config/hypr/bindings.lua")
+}
+
 pub fn omarchy_desktop_present() -> bool {
     omarchy_dir().is_dir()
+        || Path::new("/usr/share/omarchy").is_dir()
+        || command_v_login("omarchy-shell").is_some()
+        || quattro_hypr_present()
 }
 
 pub fn default_chromium_user_data_dir() -> PathBuf {

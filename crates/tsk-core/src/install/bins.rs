@@ -428,6 +428,12 @@ fn copy_share_tree(cfg: &TskConfig, share_src: &Path, tsk_cmd: &str) -> Result<(
         &share_str,
         tsk_cmd,
     )?;
+    copy_hypr_tree(
+        &share_src.join("omarchy-plugin"),
+        &share_dir.join("omarchy-plugin"),
+        &share_str,
+        tsk_cmd,
+    )?;
     Ok(())
 }
 

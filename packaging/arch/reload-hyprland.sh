@@ -27,6 +27,11 @@ for socket in /run/user/*/hypr/*/.socket.sock; do
     XDG_RUNTIME_DIR="$runtime" \
     HYPRLAND_INSTANCE_SIGNATURE="$sig" \
     hyprctl reload >/dev/null 2>&1 || true
+
+  runuser -u "$user" -- env \
+    XDG_RUNTIME_DIR="$runtime" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime/bus" \
+    systemctl --user try-restart tskd.service >/dev/null 2>&1 || true
 done
 
 exit 0

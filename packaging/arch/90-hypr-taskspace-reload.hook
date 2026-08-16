@@ -1,15 +1,17 @@
 # Pacman replaces /usr/share/tsk with remove-then-add. Hyprland auto-reloads
 # sourced files while they are missing and can get stuck until a later reload.
-# Run after the transaction so the share tree is complete again.
+# Replacing /usr/bin/tsk does not restart tskd; the old process keeps the deleted
+# binary and taskspace switches (TUI / SUPER+H) stay on the previous code.
 
 [Trigger]
 Operation = Install
 Operation = Upgrade
 Type = Path
 Target = usr/share/tsk/hypr/*
+Target = usr/bin/tsk
 
 [Action]
-Description = Reloading Hyprland after tsk share update...
+Description = Reloading Hyprland and restarting tskd after tsk update...
 When = PostTransaction
 Depends = hyprland
 Exec = /usr/share/libalpm/scripts/hypr-taskspace-reload-hyprland

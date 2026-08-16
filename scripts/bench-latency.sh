@@ -65,4 +65,6 @@ if [[ "${BENCH_REAL_TERMINAL:-}" == "1" ]]; then
 fi
 
 echo
-echo "Done. Cleaning up any tsk test terminals..."
+echo "=== Workspace switch (keybind hot path) ==="
+bench5 "tsk workspace switch 2" "$TSK" workspace switch 2
+bench5 "hyprctl lua focus 2" hyprctl dispatch 'hl.dsp.focus({ workspace = "2" })'

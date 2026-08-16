@@ -52,7 +52,7 @@ socket = "~/.local/share/tsk-dev/daemon.sock"
 dir = "~/.local/share/tsk"
 
 [install.hypr]
-config_path = "~/.config/hypr/hyprland.conf"
+config_path = "~/.config/hypr/bindings.lua"
 share_dir = "~/.local/share/tsk-dev"
 source_line = "~/.local/share/tsk-dev/hypr/bindings.conf"
 "#,
@@ -103,7 +103,7 @@ socket = "{socket}"
 dir = "~/.local/share/tsk"
 
 [install.hypr]
-config_path = "~/.config/hypr/hyprland.conf"
+config_path = "~/.config/hypr/bindings.lua"
 share_dir = "{share_str}"
 source_line = "{source_line}"
 require_sourced_last = true
@@ -156,7 +156,7 @@ impl Default for TskConfig {
             daemon_socket: default_daemon_socket_config_value(),
             data_dir: tsk_data_dir(),
             install_hypr_share_dir: default_prod_share_dir(),
-            install_hypr_config_path: expand("~/.config/hypr/hyprland.conf"),
+            install_hypr_config_path: expand("~/.config/hypr/bindings.lua"),
             install_hypr_source_line: default_prod_share_dir()
                 .join("hypr/bindings.conf")
                 .to_string_lossy()

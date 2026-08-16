@@ -99,11 +99,13 @@ impl WalkerLaunchContext {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 struct LaunchTarget {
     desktop_id: Option<String>,
     desktop: Option<DesktopEntry>,
     argv: Vec<String>,
+    /// Prefer `gtk-launch <id>.desktop` (Omarchy menu) over Exec argv.
+    gtk_launch: bool,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -118,9 +120,9 @@ struct DesktopEntry {
 }
 
 /// Elephant passes the desktop id or Exec argv it would have given `uwsm app`.
-/// Generic launches become `uwsm app -- <command…>` so app flags (e.g. `--no-sandbox`)
-/// are not parsed as uwsm options, and broken desktop Exec lines (`%u` + `%U`) are
-/// not re-validated by uwsm.
+/// Generic launches become `uwsm-app -- …` (or `uwsm app -- …`) so app flags
+/// (e.g. `--no-sandbox`) are not parsed as uwsm options, and broken desktop Exec
+/// lines (`%u` + `%U`) are not re-validated by uwsm.
 pub fn walker_exec(args: &[&str]) -> Result<()> {
     if args.is_empty() {
         return Err(TskError::Other(
@@ -136,6 +138,54 @@ pub fn walker_exec(args: &[&str]) -> Result<()> {
         WalkerIntegration::Generic => walker_launch_generic(&ctx, &target)?,
     }
     Ok(())
+}
+
+/// Omarchy menu / keybind prefix: `tsk launch chromium.desktop [--incognito]`.
+///
+/// Strips optional `uwsm-app --` / `gtk-launch` wrappers, then uses the same
+/// taskspace launch path as `tsk walker exec`.
+pub fn launch_exec(args: &[&str]) -> Result<()> {
+    let normalized = normalize_launch_args(args);
+    if normalized.is_empty() {
+        return Err(TskError::Other(
+            "launch: missing application (desktop id or command)".into(),
+        ));
+    }
+    walker_exec(&normalized)
+}
+
+/// Drop Omarchy/Walker wrappers so `tsk launch -- gtk-launch foo.desktop` works.
+pub fn normalize_launch_args<'a>(args: &'a [&'a str]) -> Vec<&'a str> {
+    let mut i = 0;
+    while i < args.len() && args[i] == "--" {
+        i += 1;
+    }
+    if i < args.len() && is_cmd(args[i], "uwsm-app") {
+        i += 1;
+        if i < args.len() && args[i] == "--" {
+            i += 1;
+        }
+    } else if i < args.len() && is_cmd(args[i], "uwsm") {
+        i += 1;
+        if i < args.len() && args[i] == "app" {
+            i += 1;
+        }
+        if i < args.len() && args[i] == "--" {
+            i += 1;
+        }
+    }
+    if i < args.len() && is_cmd(args[i], "gtk-launch") {
+        i += 1;
+    }
+    args[i..].to_vec()
+}
+
+fn is_cmd(arg: &str, name: &str) -> bool {
+    arg == name
+        || Path::new(arg)
+            .file_name()
+            .and_then(OsStr::to_str)
+            .is_some_and(|n| n == name)
 }
 
 /// Run a command in a task-scoped terminal, or open an empty task terminal when no args.
@@ -176,22 +226,22 @@ fn walker_open_terminal(_ctx: &WalkerLaunchContext, target: &LaunchTarget) -> Re
 
 fn walker_open_browser(_ctx: &WalkerLaunchContext, target: &LaunchTarget) -> Result<()> {
     let requested = target.selected_program();
-    if target.opens_browser_app() {
-        return TaskService::with_defaults()?.open_browser_with(None, false, requested.as_deref());
-    }
-    let browser = resolve_selected_or_default(requested.as_deref(), resolve_browser_command)
-        .ok_or_else(|| TskError::Other("walker exec: browser not found".into()))?;
     let extra: Vec<&str> = target
         .args_after_program()
         .iter()
         .map(String::as_str)
         .collect();
+    if target.opens_browser_app() && extra.is_empty() {
+        return TaskService::with_defaults()?.open_browser_with(None, false, requested.as_deref());
+    }
+    let browser = resolve_selected_or_default(requested.as_deref(), resolve_browser_command)
+        .ok_or_else(|| TskError::Other("walker exec: browser not found".into()))?;
     launch_with_env(_ctx, Some(&browser), &extra)
 }
 
 fn walker_open_editor(ctx: &WalkerLaunchContext, target: &LaunchTarget) -> Result<()> {
     let requested = target.selected_program();
-    if target.opens_editor_app() {
+    if target.opens_editor_app() && target.args_after_program().is_empty() {
         return TaskService::with_defaults()?.open_editor_with(None, requested.as_deref());
     }
     let editor = resolve_selected_or_default(requested.as_deref(), resolve_editor_command)
@@ -218,6 +268,13 @@ fn resolve_selected_or_default(
 
 fn walker_launch_generic(ctx: &WalkerLaunchContext, target: &LaunchTarget) -> Result<()> {
     let label = launch_label(target, &target.argv);
+    if let Some(uwsm_app) = command_v("uwsm-app") {
+        let mut cmd = Command::new(&uwsm_app);
+        apply_launch_env(&mut cmd, ctx);
+        cmd.current_dir(&ctx.cwd);
+        cmd.args(uwsm_app_passthrough_args(target));
+        return spawn_watched(cmd, label);
+    }
     if let Some(uwsm) = command_v("uwsm") {
         let mut cmd = Command::new(&uwsm);
         apply_launch_env(&mut cmd, ctx);
@@ -272,12 +329,48 @@ fn apply_launch_env(cmd: &mut Command, ctx: &WalkerLaunchContext) {
 /// `--` is required so flags like `--no-sandbox` are not treated as uwsm options.
 fn uwsm_app_args(target: &LaunchTarget) -> Vec<String> {
     let mut args = vec!["app".into(), "--".into()];
-    if !target.argv.is_empty() {
-        args.extend(target.argv.iter().cloned());
-    } else if let Some(id) = target.desktop_id.as_deref() {
-        args.push(id.to_string());
-    }
+    args.extend(uwsm_passthrough_command(target));
     args
+}
+
+/// Args after `uwsm-app`: `-- gtk-launch <id>.desktop` or `-- <command…>`.
+fn uwsm_app_passthrough_args(target: &LaunchTarget) -> Vec<String> {
+    let mut args = vec!["--".into()];
+    args.extend(uwsm_passthrough_command(target));
+    args
+}
+
+fn uwsm_passthrough_command(target: &LaunchTarget) -> Vec<String> {
+    if target.gtk_launch {
+        if let Some(id) = target.desktop_id.as_deref() {
+            return vec!["gtk-launch".into(), desktop_file_name(id)];
+        }
+    }
+    if !target.argv.is_empty() {
+        return target.argv.clone();
+    }
+    if let Some(id) = target.desktop_id.as_deref() {
+        return vec!["gtk-launch".into(), desktop_file_name(id)];
+    }
+    Vec::new()
+}
+
+fn desktop_file_name(id: &str) -> String {
+    if id.ends_with(".desktop") {
+        id.to_string()
+    } else {
+        format!("{id}.desktop")
+    }
+}
+
+fn append_launch_extras(argv: &mut Vec<String>, extras: &[&str]) {
+    for extra in extras {
+        if *extra == "--private" {
+            argv.push("--incognito".into());
+        } else {
+            argv.push((*extra).to_string());
+        }
+    }
 }
 
 fn launch_label(target: &LaunchTarget, argv: &[String]) -> String {
@@ -484,22 +577,26 @@ impl LaunchTarget {
             desktop_id: None,
             desktop: None,
             argv: Vec::new(),
+            gtk_launch: false,
         }
     }
 
     fn parse(args: &[&str]) -> Result<Self> {
         let first = args[0];
         if let Some(desktop) = resolve_desktop_entry(first) {
-            let argv = desktop
+            let mut argv = desktop
                 .exec
                 .as_deref()
                 .map(parse_desktop_exec)
                 .transpose()?
                 .unwrap_or_default();
+            let extras = &args[1..];
+            append_launch_extras(&mut argv, extras);
             return Ok(Self {
                 desktop_id: Some(desktop.id.clone()),
                 desktop: Some(desktop),
                 argv,
+                gtk_launch: extras.is_empty(),
             });
         }
 
@@ -507,6 +604,7 @@ impl LaunchTarget {
             desktop_id: None,
             desktop: None,
             argv: args.iter().map(|s| s.to_string()).collect(),
+            gtk_launch: false,
         })
     }
 
@@ -948,6 +1046,7 @@ mod tests {
             desktop_id: None,
             desktop: None,
             argv: vec!["chromium".into(), "--new-window".into()],
+            gtk_launch: false,
         };
         assert_eq!(target.integration(), WalkerIntegration::TaskBrowser);
     }
@@ -958,6 +1057,7 @@ mod tests {
             desktop_id: None,
             desktop: None,
             argv: vec!["cursor".into()],
+            gtk_launch: false,
         };
         assert_eq!(target.integration(), WalkerIntegration::TaskEditor);
     }
@@ -975,6 +1075,7 @@ mod tests {
                 try_exec: None,
             }),
             argv: vec!["alacritty".into()],
+            gtk_launch: false,
         };
         assert_eq!(target.integration(), WalkerIntegration::TaskTerminal);
         assert!(target.opens_terminal_emulator());
@@ -993,6 +1094,7 @@ mod tests {
                 try_exec: None,
             }),
             argv: vec!["/usr/bin/chromium".into()],
+            gtk_launch: false,
         };
         assert_eq!(target.integration(), WalkerIntegration::TaskBrowser);
         assert!(target.opens_browser_app());
@@ -1011,6 +1113,7 @@ mod tests {
                 try_exec: None,
             }),
             argv: vec!["cursor".into()],
+            gtk_launch: false,
         };
         assert_eq!(target.integration(), WalkerIntegration::TaskEditor);
         assert!(target.opens_editor_app());
@@ -1030,6 +1133,7 @@ mod tests {
                 try_exec: None,
             }),
             argv: vec!["/usr/bin/code".into()],
+            gtk_launch: false,
         };
         assert_eq!(target.integration(), WalkerIntegration::TaskEditor);
         assert_eq!(target.selected_program().as_deref(), Some("/usr/bin/code"));
@@ -1041,6 +1145,7 @@ mod tests {
             desktop_id: Some("com.visualstudio.code".into()),
             desktop: None,
             argv: Vec::new(),
+            gtk_launch: false,
         };
         assert_eq!(target.selected_program().as_deref(), Some("code"));
     }
@@ -1058,6 +1163,7 @@ mod tests {
                 try_exec: None,
             }),
             argv: vec!["firefox".into()],
+            gtk_launch: false,
         };
         assert_eq!(target.integration(), WalkerIntegration::TaskBrowser);
         assert_eq!(target.selected_program().as_deref(), Some("firefox"));
@@ -1084,6 +1190,7 @@ mod tests {
                 "/usr/bin/code".into(),
                 "--new-window".into(),
             ],
+            gtk_launch: false,
         };
         assert_eq!(target.selected_program().as_deref(), Some("/usr/bin/code"));
         assert_eq!(target.args_after_program(), &["--new-window".to_string()]);
@@ -1095,6 +1202,7 @@ mod tests {
             desktop_id: None,
             desktop: None,
             argv: vec!["bash".into(), "-lc".into(), "echo hi".into()],
+            gtk_launch: false,
         };
         assert!(!target.opens_terminal_emulator());
     }
@@ -1119,6 +1227,7 @@ mod tests {
                 ..Default::default()
             }),
             argv: vec!["/usr/bin/todoist".into()],
+            gtk_launch: false,
         };
         assert_eq!(launch_label(&target, &target.argv), "Todoist");
     }
@@ -1135,6 +1244,7 @@ mod tests {
             desktop_id: None,
             desktop: None,
             argv: argv.clone(),
+            gtk_launch: false,
         };
         assert_eq!(launch_label(&target, &argv), "todoist --no-sandbox");
     }
@@ -1145,6 +1255,7 @@ mod tests {
             desktop_id: None,
             desktop: None,
             argv: vec!["todoist".into(), "--no-sandbox".into()],
+            gtk_launch: false,
         };
         assert_eq!(
             uwsm_app_args(&target),
@@ -1170,6 +1281,7 @@ mod tests {
                 "/usr/bin/todoist".into(),
                 "--no-sandbox".into(),
             ],
+            gtk_launch: false,
         };
         assert_eq!(
             uwsm_app_args(&target),
@@ -1185,12 +1297,53 @@ mod tests {
     }
 
     #[test]
-    fn uwsm_app_args_falls_back_to_desktop_id() {
+    fn uwsm_app_args_falls_back_to_gtk_launch() {
         let target = LaunchTarget {
             desktop_id: Some("todoist".into()),
             desktop: None,
             argv: Vec::new(),
+            gtk_launch: false,
         };
-        assert_eq!(uwsm_app_args(&target), vec!["app", "--", "todoist"]);
+        assert_eq!(
+            uwsm_app_args(&target),
+            vec!["app", "--", "gtk-launch", "todoist.desktop"]
+        );
+    }
+
+    #[test]
+    fn uwsm_app_passthrough_uses_gtk_launch_for_desktop_id() {
+        let target = LaunchTarget {
+            desktop_id: Some("chromium".into()),
+            desktop: None,
+            argv: vec!["/usr/bin/chromium".into()],
+            gtk_launch: true,
+        };
+        assert_eq!(
+            uwsm_app_passthrough_args(&target),
+            vec!["--", "gtk-launch", "chromium.desktop"]
+        );
+    }
+
+    #[test]
+    fn normalize_launch_args_strips_omarchy_wrappers() {
+        assert_eq!(
+            normalize_launch_args(&["--", "gtk-launch", "foo.desktop"]),
+            vec!["foo.desktop"]
+        );
+        assert_eq!(
+            normalize_launch_args(&["uwsm-app", "--", "gtk-launch", "chromium.desktop"]),
+            vec!["chromium.desktop"]
+        );
+        assert_eq!(
+            normalize_launch_args(&["chromium.desktop", "--incognito"]),
+            vec!["chromium.desktop", "--incognito"]
+        );
+    }
+
+    #[test]
+    fn append_launch_extras_maps_private_to_incognito() {
+        let mut argv = vec!["chromium".into()];
+        append_launch_extras(&mut argv, &["--private"]);
+        assert_eq!(argv, vec!["chromium", "--incognito"]);
     }
 }

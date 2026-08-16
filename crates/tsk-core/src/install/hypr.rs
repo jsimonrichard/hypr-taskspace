@@ -46,20 +46,117 @@ impl Default for InstallHyprOptions {
     }
 }
 
+pub fn hypr_user_config_path(cfg: &TskConfig) -> PathBuf {
+    if crate::install::detect::quattro_hypr_present() {
+        crate::install::detect::hypr_bindings_lua_path()
+    } else {
+        cfg.install_hypr_config_path.clone()
+    }
+}
+
+pub fn lua_managed_block(share: &Path, marker: &str) -> String {
+    let lua = share.join("hypr/omarchy.lua");
+    format!(
+        "-- {marker} begin\ndofile({})\n-- {marker} end\n",
+        lua_string(&lua.to_string_lossy())
+    )
+}
+
+fn lua_string(s: &str) -> String {
+    format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+/// Remove a marked `dofile` block from bindings.lua.
+pub fn strip_managed_lua_block(content: &str, marker: &str) -> (String, bool) {
+    let begin = format!("-- {marker} begin");
+    let end = format!("-- {marker} end");
+    let Some(start) = content.find(&begin) else {
+        return (content.to_string(), false);
+    };
+    let after_begin = start + begin.len();
+    let end_idx = content[after_begin..]
+        .find(&end)
+        .map(|rel| after_begin + rel + end.len())
+        .unwrap_or_else(|| content.len());
+    let mut end = end_idx;
+    if content[end..].starts_with('\n') {
+        end += 1;
+    }
+    let mut out = String::new();
+    out.push_str(&content[..start]);
+    out.push_str(&content[end..]);
+    if out.ends_with("\n\n\n") {
+        while out.ends_with("\n\n\n") {
+            out.pop();
+        }
+        out.push('\n');
+        out.push('\n');
+    }
+    (out, true)
+}
+
+fn upsert_lua_block(content: &str, block: &str, marker: &str) -> String {
+    let (stripped, _) = strip_managed_lua_block(content, marker);
+    let mut body = stripped.trim_end().to_string();
+    if !body.is_empty() {
+        body.push('\n');
+        body.push('\n');
+    }
+    body.push_str(block);
+    if !body.ends_with('\n') {
+        body.push('\n');
+    }
+    body
+}
+
+fn write_lua_managed_block(path: &Path, share: &Path, marker: &str) -> Result<bool> {
+    ensure_parent(path)?;
+    let existing = if path.is_file() {
+        fs::read_to_string(path).map_err(|source| TskError::Read {
+            path: path.to_path_buf(),
+            source,
+        })?
+    } else {
+        String::new()
+    };
+    let block = lua_managed_block(share, marker);
+    if existing.contains(&format!("-- {marker} begin")) && existing.contains("omarchy.lua") {
+        let updated = upsert_lua_block(&existing, &block, marker);
+        if updated == existing {
+            return Ok(false);
+        }
+        fs::write(path, updated).map_err(|source| TskError::Write {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        return Ok(true);
+    }
+    let updated = upsert_lua_block(&existing, &block, marker);
+    fs::write(path, updated).map_err(|source| TskError::Write {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    Ok(true)
+}
+
 pub fn install_hypr_status(cfg: &TskConfig) -> Result<Value> {
     let profile = profile_for_config(cfg);
     let marker = profile.manage_marker();
     let metadata_dir = install_metadata_dir(cfg, profile);
     let m = manifest::load_manifest(&metadata_dir, "hypr")?;
     let share = effective_share_dir(cfg);
-    let bindings = share.join("hypr/bindings.conf");
-    let content = cfg
-        .install_hypr_config_path
+    let quattro = crate::install::detect::quattro_hypr_present();
+    let lua_bindings = share.join("hypr/omarchy.lua");
+    let conf_bindings = share.join("hypr/bindings.conf");
+    let config_path = hypr_user_config_path(cfg);
+    let content = config_path
         .is_file()
-        .then(|| fs::read_to_string(&cfg.install_hypr_config_path).ok())
+        .then(|| fs::read_to_string(&config_path).ok())
         .flatten()
         .unwrap_or_default();
-    let bindings_str = bindings.to_string_lossy();
+    let lua_block_present =
+        content.contains(&format!("-- {marker} begin")) && content.contains("omarchy.lua");
+    let bindings_str = conf_bindings.to_string_lossy();
     let has_source = content.contains(marker)
         && content.lines().any(|line| {
             let trimmed = line.trim();
@@ -70,11 +167,106 @@ pub fn install_hypr_status(cfg: &TskConfig) -> Result<Value> {
     Ok(json!({
         "installed": m.is_some(),
         "profile": format!("{:?}", profile).to_lowercase(),
-        "bindings_exist": bindings.is_file(),
-        "source_line_present": has_source,
-        "config_path": cfg.install_hypr_config_path,
-        "bindings_path": bindings,
+        "quattro": quattro,
+        "bindings_exist": if quattro { lua_bindings.is_file() } else { conf_bindings.is_file() },
+        "source_line_present": if quattro { lua_block_present } else { has_source },
+        "lua_block_present": lua_block_present,
+        "config_path": config_path,
+        "bindings_path": if quattro { lua_bindings } else { conf_bindings },
     }))
+}
+
+fn install_hypr_lua(
+    cfg: &TskConfig,
+    options: &InstallHyprOptions,
+    profile: InstallProfile,
+    marker: &str,
+    metadata_dir: &Path,
+    backup_dir: &Path,
+) -> Result<Vec<String>> {
+    let share = effective_share_dir(cfg);
+    let config_path = hypr_user_config_path(cfg);
+    let block = lua_managed_block(&share, marker);
+
+    if options.dry_run {
+        let mut lines = Vec::new();
+        if !options.skip_bins_install {
+            lines.extend(bins::install_bins(
+                cfg,
+                &InstallBinsOptions {
+                    dry_run: true,
+                    workspace_root: options.workspace_root.clone(),
+                    profile: Some(profile),
+                    omarchy_integration: options.omarchy_integration,
+                    skip_waybar: true,
+                    skip_reload: options.skip_reload,
+                    quiet: options.quiet,
+                    bundled_waybar_source: None,
+                },
+            )?);
+        }
+        lines.push(format!(
+            "would update {}:\n  {}",
+            config_path.display(),
+            block.trim()
+        ));
+        return Ok(lines);
+    }
+
+    if !options.skip_bins_install {
+        bins::install_bins(
+            cfg,
+            &InstallBinsOptions {
+                dry_run: false,
+                workspace_root: options.workspace_root.clone(),
+                profile: Some(profile),
+                omarchy_integration: options.omarchy_integration,
+                skip_waybar: true,
+                skip_reload: options.skip_reload,
+                quiet: options.quiet,
+                bundled_waybar_source: None,
+            },
+        )?;
+    }
+
+    let mut backed_up = Vec::new();
+    if config_path.is_file() {
+        backup::backup_file(&config_path, backup_dir)?;
+        backed_up.push(json!({
+            "path": config_path,
+            "backup": backup_file_name(&config_path),
+        }));
+    }
+
+    if profile == InstallProfile::Dev {
+        strip_lua_file(&config_path, InstallProfile::Prod.manage_marker())?;
+    }
+    write_lua_managed_block(&config_path, &share, marker)?;
+
+    let share_src = bins::resolve_share_templates(options.workspace_root.as_deref(), profile)?;
+    let m = Manifest {
+        version: 1,
+        integration: "hypr".into(),
+        installed_at: Utc::now().to_rfc3339(),
+        backup_dir: backup_dir.to_string_lossy().into_owned(),
+        templates_installed: vec![
+            json!({"from": share_src.join("hypr"), "to": cfg.install_hypr_share_dir.join("hypr")}),
+        ],
+        user_files_backed_up: backed_up,
+        user_files_modified: vec![json!({
+            "path": config_path,
+            "actions": [{"type": "lua-dofile", "file": share.join("hypr/omarchy.lua")}]
+        })],
+        module_kind: Some(format!("{:?}", profile).to_lowercase()),
+    };
+    manifest::save_manifest(metadata_dir, &m)?;
+
+    let mut actions = vec![format!("updated {}", config_path.display())];
+    if options.skip_reload {
+        return Ok(actions);
+    }
+    actions.extend(reload::apply_after_hypr()?);
+    Ok(actions)
 }
 
 pub fn install_hypr(cfg: &TskConfig, options: &InstallHyprOptions) -> Result<Vec<String>> {
@@ -84,6 +276,11 @@ pub fn install_hypr(cfg: &TskConfig, options: &InstallHyprOptions) -> Result<Vec
     let backup_dir = metadata_dir
         .join("install/hypr/backups")
         .join(backup_timestamp());
+
+    if crate::install::detect::quattro_hypr_present() {
+        return install_hypr_lua(cfg, options, profile, marker, &metadata_dir, &backup_dir);
+    }
+
     let source_targets = hypr_managed_source_paths(
         cfg,
         profile.include_omarchy_unbinds_for(options.omarchy_integration),
@@ -266,6 +463,10 @@ pub fn uninstall_hypr(cfg: &TskConfig, keep_files: bool) -> Result<Vec<String>> 
 
     // Backup restore can miss the dev line (re-install, prod+dev coexistence). Always strip.
     strip_managed_source_lines(&config_path, marker)?;
+    strip_lua_file(&hypr_user_config_path(cfg), marker)?;
+    if crate::install::detect::quattro_hypr_present() {
+        let _ = crate::install::plugin::uninstall_omarchy_plugin();
+    }
 
     // If backup restore failed (e.g. legacy manifest backup name), re-apply prod source line.
     if profile == InstallProfile::Dev && !restored_from_backup {
@@ -431,6 +632,25 @@ fn remove_legacy_dev_manifest(cfg: &TskConfig, integration: &str) -> Result<()> 
     Ok(())
 }
 
+fn strip_lua_file(path: &Path, marker: &str) -> Result<bool> {
+    if !path.is_file() {
+        return Ok(false);
+    }
+    let content = fs::read_to_string(path).map_err(|source| TskError::Read {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let (stripped, changed) = strip_managed_lua_block(&content, marker);
+    if !changed {
+        return Ok(false);
+    }
+    fs::write(path, stripped).map_err(|source| TskError::Write {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    Ok(true)
+}
+
 /// Remove hyprland.conf lines appended by this profile's installer.
 pub fn strip_managed_source_lines(config_path: &Path, marker: &str) -> Result<bool> {
     if !config_path.is_file() {
@@ -580,6 +800,16 @@ mod tests {
         fs::write(hypr.join("omarchy-escape-hatch.conf"), "").unwrap();
         let paths = omarchy_hypr_source_paths(share, &bindings);
         assert_eq!(paths, vec![bindings]);
+    }
+
+    #[test]
+    fn strip_managed_lua_block_removes_dofile() {
+        let src = "o.bind(\"SUPER + SHIFT + A\", \"Chat\", \"x\")\n\n-- tsk-managed begin\ndofile(\"/usr/share/tsk/hypr/omarchy.lua\")\n-- tsk-managed end\n";
+        let (out, changed) = strip_managed_lua_block(src, "tsk-managed");
+        assert!(changed);
+        assert!(out.contains("SUPER + SHIFT + A"));
+        assert!(!out.contains("omarchy.lua"));
+        assert!(!out.contains("tsk-managed begin"));
     }
 
     #[test]

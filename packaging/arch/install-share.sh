@@ -12,6 +12,7 @@ sub() {
 }
 
 install -d "${pkgdir}${share}/hypr/integrations"
+install -d "${pkgdir}${share}/omarchy-plugin"
 install -d "${pkgdir}${share}/waybar"
 install -d "${pkgdir}${share}/chromium/extension"
 install -d "${pkgdir}${share}/lib"
@@ -24,6 +25,15 @@ while IFS= read -r -d '' file; do
   install -d "$(dirname "$dest")"
   sub "$file" >"$dest"
 done < <(find "${repo_share}/hypr" -type f -print0)
+
+if [[ -d "${repo_share}/omarchy-plugin" ]]; then
+  while IFS= read -r -d '' file; do
+    rel="${file#"${repo_share}/omarchy-plugin/"}"
+    dest="${pkgdir}${share}/omarchy-plugin/${rel}"
+    install -d "$(dirname "$dest")"
+    sub "$file" >"$dest"
+  done < <(find "${repo_share}/omarchy-plugin" -type f -print0)
+fi
 
 if [[ -f "${repo_share}/bin/xdg-open" ]]; then
   sub "${repo_share}/bin/xdg-open" >"${pkgdir}${share}/bin/xdg-open"

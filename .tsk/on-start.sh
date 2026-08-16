@@ -8,8 +8,9 @@
 # When container isolation is enabled, TSK_CONTAINER_ISOLATION=1 and
 # TSK_CONTAINER_NAME are set — use `tsk task editor` so Cursor runs in Distrobox.
 if [ -n "$TSK_PRIMARY_NON_GLOBAL_WORKSPACE" ] && [ -n "$TSK_ON_START_MONITOR" ] && command -v hyprctl >/dev/null 2>&1; then
-  hyprctl dispatch focusmonitor "$TSK_ON_START_MONITOR" >/dev/null 2>&1 || true
-  hyprctl dispatch focusworkspaceoncurrentmonitor "name:$TSK_PRIMARY_NON_GLOBAL_WORKSPACE" >/dev/null 2>&1 || true
+  # Hyprland 0.55+ Lua: legacy `dispatch workspace name:…` is a syntax error.
+  hyprctl dispatch "hl.dsp.focus({ monitor = \"$TSK_ON_START_MONITOR\" })" >/dev/null 2>&1 || true
+  hyprctl dispatch "hl.dsp.focus({ workspace = \"name:$TSK_PRIMARY_NON_GLOBAL_WORKSPACE\", on_current_monitor = true })" >/dev/null 2>&1 || true
 fi
 
 # Prefer tsk launchers (respect Distrobox isolation when enabled on the task).

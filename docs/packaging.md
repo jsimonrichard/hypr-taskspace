@@ -12,20 +12,25 @@ This installs:
 | Path | Purpose |
 |------|---------|
 | `/usr/bin/tsk` | CLI |
-| `/usr/share/tsk/hypr/` | Hyprland bindings + window rules |
+| `/usr/share/tsk/hypr/` | Hyprland Lua + `.conf` bindings + window rules |
+| `/usr/share/tsk/omarchy-plugin/` | Omarchy bar-widget (`tsk.taskspace`) |
 | `/usr/share/tsk/waybar/` | Waybar CFFI snippet + styles |
 | `/usr/share/tsk/chromium/` | Helper extension source (packed by `tsk install chromium`) |
 | `/usr/share/tsk/bin/tsk-chromium-host` | Native-messaging wrapper |
 | `/usr/share/tsk/lib/libtsk_waybar.so` | Waybar module |
 | `/usr/lib/systemd/user/tskd.service` | User daemon unit |
 | `/usr/share/tsk/config.toml.example` | Suggested user config |
-| `/usr/share/libalpm/hooks/90-hypr-taskspace-reload.hook` | Reloads Hyprland after share files are replaced |
+| `/usr/share/libalpm/hooks/90-hypr-taskspace-reload.hook` | Reloads Hyprland and restarts `tskd` after share files or `/usr/bin/tsk` are replaced |
 
 Runtime data always lives under **`~/.local/share/tsk/`** (`state.db`, `daemon.sock`). The package does not write there.
 
 ## Manual integration (no `tsk install omarchy`)
 
-### Hyprland
+### Omarchy (Quattro)
+
+Prefer `tsk install omarchy`. It `dofile`s `/usr/share/tsk/hypr/omarchy.lua` from `~/.config/hypr/bindings.lua` and copies the bar plugin. Do not edit `hyprland.conf`.
+
+### Hyprland (legacy `.conf`)
 
 Add as the **last** line of `~/.config/hypr/hyprland.conf`:
 
@@ -52,6 +57,7 @@ dir = "~/.local/share/tsk"
 [install.hypr]
 share_dir = "/usr/share/tsk"
 source_line = "/usr/share/tsk/hypr/bindings.conf"
+config_path = "~/.config/hypr/bindings.lua"
 ```
 
 Or copy `/usr/share/tsk/config.toml.example` to `~/.config/tsk/config.toml`.

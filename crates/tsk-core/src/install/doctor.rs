@@ -30,22 +30,40 @@ pub fn run_doctor_checks(cfg: &TskConfig) -> Result<Vec<DoctorCheck>> {
     let waybar = install_waybar_status(cfg)?;
 
     let share = effective_share_dir(cfg);
+    let quattro = crate::install::detect::quattro_hypr_present()
+        || crate::install::plugin::omarchy_shell_present();
     checks.push(DoctorCheck {
-        label: "Hyprland bindings installed".into(),
+        label: if quattro {
+            "Hyprland Lua bindings installed".into()
+        } else {
+            "Hyprland bindings installed".into()
+        },
         passed: hypr
             .get("bindings_exist")
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
-        detail: share.join("hypr/bindings.conf").display().to_string(),
+        detail: hypr
+            .get("bindings_path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
     });
 
     checks.push(DoctorCheck {
-        label: "hyprland.conf contains tsk source line".into(),
+        label: if quattro {
+            "bindings.lua contains tsk dofile".into()
+        } else {
+            "hyprland.conf contains tsk source line".into()
+        },
         passed: hypr
             .get("source_line_present")
             .and_then(|v| v.as_bool())
             .unwrap_or(false),
-        detail: cfg.install_hypr_config_path.display().to_string(),
+        detail: hypr
+            .get("config_path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
     });
 
     let (backup_ok, backup_msg) = install_backup_status(cfg);
@@ -62,18 +80,22 @@ pub fn run_doctor_checks(cfg: &TskConfig) -> Result<Vec<DoctorCheck>> {
         detail: path_detail,
     });
 
-    checks.push(DoctorCheck {
-        label: "Waybar CFFI module configured".into(),
-        passed: waybar
-            .get("cffi_module_present")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false),
-        detail: waybar
-            .get("config_path")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string(),
-    });
+    if quattro {
+        push_omarchy_shell_checks(&mut checks);
+    } else {
+        checks.push(DoctorCheck {
+            label: "Waybar CFFI module configured".into(),
+            passed: waybar
+                .get("cffi_module_present")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            detail: waybar
+                .get("config_path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+        });
+    }
 
     checks.push(DoctorCheck {
         label: "Runtime data directory".into(),
@@ -82,63 +104,70 @@ pub fn run_doctor_checks(cfg: &TskConfig) -> Result<Vec<DoctorCheck>> {
     });
 
     if uses_packaged_share(cfg) {
+        let bindings_ok = if quattro {
+            share.join("hypr/omarchy.lua").is_file()
+        } else {
+            share.join("hypr/bindings.conf").is_file()
+        };
         checks.push(DoctorCheck {
             label: "System share (package)".into(),
-            passed: share.join("hypr/bindings.conf").is_file(),
+            passed: bindings_ok,
             detail: share.display().to_string(),
         });
     }
 
-    let module_path = share.join("lib/libtsk_waybar.so");
-    let module_ok = crate::binary::is_usable_cdylib(&module_path);
-    checks.push(DoctorCheck {
-        label: format!("Waybar module ({CFFI_MODULE}) installed"),
-        passed: waybar
+    if !quattro {
+        let module_path = share.join("lib/libtsk_waybar.so");
+        let module_ok = crate::binary::is_usable_cdylib(&module_path);
+        checks.push(DoctorCheck {
+            label: format!("Waybar module ({CFFI_MODULE}) installed"),
+            passed: waybar
+                .get("installed")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+                && module_ok,
+            detail: if module_ok {
+                module_path.display().to_string()
+            } else if module_path.is_file() {
+                format!(
+                    "{} (empty or corrupt — run: scripts/install-user-share.sh or reinstall the package)",
+                    module_path.display()
+                )
+            } else {
+                format!(
+                    "{} (missing — run: scripts/install-user-share.sh or reinstall the package)",
+                    module_path.display()
+                )
+            },
+        });
+
+        let walker = install_walker_status(cfg)?;
+        let walker_ok = walker
             .get("installed")
             .and_then(|v| v.as_bool())
             .unwrap_or(false)
-            && module_ok,
-        detail: if module_ok {
-            module_path.display().to_string()
-        } else if module_path.is_file() {
-            format!(
-                "{} (empty or corrupt — run: scripts/install-user-share.sh or reinstall the package)",
-                module_path.display()
-            )
-        } else {
-            format!(
-                "{} (missing — run: scripts/install-user-share.sh or reinstall the package)",
-                module_path.display()
-            )
-        },
-    });
-
-    let walker = install_walker_status(cfg)?;
-    let walker_ok = walker
-        .get("installed")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false)
-        && walker
-            .get("launch_prefix_set")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-    let walker_path = walker
-        .get("config_path")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    checks.push(DoctorCheck {
-        label: "Walker Elephant launch_prefix".into(),
-        passed: walker_ok,
-        detail: if walker_ok {
-            walker_path.to_string()
-        } else {
-            let expected = walker
-                .get("expected_launch_prefix")
-                .and_then(|v| v.as_str())
-                .unwrap_or("/usr/bin/tsk walker exec --");
-            format!("{walker_path} — expected launch_prefix = \"{expected}\"")
-        },
-    });
+            && walker
+                .get("launch_prefix_set")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+        let walker_path = walker
+            .get("config_path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        checks.push(DoctorCheck {
+            label: "Walker Elephant launch_prefix".into(),
+            passed: walker_ok,
+            detail: if walker_ok {
+                walker_path.to_string()
+            } else {
+                let expected = walker
+                    .get("expected_launch_prefix")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("/usr/bin/tsk walker exec --");
+                format!("{walker_path} — expected launch_prefix = \"{expected}\"")
+            },
+        });
+    }
 
     if chromium_present() {
         let chromium = install_chromium_status(cfg)?;
@@ -166,6 +195,14 @@ pub fn run_doctor_checks(cfg: &TskConfig) -> Result<Vec<DoctorCheck>> {
         passed: super_one_is_tsk(),
         detail: super_one_detail(),
     });
+
+    if quattro {
+        checks.push(DoctorCheck {
+            label: "Browser keys run tsk launch (not omarchy-launch-browser)".into(),
+            passed: browser_launch_is_tsk(),
+            detail: browser_launch_detail(),
+        });
+    }
 
     let socket2 = diagnose_socket2();
     checks.push(DoctorCheck {
@@ -220,6 +257,21 @@ pub fn run_doctor_checks(cfg: &TskConfig) -> Result<Vec<DoctorCheck>> {
         },
     });
 
+    let stale_daemon = daemons.iter().any(|p| p.deleted_exe);
+    checks.push(DoctorCheck {
+        label: "Daemon binary matches /usr/bin/tsk".into(),
+        passed: !stale_daemon,
+        detail: if stale_daemon {
+            "running daemon is a replaced binary — run: systemctl --user restart tskd.service"
+                .into()
+        } else {
+            daemons
+                .first()
+                .map(|p| format!("pid {}", p.pid))
+                .unwrap_or_else(|| "no daemon".into())
+        },
+    });
+
     checks.push(DoctorCheck {
         label: "TSK daemon systemd unit".into(),
         passed: systemd_installed
@@ -252,18 +304,55 @@ pub fn run_doctor_checks(cfg: &TskConfig) -> Result<Vec<DoctorCheck>> {
         },
     });
 
-    let state_events = crate::state_notify::state_events_socket_path()
-        .map(|p| p.exists())
-        .unwrap_or(false);
-    checks.push(DoctorCheck {
-        label: "State-events socket (Waybar bar updates)".into(),
-        passed: state_events,
-        detail: crate::state_notify::state_events_socket_path()
+    if quattro {
+        let runtime = crate::xdg::tsk_runtime_dir()
             .map(|p| p.display().to_string())
-            .unwrap_or_else(|_| "XDG_RUNTIME_DIR/tsk/state-events.sock".into()),
-    });
+            .unwrap_or_else(|_| "XDG_RUNTIME_DIR/tsk".into());
+        checks.push(DoctorCheck {
+            label: "Bar refresh (state.rev / tsk bar status --json)".into(),
+            passed: crate::xdg::tsk_runtime_dir()
+                .map(|p| p.is_dir())
+                .unwrap_or(false),
+            detail: runtime,
+        });
+    } else {
+        let state_events = crate::state_notify::state_events_socket_path()
+            .map(|p| p.exists())
+            .unwrap_or(false);
+        checks.push(DoctorCheck {
+            label: "State-events socket (Waybar bar updates)".into(),
+            passed: state_events,
+            detail: crate::state_notify::state_events_socket_path()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|_| "XDG_RUNTIME_DIR/tsk/state-events.sock".into()),
+        });
+    }
 
     Ok(checks)
+}
+
+fn push_omarchy_shell_checks(checks: &mut Vec<DoctorCheck>) {
+    let plugin_dir = crate::install::plugin::plugin_install_dir();
+    checks.push(DoctorCheck {
+        label: "Omarchy plugin tsk.taskspace".into(),
+        passed: plugin_dir.is_dir() && crate::install::plugin::plugin_enabled_in_shell_json(),
+        detail: plugin_dir.display().to_string(),
+    });
+    checks.push(DoctorCheck {
+        label: "omarchy.workspaces not in left bar".into(),
+        passed: !crate::install::plugin::workspaces_in_left_layout(),
+        detail: crate::install::plugin::shell_json_path()
+            .display()
+            .to_string(),
+    });
+    checks.push(DoctorCheck {
+        label: "Cloned menu uses tsk launch".into(),
+        passed: crate::install::plugin::menu_launch_patched(),
+        detail: crate::install::plugin::cloned_menu_dir()
+            .join("Menu.qml")
+            .display()
+            .to_string(),
+    });
 }
 
 /// Default doctor output is failures only. Verbose prints every check.
@@ -308,7 +397,7 @@ fn super_one_detail() -> String {
             "hyprctl binds".into()
         }
         Some((tsk_binds, omarchy_binds)) => format!(
-            "tsk workspace binds: {tsk_binds}, Omarchy workspace binds still active: {omarchy_binds} — source omarchy-unbind.conf before tsk bindings"
+            "tsk workspace binds: {tsk_binds}, Omarchy workspace binds still active: {omarchy_binds} — unbind in omarchy.lua before tsk binds"
         ),
     }
 }
@@ -337,6 +426,8 @@ fn super_one_counts() -> Option<(usize, usize)> {
 struct HyprBind {
     modmask: i64,
     keycode: i64,
+    key: String,
+    description: String,
     dispatcher: String,
     arg: String,
 }
@@ -360,6 +451,10 @@ fn parse_hyprctl_binds(text: &str) -> Vec<HyprBind> {
             bind.modmask = value.parse().unwrap_or(-1);
         } else if let Some(value) = trimmed.strip_prefix("keycode: ") {
             bind.keycode = value.parse().unwrap_or(-1);
+        } else if let Some(value) = trimmed.strip_prefix("key: ") {
+            bind.key = value.to_string();
+        } else if let Some(value) = trimmed.strip_prefix("description: ") {
+            bind.description = value.to_string();
         } else if let Some(value) = trimmed.strip_prefix("dispatcher: ") {
             bind.dispatcher = value.to_string();
         } else if let Some(value) = trimmed.strip_prefix("arg: ") {
@@ -372,12 +467,85 @@ fn parse_hyprctl_binds(text: &str) -> Vec<HyprBind> {
     binds
 }
 
+fn is_super_one(bind: &HyprBind) -> bool {
+    bind.modmask == 64
+        && (bind.keycode == 10
+            || bind.key.ends_with("code:10")
+            || bind.key == "1"
+            || bind.key.ends_with(" + 1"))
+}
+
 fn bind_runs_tsk_workspace_switch(bind: &HyprBind) -> bool {
-    bind.keycode == 10 && bind.modmask == 64 && bind.arg.contains("workspace switch")
+    is_super_one(bind)
+        && (bind.arg.contains("workspace switch")
+            || bind.description.contains("Taskspace workspace 1"))
+}
+
+fn bind_runs_tsk_launch_chromium(bind: &HyprBind) -> bool {
+    (bind.arg.contains("launch") && bind.arg.contains("chromium.desktop"))
+        || bind.description.contains("Taskspace launch browser")
+}
+
+fn bind_is_omarchy_launch_browser(bind: &HyprBind) -> bool {
+    bind.arg.contains("omarchy-launch-browser")
+}
+
+fn is_stock_browser_description(bind: &HyprBind) -> bool {
+    bind.description == "Browser" || bind.description == "Browser (private)"
+}
+
+fn count_browser_binds(binds: &[HyprBind]) -> (usize, usize) {
+    let tsk_ws = binds.iter().any(bind_runs_tsk_workspace_switch);
+    let omarchy_ws = binds.iter().any(bind_is_omarchy_workspace_digit);
+    let tsk = binds
+        .iter()
+        .filter(|b| {
+            bind_runs_tsk_launch_chromium(b)
+                || (tsk_ws && !omarchy_ws && is_stock_browser_description(b))
+        })
+        .count();
+    let omarchy = binds
+        .iter()
+        .filter(|b| {
+            bind_is_omarchy_launch_browser(b)
+                || ((!tsk_ws || omarchy_ws) && is_stock_browser_description(b))
+        })
+        .count();
+    (tsk, omarchy)
+}
+
+fn browser_launch_is_tsk() -> bool {
+    browser_launch_counts().is_some_and(|(tsk, omarchy)| tsk > 0 && omarchy == 0)
+}
+
+fn browser_launch_detail() -> String {
+    match browser_launch_counts() {
+        None if !hyprland::available() => "hyprctl unavailable".into(),
+        None => "hyprctl binds failed".into(),
+        Some((tsk, omarchy)) if tsk > 0 && omarchy == 0 => "hyprctl binds".into(),
+        Some((tsk, omarchy)) => format!(
+            "tsk launch browser binds: {tsk}, Omarchy browser binds still active: {omarchy}"
+        ),
+    }
+}
+
+fn browser_launch_counts() -> Option<(usize, usize)> {
+    if !hyprland::available() {
+        return None;
+    }
+    let text = hyprland::hyprctl_output(&["binds"]).ok()?;
+    let binds = parse_hyprctl_binds(&text);
+    if binds.is_empty() {
+        return None;
+    }
+    Some(count_browser_binds(&binds))
 }
 
 fn bind_is_omarchy_workspace_digit(bind: &HyprBind) -> bool {
-    (10..=19).contains(&bind.keycode) && bind.modmask == 64 && bind.dispatcher == "workspace"
+    bind.modmask == 64
+        && !bind.description.contains("Taskspace workspace")
+        && (((10..=19).contains(&bind.keycode) && bind.dispatcher == "workspace")
+            || bind.description.starts_with("Switch to workspace "))
 }
 
 #[cfg(test)]
@@ -442,6 +610,74 @@ bind
                 .count(),
             0
         );
+    }
+
+    #[test]
+    fn parse_lua_binds_by_description_when_keycode_is_zero() {
+        let text = r#"
+bindd
+	modmask: 64
+	key: SUPER + code:10
+	keycode: 0
+	description: Taskspace workspace 1
+	dispatcher: __lua
+	arg: 33
+
+bindd
+	modmask: 64
+	key: SUPER + code:10
+	keycode: 0
+	description: Switch to workspace 1
+	dispatcher: __lua
+	arg: 1
+
+bindd
+	modmask: 65
+	key: B
+	keycode: 0
+	description: Taskspace launch browser
+	dispatcher: __lua
+	arg: 335
+
+bindd
+	modmask: 65
+	key: B
+	keycode: 0
+	description: Browser
+	dispatcher: __lua
+	arg: 12
+"#;
+        let binds = parse_hyprctl_binds(text);
+        assert!(bind_runs_tsk_workspace_switch(&binds[0]));
+        assert!(!bind_is_omarchy_workspace_digit(&binds[0]));
+        assert!(bind_is_omarchy_workspace_digit(&binds[1]));
+        assert!(bind_runs_tsk_launch_chromium(&binds[2]));
+        assert!(!bind_is_omarchy_launch_browser(&binds[2]));
+        assert!(!bind_runs_tsk_launch_chromium(&binds[3]));
+        assert_eq!(count_browser_binds(&binds), (1, 1));
+    }
+
+    #[test]
+    fn stock_browser_description_counts_as_tsk_when_omarchy_workspace_unbound() {
+        let text = r#"
+bindd
+	modmask: 64
+	key: SUPER + code:10
+	keycode: 0
+	description: Taskspace workspace 1
+	dispatcher: __lua
+	arg: 33
+
+bindd
+	modmask: 65
+	key: B
+	keycode: 0
+	description: Browser
+	dispatcher: __lua
+	arg: 335
+"#;
+        let binds = parse_hyprctl_binds(text);
+        assert_eq!(count_browser_binds(&binds), (1, 0));
     }
 
     fn check(passed: bool, label: &str) -> DoctorCheck {

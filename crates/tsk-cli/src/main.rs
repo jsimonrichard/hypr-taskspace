@@ -6,16 +6,17 @@ use tsk_core::{
     effective_share_dir, enable_for_process, ensure_repo_removable, find_repo, find_repo_by_path,
     format_doctor_report, format_report, format_version_long, hypr_log_path, hyprland, install_all,
     install_bins, install_chromium, install_chromium_status, install_hypr, install_hypr_status,
-    install_omarchy_prod, install_systemd_status, install_walker, install_walker_status,
-    install_waybar, install_waybar_status, is_daemon_running, is_dev_config, is_http_url,
-    is_systemd_unit_installed, launch_task_tui, live_windows_path, load_config, load_dev_config,
-    load_repos, maybe_reexec_dev_session, normalize_desktop_env, ping_daemon, profile_for_config,
-    read_live_windows, read_task_session, reconcile_stale_dev_session, register_repo, repo_label,
-    restore_saved, run_doctor_checks, run_native_host, session_path, stop_daemon,
-    systemctl_is_active, systemd_restart, systemd_start, systemd_stop, tail_hypr_log, tail_raw,
-    trace_path, uninstall_hypr, uninstall_waybar, unregister_repo, version_info, walker_exec,
-    walker_terminal, walker_watch_launch, workspace_module_key, DaemonClient, DaemonServer,
-    InstallAllOptions, InstallBinsOptions, InstallChromiumOptions, InstallHyprOptions,
+    install_omarchy_plugin, install_omarchy_prod, install_systemd_status, install_walker,
+    install_walker_status, install_waybar, install_waybar_status, is_daemon_running, is_dev_config,
+    is_http_url, is_systemd_unit_installed, launch_exec, launch_task_tui, live_windows_path,
+    load_config, load_dev_config, load_repos, maybe_reexec_dev_session, normalize_desktop_env,
+    ping_daemon, profile_for_config, quattro_hypr_present, read_live_windows, read_task_session,
+    reconcile_stale_dev_session, register_repo, repo_label, restore_saved, run_doctor_checks,
+    run_native_host, session_path, stop_daemon, systemctl_is_active, systemd_restart,
+    systemd_start, systemd_stop, tail_hypr_log, tail_raw, trace_path, uninstall_hypr,
+    uninstall_waybar, unregister_repo, version_info, walker_exec, walker_terminal,
+    walker_watch_launch, workspace_module_key, DaemonClient, DaemonServer, InstallAllOptions,
+    InstallBinsOptions, InstallChromiumOptions, InstallHyprOptions, InstallPluginOptions,
     InstallProfile, InstallWalkerOptions, InstallWaybarOptions, OmarchyInstallOptions, Registry,
     Result, TaskRepoSource, TaskService, TaskStatus, TskError,
 };
@@ -76,6 +77,16 @@ enum Commands {
     Waybar {
         #[command(subcommand)]
         command: WaybarCommands,
+    },
+    /// Bar snapshot for omarchy-shell (and other consumers)
+    Bar {
+        #[command(subcommand)]
+        command: BarCommands,
+    },
+    /// Launch an app in the current taskspace (Omarchy menu / keybind prefix)
+    Launch {
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
     },
     Debug {
         #[command(subcommand)]
@@ -433,8 +444,17 @@ enum WaybarCommands {
 }
 
 #[derive(Subcommand)]
+enum BarCommands {
+    /// Print taskspace / workspace snapshot as JSON
+    Status {
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum DebugCommands {
-    /// Trace log utilities (set TSK_TRACE=1 on Waybar for widget events)
+    /// Trace log utilities (`TSK_TRACE=1`; `tsk debug trace workspace N` uses the keybind path)
     Trace {
         #[command(subcommand)]
         command: DebugTraceCommands,
@@ -491,7 +511,7 @@ enum DebugTraceCommands {
     Analyze,
     Clear,
     Path,
-    /// Switch workspace with tracing and print a latency timeline
+    /// Run `workspace switch` with tracing and print a latency timeline
     Workspace {
         #[arg(value_parser = clap::value_parser!(i32).range(1..=10))]
         index: i32,
@@ -656,6 +676,13 @@ fn run() -> Result<()> {
             WaybarCommands::Status => cmd_waybar_install_status(),
             WaybarCommands::Module { name, index } => cmd_waybar_module(&name, index),
         },
+        Commands::Bar { command } => match command {
+            BarCommands::Status { json: _ } => cmd_bar_status(),
+        },
+        Commands::Launch { args } => {
+            let argv: Vec<&str> = args.iter().map(String::as_str).collect();
+            launch_exec(&argv)
+        }
         Commands::Debug { command } => match command {
             DebugCommands::Trace { command } => match command {
                 DebugTraceCommands::Show { last } => cmd_debug_trace_show(last),
@@ -1004,13 +1031,18 @@ fn cmd_dev_install_all(
     quiet: bool,
     workspace: Option<std::path::PathBuf>,
 ) -> Result<()> {
+    let quattro = quattro_hypr_present();
     cmd_dev_install_hypr_inner(dry_run, quiet, workspace.clone(), true)?;
-    cmd_dev_install_waybar_inner(dry_run, quiet, workspace.clone(), true)?;
-    cmd_dev_install_walker_inner(dry_run, quiet)?;
+    if quattro {
+        cmd_dev_install_plugin_inner(dry_run, quiet)?;
+    } else {
+        cmd_dev_install_waybar_inner(dry_run, quiet, workspace.clone(), true)?;
+        cmd_dev_install_walker_inner(dry_run, quiet)?;
+    }
     if dry_run {
         return Ok(());
     }
-    let actions = tsk_core::install::reload::apply_after_install(true, true)?;
+    let actions = tsk_core::install::reload::apply_after_install(true, !quattro)?;
     if quiet {
         if !actions.is_empty() {
             println!("  {}", actions.join(", "));
@@ -1020,6 +1052,29 @@ fn cmd_dev_install_all(
         if !actions.is_empty() {
             println!("Applied: {}.", actions.join(", "));
         }
+    }
+    Ok(())
+}
+
+fn cmd_dev_install_plugin_inner(dry_run: bool, quiet: bool) -> Result<()> {
+    let cfg = load_dev_config()?;
+    let actions = install_omarchy_plugin(
+        &cfg,
+        InstallProfile::Dev,
+        &InstallPluginOptions { dry_run, quiet },
+    )?;
+    if dry_run {
+        for line in actions {
+            println!("{line}");
+        }
+        return Ok(());
+    }
+    if quiet {
+        println!("  Omarchy plugin + menu launch prefix installed");
+        return Ok(());
+    }
+    for line in actions {
+        println!("{line}");
     }
     Ok(())
 }
@@ -1849,6 +1904,17 @@ fn cmd_waybar_module(name: &str, index: usize) -> Result<()> {
     Ok(())
 }
 
+fn cmd_bar_status() -> Result<()> {
+    let registry = Registry::with_defaults()?;
+    let state = registry.load_state()?;
+    let data = tsk_core::build_bar_status(&state, true);
+    println!(
+        "{}",
+        serde_json::to_string(&data).map_err(|e| TskError::Other(e.to_string()))?
+    );
+    Ok(())
+}
+
 fn cmd_debug_trace_show(last: usize) -> Result<()> {
     print!("{}", tail_raw(last)?);
     Ok(())
@@ -1878,9 +1944,9 @@ fn cmd_debug_trace_workspace(index: i32, clear: bool, wait_ms: u64) -> Result<()
     if clear {
         clear_log()?;
     }
-    eprintln!("Note: Waybar needs TSK_TRACE=1 to log widget events.\n");
+    eprintln!("Note: this traces `workspace switch` (the keybind path). Omarchy bar clicks use the same command.\n");
     enable_for_process();
-    cmd_workspace_go(index)?;
+    cmd_workspace_switch(index)?;
     std::thread::sleep(std::time::Duration::from_millis(wait_ms));
     print!("{}", format_report(&analyze_recent_latency()));
     Ok(())

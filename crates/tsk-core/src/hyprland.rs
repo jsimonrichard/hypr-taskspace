@@ -1,8 +1,8 @@
 use std::cell::Cell;
 use std::collections::HashSet;
 use std::io::ErrorKind;
-use std::process::{Command, ExitStatus, Stdio};
-use std::sync::Mutex;
+use std::process::{Command, Stdio};
+use std::sync::{Mutex, OnceLock};
 
 use serde_json::Value;
 
@@ -160,18 +160,6 @@ where
     }
 }
 
-fn hyprctl_status(args: &[&str]) -> std::io::Result<ExitStatus> {
-    hypr_log::log("dispatch", &format!("hyprctl {}", args.join(" ")));
-    retry_on_interrupted(|| {
-        Command::new("hyprctl")
-            .args(args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-    })
-}
-
 pub fn dispatch(args: &[&str]) {
     dispatch_sync(args);
 }
@@ -181,12 +169,14 @@ pub fn dispatch_async(args: &[&str]) {
     if !available() || !mutations_enabled() {
         return;
     }
-    let detail = args.join(" ");
-    hypr_log::log("dispatch_async", &format!("hyprctl dispatch {detail}"));
+    let Some(hypr_args) = dispatch_argv(args) else {
+        return;
+    };
+    let detail = hypr_args.join(" ");
+    hypr_log::log("dispatch_async", &format!("hyprctl {detail}"));
     let _span = Span::begin("cli", "hyprland", &format!("dispatch {detail}"));
     let _ = Command::new("hyprctl")
-        .arg("dispatch")
-        .args(args)
+        .args(&hypr_args)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -198,12 +188,167 @@ pub fn dispatch_sync(args: &[&str]) {
         return;
     }
     with_hypr_ipc(|| {
-        let detail = args.join(" ");
+        let Some(hypr_args) = dispatch_argv(args) else {
+            return;
+        };
+        let detail = hypr_args.join(" ");
         let _span = Span::begin("cli", "hyprland", &format!("dispatch {detail}"));
-        let mut hypr_args = vec!["dispatch"];
-        hypr_args.extend(args);
-        let _ = hyprctl_status(&hypr_args);
+        match retry_on_interrupted(|| {
+            Command::new("hyprctl")
+                .args(&hypr_args)
+                .stdin(Stdio::null())
+                .output()
+        }) {
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                hypr_log::log("dispatch", &format!("hyprctl {detail}"));
+                if !output.status.success()
+                    || stdout.contains("error:")
+                    || stderr.contains("error:")
+                {
+                    hypr_log::note(format!(
+                        "dispatch failed status={} stdout={} stderr={}",
+                        output.status.code().unwrap_or(-1),
+                        stdout.trim(),
+                        stderr.trim()
+                    ));
+                }
+            }
+            Err(err) => hypr_log::note(format!("dispatch spawn failed: {err}")),
+        }
     });
+}
+
+/// Hyprland 0.55+ Lua configs evaluate `hyprctl dispatch` as `hl.dispatch(...)`.
+/// Legacy `workspace name:2` is a syntax error there; use `hl.dsp.*` instead.
+fn uses_lua_dispatch() -> bool {
+    static LUA: OnceLock<bool> = OnceLock::new();
+    *LUA.get_or_init(detect_lua_dispatch)
+}
+
+fn detect_lua_dispatch() -> bool {
+    // `hyprctl systeminfo` is ~100ms. Each keybind is a new process, so an
+    // in-memory OnceLock never helps — check the Lua config file first.
+    if crate::xdg::expand("~/.config/hypr/hyprland.lua").is_file() {
+        return true;
+    }
+    if let Some(cached) = read_lua_dispatch_cache() {
+        return cached;
+    }
+    let lua = hyprctl_output(&["systeminfo"])
+        .ok()
+        .is_some_and(|info| info.contains("configProvider: lua"));
+    write_lua_dispatch_cache(lua);
+    lua
+}
+
+fn lua_dispatch_cache_path() -> Option<std::path::PathBuf> {
+    crate::xdg::tsk_runtime_dir()
+        .ok()
+        .map(|dir| dir.join("lua-dispatch"))
+}
+
+fn read_lua_dispatch_cache() -> Option<bool> {
+    let text = std::fs::read_to_string(lua_dispatch_cache_path()?).ok()?;
+    match text.trim() {
+        "lua" => Some(true),
+        "legacy" => Some(false),
+        _ => None,
+    }
+}
+
+fn write_lua_dispatch_cache(lua: bool) {
+    let Some(path) = lua_dispatch_cache_path() else {
+        return;
+    };
+    let _ = crate::xdg::ensure_parent(&path);
+    let _ = std::fs::write(path, if lua { "lua\n" } else { "legacy\n" });
+}
+
+fn dispatch_argv(args: &[&str]) -> Option<Vec<String>> {
+    let mut argv = vec!["dispatch".to_string()];
+    if uses_lua_dispatch() {
+        match lua_dispatch_expr(args) {
+            Some(expr) => argv.push(expr),
+            None => {
+                hypr_log::note(format!(
+                    "no lua translation for dispatch {}",
+                    args.join(" ")
+                ));
+                return None;
+            }
+        }
+    } else {
+        argv.extend(args.iter().map(|s| (*s).to_string()));
+    }
+    Some(argv)
+}
+
+fn lua_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            _ => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+fn lua_workspace(target: &str) -> String {
+    // Keep `name:` — without it Hyprland treats the value as an ID/selector and
+    // named taskspaces (`auth-fix-2`) fail with "Bad workspace" and are never created.
+    lua_quote(target)
+}
+
+/// Translate legacy hyprctl dispatcher argv into a Lua `hl.dsp.*` expression.
+fn lua_dispatch_expr(args: &[&str]) -> Option<String> {
+    if args.first().is_some_and(|a| a.starts_with("hl.dsp.")) {
+        return Some(args.join(" "));
+    }
+    Some(match args {
+        ["workspace", target] => {
+            format!("hl.dsp.focus({{ workspace = {} }})", lua_workspace(target))
+        }
+        ["focusworkspaceoncurrentmonitor", target] => format!(
+            "hl.dsp.focus({{ workspace = {}, on_current_monitor = true }})",
+            lua_workspace(target)
+        ),
+        ["focusmonitor", name] => {
+            format!("hl.dsp.focus({{ monitor = {} }})", lua_quote(name))
+        }
+        ["swapactiveworkspaces", a, b] => format!(
+            "hl.dsp.workspace.swap_monitors({{ monitor1 = {}, monitor2 = {} }})",
+            lua_quote(a),
+            lua_quote(b)
+        ),
+        ["movetoworkspace", target] => format!(
+            "hl.dsp.window.move({{ workspace = {} }})",
+            lua_workspace(target)
+        ),
+        ["movetoworkspacesilent", target] => format!(
+            "hl.dsp.window.move({{ workspace = {}, follow = false }})",
+            lua_workspace(target)
+        ),
+        ["movetoworkspacesilent", target, window] => format!(
+            "hl.dsp.window.move({{ workspace = {}, follow = false, window = {} }})",
+            lua_workspace(target),
+            lua_quote(window)
+        ),
+        ["closewindow", window] => {
+            format!("hl.dsp.window.close({{ window = {} }})", lua_quote(window))
+        }
+        ["focuswindow", window] => {
+            format!("hl.dsp.focus({{ window = {} }})", lua_quote(window))
+        }
+        _ => return None,
+    })
 }
 
 pub fn get_active_workspace() -> Result<Option<Workspace>> {
@@ -498,7 +643,14 @@ pub fn keyword(args: &[&str]) {
 
 pub fn rename_workspace(ws_id: i32, name: &str) {
     hypr_log::scoped(format!("rename_workspace id={ws_id} name={name}"), || {
-        keyword(&["workspace", &format!("{ws_id},name:{name}")]);
+        if uses_lua_dispatch() {
+            dispatch_sync(&[&format!(
+                "hl.dsp.workspace.rename({{ workspace = {ws_id}, name = {} }})",
+                lua_quote(name)
+            )]);
+        } else {
+            keyword(&["workspace", &format!("{ws_id},name:{name}")]);
+        }
     });
 }
 
@@ -592,6 +744,53 @@ mod tests {
     fn workspace_dispatch_arg_uses_name_prefix_for_numeric_slots() {
         assert_eq!(workspace_dispatch_arg("3"), "name:3");
         assert_eq!(workspace_dispatch_arg("auth-fix-2"), "name:auth-fix-2");
+    }
+
+    #[test]
+    fn lua_dispatch_focuses_named_workspace() {
+        assert_eq!(
+            lua_dispatch_expr(&["workspace", "name:3"]).as_deref(),
+            Some("hl.dsp.focus({ workspace = \"name:3\" })")
+        );
+        assert_eq!(
+            lua_dispatch_expr(&["focusworkspaceoncurrentmonitor", "name:auth-1"]).as_deref(),
+            Some("hl.dsp.focus({ workspace = \"name:auth-1\", on_current_monitor = true })")
+        );
+    }
+
+    #[test]
+    fn lua_dispatch_moves_and_focuses_windows() {
+        assert_eq!(
+            lua_dispatch_expr(&["movetoworkspace", "name:2"]).as_deref(),
+            Some("hl.dsp.window.move({ workspace = \"name:2\" })")
+        );
+        assert_eq!(
+            lua_dispatch_expr(&["movetoworkspacesilent", "name:4", "address:0xabc"]).as_deref(),
+            Some(
+                "hl.dsp.window.move({ workspace = \"name:4\", follow = false, window = \"address:0xabc\" })"
+            )
+        );
+        assert_eq!(
+            lua_dispatch_expr(&["closewindow", "address:0xabc"]).as_deref(),
+            Some("hl.dsp.window.close({ window = \"address:0xabc\" })")
+        );
+        assert_eq!(
+            lua_dispatch_expr(&["focuswindow", "address:0xabc"]).as_deref(),
+            Some("hl.dsp.focus({ window = \"address:0xabc\" })")
+        );
+        assert_eq!(
+            lua_dispatch_expr(&["focusmonitor", "eDP-1"]).as_deref(),
+            Some("hl.dsp.focus({ monitor = \"eDP-1\" })")
+        );
+        assert_eq!(
+            lua_dispatch_expr(&["swapactiveworkspaces", "eDP-1", "DP-2"]).as_deref(),
+            Some("hl.dsp.workspace.swap_monitors({ monitor1 = \"eDP-1\", monitor2 = \"DP-2\" })")
+        );
+    }
+
+    #[test]
+    fn lua_quote_escapes_quotes() {
+        assert_eq!(lua_quote(r#"a"b"#), r#""a\"b""#);
     }
 
     #[test]

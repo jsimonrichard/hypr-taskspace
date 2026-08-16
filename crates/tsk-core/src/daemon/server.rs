@@ -620,6 +620,14 @@ fn process_alive(pid: i32) -> bool {
 pub struct DaemonProcess {
     pub pid: u32,
     pub cmdline: String,
+    /// True when `/proc/pid/exe` points at a replaced binary (`… (deleted)`).
+    pub deleted_exe: bool,
+}
+
+fn proc_exe_deleted(pid: u32) -> bool {
+    std::fs::read_link(format!("/proc/{pid}/exe"))
+        .map(|target| target.to_string_lossy().contains("(deleted)"))
+        .unwrap_or(false)
 }
 
 /// Live `tsk daemon run` processes, including this one if it already matches.
@@ -643,6 +651,7 @@ pub fn running_daemon_processes() -> Vec<DaemonProcess> {
         out.push(DaemonProcess {
             pid,
             cmdline: argv.join(" "),
+            deleted_exe: proc_exe_deleted(pid),
         });
     }
     out.sort_by_key(|p| p.pid);

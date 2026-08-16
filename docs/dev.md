@@ -25,14 +25,14 @@ This:
 
 1. Symlinks `~/.local/share/tsk-dev/state.db` → prod `state.db` (so existing tasks, repos, and window registry stay visible)
 2. Builds `target/release/tsk` and writes `~/.local/share/tsk/dev-session` with the dev binary path
-3. Runs `tsk dev install all` (share assets, Hyprland, Waybar, Walker/Elephant)
+3. Runs `tsk dev install all` (share assets, Hyprland Lua or `.conf`, Omarchy plugin / menu launch prefix; Waybar + Walker only when not on Omarchy)
 4. Stops prod `tskd.service` if running, starts the **dev daemon** in the foreground
 
-When you exit the dev daemon (Ctrl+C) or run `scripts/dev.sh leave`, dev integration is **fully removed**: Hyprland and Waybar are restored to prod, the session file is deleted, and prod `tskd.service` is restarted if it was running before.
+When you exit the dev daemon (Ctrl+C) or run `scripts/dev.sh leave`, dev integration is **fully removed**: Hyprland Lua/`bindings.lua` (and Waybar if used) are restored to prod, the session file is deleted, and prod `tskd.service` is restarted if it was running before.
 
 `scripts/dev.sh leave` works from **any terminal** (even while `dev enter` is still running in another): it stops the dev daemon, restores prod integration, and brings prod `tskd.service` back when the unit is installed.
 
-**No environment variables.** Hyprland keybinds, Waybar helpers, and new terminals keep calling `tsk` (or `/usr/bin/tsk`). When the session file exists, prod `tsk` re-execs the repo build and loads dev config automatically — no Hyprland reload required for binary switching.
+**No environment variables.** Hyprland keybinds, the Omarchy bar widget, and new terminals keep calling `tsk` (or `/usr/bin/tsk`). When the session file exists, prod `tsk` re-execs the repo build and loads dev config automatically — no Hyprland reload required for binary switching.
 
 Set `TSK_DEV_ISOLATED=1` to use a separate dev `state.db` instead (CI/e2e).
 
@@ -61,9 +61,9 @@ cargo run -p tsk-cli --release -- dev status
 
 ## Switching prod ↔ dev
 
-Dev mode is **session-scoped**: entering installs dev Hyprland/Waybar integration and starts a foreground daemon; leaving (Ctrl+C or `scripts/dev.sh leave`) uninstalls dev integration and restores prod.
+Dev mode is **session-scoped**: entering installs dev Hyprland/Omarchy integration and starts a foreground daemon; leaving (Ctrl+C or `scripts/dev.sh leave`) uninstalls dev integration and restores prod.
 
-If a previous session ended uncleanly, `scripts/dev.sh enter` or `leave` detects stale integration (e.g. `tsk-dev-managed` still in `hyprland.conf`) and cleans up first.
+If a previous session ended uncleanly, `scripts/dev.sh enter` or `leave` detects stale integration (e.g. `tsk-dev-managed` still in `bindings.lua` or `hyprland.conf`) and cleans up first.
 
 Running `scripts/dev.sh enter` or `daemon` while a dev daemon is already reachable exits with an error — use `scripts/dev.sh leave` or Ctrl+C in the running terminal first.
 

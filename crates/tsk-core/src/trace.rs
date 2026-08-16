@@ -1,10 +1,11 @@
 //! Opt-in latency tracing (`TSK_TRACE=1`).
 //!
 //! Maintained debugging surface:
-//! - `TSK_TRACE=1` — enable in CLI or Waybar process
+//! - `TSK_TRACE=1` — enable in CLI (keybinds) or bar process
 //! - `TSK_TRACE_FILE` — override log path (default: `$XDG_RUNTIME_DIR/tsk/trace.log`)
 //! - `tsk debug trace show|analyze|clear|path`
-//! - `tsk debug trace workspace N` — switch workspace and print timeline
+//! - `tsk debug trace workspace N` — `workspace switch` + timeline (same path as SUPER+N)
+//! - `tsk debug hypr log show` — every hyprctl call (`$XDG_RUNTIME_DIR/tsk/hyprctl.log`)
 //! - `tsk debug hyprland-socket` — socket2 availability (also in `tsk doctor`)
 
 use std::fs::{self, OpenOptions};

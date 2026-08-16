@@ -12,7 +12,8 @@ DEV_DB="$DEV_DATA/state.db"
 DEV_BUILD="$ROOT/target/release/tsk"
 SESSION_FILE="$PROD_DATA/dev-session"
 PROD_TSKD_MARKER="$PROD_DATA/.dev-prod-tskd-was-active"
-HYPR_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/hyprland.conf"
+HYPR_CONF="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/hyprland.conf"
+HYPR_LUA="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/bindings.lua"
 
 PROD_TSKD_WAS_ACTIVE=false
 TEARDOWN_DONE=false
@@ -202,7 +203,8 @@ run_cli() {
 }
 
 dev_integration_installed() {
-  [[ -f "$HYPR_CONFIG" ]] && grep -q "tsk-dev-managed" "$HYPR_CONFIG"
+  { [[ -f "$HYPR_CONF" ]] && grep -q "tsk-dev-managed" "$HYPR_CONF"; } ||
+    { [[ -f "$HYPR_LUA" ]] && grep -q "tsk-dev-managed" "$HYPR_LUA"; }
 }
 
 # Dev uses prod task/session state so existing windows and tasks stay visible.

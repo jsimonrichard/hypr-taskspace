@@ -2,7 +2,7 @@
 
 Task-centric Hyprland control plane. Each task gets its own **taskspace** with named workspaces (`auth-fix-1`, `auth-fix-2`, …). The **default** (host) taskspace uses plain Hyprland workspaces **`1`–`10`** for everyday work.
 
-Keybinds call `tsk` on your PATH. **Hyprland bindings** shown in this doc match the shipped `bindings.conf` that `tsk install omarchy` wires in; if you integrate manually or remap keys, yours are whatever you configure (see [Keybindings](#keybindings-hyprland)). Runtime state lives in `~/.local/share/tsk/`. Templates and the Waybar module live under `/usr/share/tsk/` (pacman) or `~/.local/share/tsk/` (cargo / from source).
+Keybinds call `tsk` on your PATH. **Hyprland bindings** shown in this doc match the shipped Omarchy Lua (`omarchy.lua`) that `tsk install omarchy` `dofile`s from `~/.config/hypr/bindings.lua`; non-Omarchy Hyprland can still source `bindings.conf`. Runtime state lives in `~/.local/share/tsk/`. Templates live under `/usr/share/tsk/` (pacman) or `~/.local/share/tsk/` (cargo / from source).
 
 ## Prerequisites
 
@@ -18,7 +18,7 @@ Optional:
 | | Pacman | Cargo / from source |
 |---|--------|---------------------|
 | CLI | `/usr/bin/tsk` | `~/.cargo/bin/tsk` |
-| Share templates + Waybar `.so` | `/usr/share/tsk/` | `~/.local/share/tsk/` via script |
+| Share templates + Omarchy plugin | `/usr/share/tsk/` | `~/.local/share/tsk/` via script |
 | Runtime data | `~/.local/share/tsk/` | same |
 | systemd | packaged unit | `scripts/install-systemd.sh` |
 
@@ -29,7 +29,7 @@ cd packaging/arch && makepkg -si
 systemctl --user enable --now tskd.service
 ```
 
-Then source `/usr/share/tsk/hypr/bindings.conf` from Hyprland and merge the Waybar snippets under `/usr/share/tsk/waybar/`.
+Then run `tsk install omarchy` (Lua bindings + bar plugin + menu launch prefix). Non-Omarchy Hyprland can source `/usr/share/tsk/hypr/bindings.conf` and optionally merge Waybar snippets under `/usr/share/tsk/waybar/`.
 
 **Cargo / from source:**
 
@@ -39,12 +39,12 @@ scripts/install-user-share.sh
 scripts/install-systemd.sh
 ```
 
-Wire Hyprland/Waybar to `~/.local/share/tsk/` the same way.
+Wire Hyprland to `~/.local/share/tsk/` the same way (`tsk install omarchy` on Omarchy).
 
-**Omarchy** (auto-patches Hypr + Waybar after share assets exist):
+**Omarchy** (Lua bindings, `tsk.taskspace` bar widget, cloned menu → `tsk launch`):
 
 ```bash
-tsk install all                      # Omarchy + Chromium + Walker, whichever are present
+tsk install all                      # Omarchy + Chromium, whichever are present
 # or individually:
 tsk install omarchy
 tsk install chromium
@@ -63,8 +63,9 @@ The task manager is a **ratatui** terminal UI for creating, switching, and archi
 
 | Method | Command / binding |
 |--------|-------------------|
-| Hyprland keybind | **SUPER+Tab** (default in shipped `bindings.conf`) |
-| Waybar | click the task label |
+| Hyprland keybind | **SUPER+Tab** (default in shipped Lua / `bindings.conf`) |
+| Omarchy bar | click the task label |
+| Waybar (legacy) | click the task label |
 | New terminal window | `tsk task tui-launch` |
 | Current terminal | `tsk task tui` |
 
@@ -141,21 +142,25 @@ tsk repo root                        # detected git/jj root for cwd
 
 ### Keybindings (Hyprland)
 
-These match the defaults in `share/hypr/bindings.conf` — what `tsk install omarchy` sources into Hyprland (with Omarchy conflict unbinds). Pacman and manual installs use the same template from `/usr/share/tsk/hypr/` or `~/.local/share/tsk/hypr/`; remap freely in your config, but the underlying commands stay the same (`tsk task tui-launch`, `tsk workspace switch 3`, …).
+These match the defaults in `share/hypr/omarchy.lua` (Omarchy) and `share/hypr/bindings.conf` (legacy Hyprland `.conf`). `tsk install omarchy` `dofile`s the Lua file from `~/.config/hypr/bindings.lua` after unbinding Omarchy workspace and browser keys. Pacman and manual installs use the same templates from `/usr/share/tsk/hypr/` or `~/.local/share/tsk/hypr/`; remap freely, but the underlying commands stay the same (`tsk task tui-launch`, `tsk workspace switch 3`, `tsk launch chromium.desktop`, …).
 
 | Action | Default binding |
 |--------|---------|
-| Task manager | **SUPER+Tab** (or Waybar task label) |
+| Task manager | **SUPER+Tab** (or bar task label) |
 | Workspace 1–9 / 10 in current taskspace | **SUPER+1..9**, **SUPER+0** |
 | Move window to workspace 1–10 | **SUPER+Shift+1..9 / 0** |
 | Previous / next workspace | **SUPER+[** / **SUPER+]** (also trackpad swipe) |
 | Default / host taskspace | **SUPER+H** or TUI → **host → default taskspace** |
 | Task-aware terminal | **SUPER+Return** |
-| Editor / browser | **SUPER+E** / **SUPER+B** |
+| Editor / browser (task) | **SUPER+E** / **SUPER+B** |
+| Chromium via `tsk launch` | **SUPER+Shift+B**, **SUPER+Shift+Return** |
+| Chromium private | **SUPER+Shift+Alt+B** |
 
 Default and task taskspaces both use **10** slots so keybinds feel the same. Change the count with `workspace_count` under `[default]` in `~/.config/tsk/config.toml`.
 
-Chromium in a taskspace (`SUPER+B`, Walker, or `tsk task browser`) uses the **host profile** so extensions and logins (password manager, etc.) are shared. Set `isolate_profile = true` under `[browser]` for a blank per-task `--user-data-dir`. Tabs are snapshotted automatically; the first Chromium launch in a taskspace with no window reopens that snapshot (including after archive/restore).
+**SUPER+Space** Apps on Omarchy go through a cloned `omarchy.menu` whose app-launch line calls `tsk launch <id>.desktop` (not Walker). Omarchy menu updates may require re-running `tsk install omarchy` to re-apply that patch.
+
+Chromium in a taskspace (`tsk launch chromium.desktop`, **SUPER+B**, or `tsk task browser`) uses the **host profile** so extensions and logins (password manager, etc.) are shared. Set `isolate_profile = true` under `[browser]` for a blank per-task `--user-data-dir`. Tabs are snapshotted automatically; the first Chromium launch in a taskspace with no window reopens that snapshot (including after archive/restore).
 
 ### Useful commands
 
@@ -174,16 +179,16 @@ tsk daemon status
 tsk doctor
 tsk taskspace default
 systemctl --user status tskd.service
-hyprctl reload                       # after changing Hypr source lines
+hyprctl reload                       # after changing Lua or Hypr source lines
 ```
 
-If the Waybar indicator is stuck, confirm `tskd.service` is running and the CFFI `module_path` points at the right `libtsk_waybar.so` (`/usr/share/tsk/lib/` or `~/.local/share/tsk/lib/`).
+If the Omarchy bar widget is stale, run `omarchy-shell shell call tsk.taskspace refresh` (or `tsk doctor`). Waybar CFFI is optional/legacy for non-Omarchy Hyprland.
 
 ## More documentation
 
 | Doc | For |
 |-----|-----|
-| [docs/install.md](docs/install.md) | Production install, manual Hypr/Waybar wiring |
+| [docs/install.md](docs/install.md) | Production install, Omarchy plugin / Lua / launch intercept |
 | [docs/packaging.md](docs/packaging.md) | Arch package layout and AUR notes |
 | [docs/dev.md](docs/dev.md) | Developing tsk itself (dev session, e2e) |
 | [docs/cursor.md](docs/cursor.md) | Cursor / on-start hooks |

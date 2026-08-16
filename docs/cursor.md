@@ -6,6 +6,8 @@ How tsk opens Cursor and how that will evolve when a task has multiple repos.
 
 When a task is **created** or **restored** from archive, tsk runs `.tsk/on-start.sh` by default (no `repo.toml` entry required). Use `TSK_TASK_HOOK` (`create` or `restore`) inside the script if you need different behavior per event. Scratch tasks skip on-start.
 
+Launching Cursor from the Omarchy menu (`SUPER+Space`) or `tsk launch cursor.desktop` uses the same task checkout path when you are in a task taskspace.
+
 Optional settings in `.tsk/repo.toml`:
 
 ```toml

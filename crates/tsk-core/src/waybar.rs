@@ -31,19 +31,29 @@ pub struct WaybarModuleJson {
 pub type WaybarModulesCache = HashMap<String, WaybarModuleJson>;
 
 #[derive(Debug, Clone, Serialize)]
-struct WaybarData {
-    taskspace: String,
-    context_mode: String,
-    task_id: Option<String>,
-    task_name: Option<String>,
-    repo_name: Option<String>,
-    workspaces: Vec<String>,
-    workspace_count: usize,
-    visible_workspace_count: u32,
-    occupied_workspace_indices: Vec<i32>,
-    active_workspace: i32,
-    active_workspace_name: Option<String>,
-    global_workspace_slots: Vec<u32>,
+pub struct WaybarData {
+    pub taskspace: String,
+    pub context_mode: String,
+    pub task_id: Option<String>,
+    pub task_name: Option<String>,
+    pub repo_name: Option<String>,
+    pub workspaces: Vec<String>,
+    pub workspace_count: usize,
+    pub visible_workspace_count: u32,
+    pub occupied_workspace_indices: Vec<i32>,
+    pub active_workspace: i32,
+    pub active_workspace_name: Option<String>,
+    pub global_workspace_slots: Vec<u32>,
+}
+
+/// Snapshot used by `tsk bar status --json` and the Omarchy bar widget.
+pub fn build_bar_status(state: &SessionState, sync: bool) -> WaybarData {
+    let mut state = state.clone();
+    if sync {
+        context_sync::sync_from_active_workspace(&mut state);
+    }
+    let occupied = fetch_occupied_indices(&state);
+    build_waybar_data_with(&state, None, &occupied)
 }
 
 pub fn notify_waybar() {
@@ -104,7 +114,7 @@ fn build_all_modules_with_active_name(
     modules
 }
 
-fn build_waybar_data_with(
+pub fn build_waybar_data_with(
     state: &SessionState,
     active_name: Option<&str>,
     occupied: &HashSet<i32>,

@@ -15,7 +15,7 @@ socket = "~/.local/share/tsk/daemon.sock"
 dir = "~/.local/share/tsk"
 
 [install.hypr]
-config_path = "~/.config/hypr/hyprland.conf"
+config_path = "~/.config/hypr/bindings.lua"
 share_dir = "/usr/share/tsk"
 source_line = "/usr/share/tsk/hypr/bindings.conf"
 

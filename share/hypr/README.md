@@ -2,7 +2,7 @@
 
 Shipped templates install to `@TSK_SHARE@/hypr/` via the **pacman package**, **`scripts/install-user-share.sh`**, or **`scripts/dev.sh`**.
 
-Default binds (see `bindings.conf`):
+Default binds (see `omarchy.lua` on Omarchy, `bindings.conf` otherwise):
 
 | Action | Binding |
 |--------|---------|
@@ -13,8 +13,26 @@ Default binds (see `bindings.conf`):
 | Task manager | `SUPER+Tab` |
 | Task-aware terminal | `SUPER+Return` |
 | Editor / browser | `SUPER+E` / `SUPER+B` |
+| Chromium (`tsk launch`) | `SUPER+Shift+B`, `SUPER+Shift+Return` |
+| Chromium private | `SUPER+Shift+Alt+B` |
 
-## Manual prod install
+## Omarchy (Quattro)
+
+`tsk install omarchy` appends a marked block to `~/.config/hypr/bindings.lua` (loaded last by `hyprland.lua`):
+
+```lua
+-- tsk-managed begin
+dofile("/usr/share/tsk/hypr/omarchy.lua")
+-- tsk-managed end
+```
+
+It does **not** edit `hyprland.conf`. After edits: `hyprctl reload` then `hyprctl configerrors`.
+
+`omarchy.lua` unbinds Omarchy workspace digits, SUPER+Tab, SUPER+Return, mouse scroll, and browser keys, then binds tsk commands. Browser keys call `tsk launch chromium.desktop` (never `omarchy-launch-browser`). **SUPER+Space** Apps go through a cloned `omarchy.menu` whose launch prefix is also `tsk launch`. Menu updates may require re-applying that patch.
+
+The bar is the `tsk.taskspace` plugin (not Waybar). Waybar CFFI remains available for non-Omarchy Hyprland.
+
+## Manual prod install (legacy `.conf`)
 
 1. Install share assets (`makepkg -si` or `scripts/install-user-share.sh`).
 2. Add **as the last line** of `~/.config/hypr/hyprland.conf`:
@@ -24,18 +42,18 @@ Default binds (see `bindings.conf`):
    # pacman: source = /usr/share/tsk/hypr/bindings.conf
    ```
 
-   Or use **`tsk install omarchy`** to do this automatically (Omarchy only).
+   Or use **`tsk install omarchy`** on Omarchy (Lua path above).
 
 3. Resolve keybind conflicts your way:
-   - **Omarchy**: `tsk install omarchy` comments out native `gesture = …, workspace` lines in `~/.config/hypr/input.conf` and sources tsk swipe gestures (`tsk workspace prev/next`) from `bindings.conf`. Omarchy unbinds for keybinds are applied automatically.
-   - **Emergency terminal**: `SUPER+Ctrl+Return` opens a plain `xdg-terminal-exec` shell (no tsk) via `integrations/omarchy-escape-hatch.conf` — use when tsk or tskd is broken.
+   - **Omarchy**: unbinds live in `omarchy.lua`. Native workspace swipe gestures in `input.lua` should stay commented so tsk 3-finger swipes apply.
+   - **Emergency terminal**: on `.conf` installs, `SUPER+Ctrl+Return` opens a plain `xdg-terminal-exec` shell via `integrations/omarchy-escape-hatch.conf`.
 
-Because Hyprland uses the **last** matching bind, sourcing `bindings.conf` last overrides earlier workspace keys.
+Because Hyprland uses the **last** matching bind, sourcing `bindings.conf` last (or `dofile` last in `bindings.lua`) overrides earlier workspace keys.
 
 For the daemon, use **`scripts/install-systemd.sh`** (see [docs/install.md](../../docs/install.md)).
 
 ## Dev install
 
-Use `scripts/dev.sh enter` — it installs to `~/.local/share/tsk-dev/`, applies Omarchy unbinds automatically, patches Waybar, and **does not** install the systemd unit. The foreground daemon is started by `enter`; or run `scripts/dev.sh daemon` alone.
+Use `scripts/dev.sh enter` — it installs to `~/.local/share/tsk-dev/`, applies Lua (or `.conf`) bindings, copies the Omarchy plugin, and **does not** install the systemd unit. The foreground daemon is started by `enter`; or run `scripts/dev.sh daemon` alone.
 
 After code changes, rebuild dev share assets with `scripts/dev.sh install share`. Full details: [docs/dev.md](../../docs/dev.md).

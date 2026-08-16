@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "tsk.taskspace",
+  "name": "Taskspace",
+  "version": "1.0.0",
+  "author": "hypr-taskspace",
+  "description": "Task label and named workspaces for hypr-taskspace",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Taskspace",
+    "description": "Current task and named workspaces",
+    "category": "Compositor",
+    "allowMultiple": false,
+    "defaultSection": "left"
+  }
+}

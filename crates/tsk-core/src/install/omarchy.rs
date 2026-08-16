@@ -1,4 +1,4 @@
-//! Prod Omarchy preset — binaries + Hyprland + Waybar integration.
+//! Prod Omarchy preset — binaries + Lua Hyprland + omarchy-shell plugin.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -10,9 +10,8 @@ use crate::error::{Result, TskError};
 use crate::install::backup;
 use crate::install::bins::{install_bins, InstallBinsOptions};
 use crate::install::hypr::{install_hypr, InstallHyprOptions};
+use crate::install::plugin::{install_omarchy_plugin, InstallPluginOptions};
 use crate::install::profile::InstallProfile;
-use crate::install::walker::{install_walker, InstallWalkerOptions};
-use crate::install::waybar::{install_waybar, InstallWaybarOptions};
 use crate::xdg::expand;
 
 #[derive(Debug, Clone)]
@@ -33,7 +32,7 @@ pub fn install_omarchy_prod(
             workspace_root: options.workspace_root.clone(),
             profile: Some(profile),
             omarchy_integration: true,
-            skip_waybar: false,
+            skip_waybar: true,
             skip_reload: true,
             quiet: false,
             bundled_waybar_source: None,
@@ -54,27 +53,15 @@ pub fn install_omarchy_prod(
     )?;
     actions.extend(hypr);
 
-    let waybar = install_waybar(
+    let plugin = install_omarchy_plugin(
         cfg,
-        &InstallWaybarOptions {
+        profile,
+        &InstallPluginOptions {
             dry_run: options.dry_run,
-            workspace_root: options.workspace_root.clone(),
-            skip_module_build: true,
-            skip_reload: true,
             quiet: false,
         },
     )?;
-    actions.extend(waybar);
-
-    let walker = install_walker(
-        cfg,
-        &InstallWalkerOptions {
-            dry_run: options.dry_run,
-            quiet: false,
-            skip_if_missing: false,
-        },
-    )?;
-    actions.extend(walker);
+    actions.extend(plugin);
 
     if crate::install::systemd::is_systemd_unit_installed() {
         let systemd = crate::install::systemd::install_systemd(
@@ -89,7 +76,7 @@ pub fn install_omarchy_prod(
     }
 
     if !options.dry_run {
-        actions.extend(crate::install::reload::apply_after_install(true, true)?);
+        actions.extend(crate::install::reload::apply_after_install(true, false)?);
     }
 
     Ok(actions)
