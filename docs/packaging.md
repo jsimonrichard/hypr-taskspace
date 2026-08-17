@@ -20,7 +20,7 @@ This installs:
 | `/usr/share/tsk/lib/libtsk_waybar.so` | Waybar module |
 | `/usr/lib/systemd/user/tskd.service` | User daemon unit |
 | `/usr/share/tsk/config.toml.example` | Suggested user config |
-| `/usr/share/libalpm/hooks/90-hypr-taskspace-reload.hook` | Reloads Hyprland and restarts `tskd` after share files or `/usr/bin/tsk` are replaced |
+| `/usr/share/libalpm/hooks/90-hypr-taskspace-reload.hook` | Reloads Hyprland, restarts `tskd`, and refreshes `~/.config/omarchy/plugins/tsk.taskspace` after share files or `/usr/bin/tsk` are replaced |
 
 Runtime data always lives under **`~/.local/share/tsk/`** (`state.db`, `daemon.sock`). The package does not write there.
 
@@ -84,7 +84,7 @@ systemctl --user restart tskd.service
 # restart Waybar after package updates the .so
 ```
 
-Pacman replaces `/usr/share/tsk` with remove-then-add. Hyprland sources those files directly and can auto-reload while they are missing. A PostTransaction hook runs `hyprctl reload` once the new files are in place. If you still see “could not find file” source errors, `hyprctl reload` is enough — you do not need `tsk install omarchy` unless you are changing user config integration.
+Pacman replaces `/usr/share/tsk` with remove-then-add. Hyprland sources those files directly and can auto-reload while they are missing. A PostTransaction hook runs `hyprctl reload`, restarts `tskd`, and (when already installed) copies `/usr/share/tsk/omarchy-plugin/` into `~/.config/omarchy/plugins/tsk.taskspace/` then `omarchy-shell shell rescanPlugins`. If you still see “could not find file” source errors, `hyprctl reload` is enough. You do not need `tsk install omarchy` for plugin code updates after the first install — only when changing user config integration (Lua bindings, `--tui` vs overlay, menu launch prefix).
 
 ## Cargo install (non-pacman)
 
