@@ -179,6 +179,7 @@ Item {
           kind: "task",
           status: item.status || "archived",
           repo_name: item.repo_name || "",
+          listed_at: item.listed_at || "",
           current: false
         }
       })

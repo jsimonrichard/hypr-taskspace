@@ -893,12 +893,17 @@ impl TaskService {
             current: state.context_mode == ContextMode::Default,
             status: "system".into(),
             repo_name: None,
+            listed_at: None,
         });
 
-        for task in state.tasks.values() {
-            if task.status == TaskStatus::Archived {
-                continue;
-            }
+        let mut tasks: Vec<&Task> = state
+            .tasks
+            .values()
+            .filter(|t| t.status != TaskStatus::Archived)
+            .collect();
+        tasks.sort_by(|a, b| a.cmp_list_order(b));
+
+        for task in tasks {
             items.push(MenuTask {
                 id: task.id.clone(),
                 name: task.name.clone(),
@@ -908,6 +913,7 @@ impl TaskService {
                     && state.current_task_id.as_deref() == Some(task.id.as_str()),
                 status: task.status.as_str().into(),
                 repo_name: menu_repo_name(task),
+                listed_at: Some(task.listed_at),
             });
         }
         Ok(items)
@@ -928,6 +934,9 @@ pub struct MenuTask {
     pub status: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repo_name: Option<String>,
+    /// Newest-first overlay/TUI order (`Task::listed_at`). Absent for the default taskspace.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub listed_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 pub fn menu_repo_name(task: &Task) -> Option<String> {
@@ -1235,6 +1244,42 @@ mod tests {
             .clone();
         assert_eq!(after.listed_at, listed_at);
         assert!(after.last_active_at > listed_at);
+    }
+
+    #[test]
+    fn tasks_for_menu_orders_newest_listed_first() {
+        let dir = tempdir().unwrap();
+        let svc = test_service(dir.path());
+        let older = svc
+            .create_task(
+                "older",
+                false,
+                crate::task_repo::TaskRepoSource::Scratch,
+                None,
+                crate::task_repo::TaskRepoOptions::default(),
+            )
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let newer = svc
+            .create_task(
+                "newer",
+                false,
+                crate::task_repo::TaskRepoSource::Scratch,
+                None,
+                crate::task_repo::TaskRepoOptions::default(),
+            )
+            .unwrap();
+
+        let items = svc.tasks_for_menu().unwrap();
+        assert_eq!(items[0].id, "default");
+        assert_eq!(items[0].listed_at, None);
+        let task_ids: Vec<&str> = items
+            .iter()
+            .filter(|item| item.kind == "task")
+            .map(|item| item.id.as_str())
+            .collect();
+        assert_eq!(task_ids, vec![newer.id.as_str(), older.id.as_str()]);
+        assert_eq!(items[1].listed_at, Some(newer.listed_at));
     }
 
     #[test]
