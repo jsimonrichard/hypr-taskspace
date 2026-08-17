@@ -33,6 +33,12 @@ When `TSK_CONTAINER_ISOLATION=1`, on-start scripts should launch via Distrobox (
 
 `TSK_TASK_REPO` is the task-specific path under `~/tsk-tasks/<id>/workspace/<repo-folder-name>` (or `~/tsk-tasks/<id>/workspace` for scratch tasks). Always use this path — not the canonical repo location elsewhere on disk — so Cursor scopes agent conversations to the task checkout.
 
+## Opening http(s) links
+
+tsk does **not** change the system default browser (`xdg-settings get default-web-browser`). In a **task** taskspace, `tsk open` (and the `xdg-open` / `tsk-open` helpers) send http(s) URLs to the task Chromium window. In the default taskspace they fall through to that system handler (e.g. Zen).
+
+Cursor and VS Code often launch via uwsm and never see the task `PATH`, so `tsk install all` (or `tsk install omarchy`) sets `workbench.externalBrowser` to `tsk-open` when that setting is unset. Links clicked in a task workspace then go through `tsk open`; the same setting in the default taskspace still opens your usual browser.
+
 Task-owned agent metadata (notes, future session index) lives at the task home:
 
 ```

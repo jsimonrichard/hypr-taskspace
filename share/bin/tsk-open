@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Taskspace URL opener. Used as $BROWSER in task spawns and as Cursor/VS Code
+# `workbench.externalBrowser` so links in a task taskspace open in Chromium
+# without changing the system default web browser.
+set -euo pipefail
+
+TSK_CMD="${TSK:-@TSK_CMD@}"
+if [[ "$TSK_CMD" == "@TSK_CMD@" ]]; then
+  TSK_CMD="$(command -v tsk 2>/dev/null || true)"
+fi
+if [[ -z "$TSK_CMD" && -x /usr/bin/tsk ]]; then
+  TSK_CMD=/usr/bin/tsk
+fi
+if [[ -z "$TSK_CMD" ]]; then
+  exec "${TSK_REAL_XDG_OPEN:-/usr/bin/xdg-open}" "$@"
+fi
+
+export TSK_XDG_OPEN=1
+exec "$TSK_CMD" open "$@"

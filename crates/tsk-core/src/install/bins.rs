@@ -96,8 +96,8 @@ pub fn install_bins(cfg: &TskConfig, options: &InstallBinsOptions) -> Result<Vec
                 String::new()
             },
             format!(
-                "would install taskspace xdg-open wrapper at {}",
-                task_bin_dir(cfg).join("xdg-open").display()
+                "would install taskspace URL helpers at {} (xdg-open, tsk-open)",
+                task_bin_dir(cfg).display()
             ),
             if options.skip_reload {
                 String::new()
@@ -143,7 +143,8 @@ pub fn install_bins(cfg: &TskConfig, options: &InstallBinsOptions) -> Result<Vec
     } else {
         verify_system_share(cfg, options)?;
     }
-    install_xdg_open_wrapper(&share_src, &resolve_tsk_command(cfg), cfg)?;
+    install_url_openers(&share_src, &resolve_tsk_command(cfg), cfg)?;
+    let editor_actions = configure_editor_external_browser(cfg)?;
     remove_legacy_global_xdg_open_wrapper()?;
     let shadow_actions = crate::binary::remove_packaged_path_shadows()?;
 
@@ -163,11 +164,12 @@ pub fn install_bins(cfg: &TskConfig, options: &InstallBinsOptions) -> Result<Vec
         },
         format!("using tsk at {tsk_cmd}"),
         format!(
-            "installed taskspace xdg-open wrapper at {}",
-            task_bin_dir(cfg).join("xdg-open").display()
+            "installed taskspace URL helpers at {}",
+            task_bin_dir(cfg).display()
         ),
         format!("runtime data in {}", cfg.data_dir.display()),
     ];
+    actions.extend(editor_actions);
     actions.extend(shadow_actions);
     if !options.skip_reload {
         actions.extend(reload::apply_after_hypr()?);
@@ -345,15 +347,26 @@ exec \"{}\" \"$@\"\n",
     Ok(())
 }
 
-fn install_xdg_open_wrapper(share_src: &Path, tsk_cmd: &str, cfg: &TskConfig) -> Result<()> {
-    let mut src = share_src.join("bin/xdg-open");
+fn install_url_openers(share_src: &Path, tsk_cmd: &str, cfg: &TskConfig) -> Result<()> {
+    install_task_bin_script(share_src, tsk_cmd, cfg, "xdg-open")?;
+    install_task_bin_script(share_src, tsk_cmd, cfg, "tsk-open")?;
+    Ok(())
+}
+
+fn install_task_bin_script(
+    share_src: &Path,
+    tsk_cmd: &str,
+    cfg: &TskConfig,
+    name: &str,
+) -> Result<()> {
+    let mut src = share_src.join("bin").join(name);
     if !src.is_file() {
-        src = effective_share_dir(cfg).join("bin/xdg-open");
+        src = effective_share_dir(cfg).join("bin").join(name);
     }
     if !src.is_file() {
         return Ok(());
     }
-    let dest = ensure_task_bin_dir(cfg)?.join("xdg-open");
+    let dest = ensure_task_bin_dir(cfg)?.join(name);
     ensure_parent(&dest)?;
     let raw = fs::read_to_string(&src).map_err(|source| TskError::Read {
         path: src.clone(),
@@ -378,6 +391,99 @@ fn install_xdg_open_wrapper(share_src: &Path, tsk_cmd: &str, cfg: &TskConfig) ->
             .map_err(|source| TskError::Write { path: dest, source })?;
     }
     Ok(())
+}
+
+/// Point Cursor/VS Code at `tsk-open` so chat/markdown links use the task browser.
+/// Does not change the system default web browser (`xdg-settings`).
+fn configure_editor_external_browser(cfg: &TskConfig) -> Result<Vec<String>> {
+    let opener = crate::task_env::url_opener_path(cfg);
+    if !opener.is_file() {
+        return Ok(Vec::new());
+    }
+    let opener = opener.to_string_lossy().into_owned();
+    let mut actions = Vec::new();
+    for (label, path) in editor_user_settings_paths() {
+        match set_external_browser_setting(&path, &opener)? {
+            EditorBrowserUpdate::Set => {
+                actions.push(format!("set {label} workbench.externalBrowser → {opener}"))
+            }
+            EditorBrowserUpdate::Unchanged => {}
+            EditorBrowserUpdate::Skipped(reason) => {
+                actions.push(format!(
+                    "left {label} workbench.externalBrowser unchanged ({reason})"
+                ));
+            }
+        }
+    }
+    Ok(actions)
+}
+
+fn editor_user_settings_paths() -> Vec<(&'static str, PathBuf)> {
+    let config = crate::xdg::config_home();
+    vec![
+        ("Cursor", config.join("Cursor/User/settings.json")),
+        ("VS Code", config.join("Code/User/settings.json")),
+    ]
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum EditorBrowserUpdate {
+    Set,
+    Unchanged,
+    Skipped(String),
+}
+
+fn set_external_browser_setting(path: &Path, opener: &str) -> Result<EditorBrowserUpdate> {
+    if !path.is_file() {
+        return Ok(EditorBrowserUpdate::Unchanged);
+    }
+    let raw = fs::read_to_string(path).map_err(|source| TskError::Read {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    let Ok(mut value) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return Ok(EditorBrowserUpdate::Skipped(
+            "settings.json is not plain JSON".into(),
+        ));
+    };
+    let Some(obj) = value.as_object_mut() else {
+        return Ok(EditorBrowserUpdate::Skipped(
+            "settings.json is not an object".into(),
+        ));
+    };
+    match obj
+        .get("workbench.externalBrowser")
+        .and_then(|v| v.as_str())
+    {
+        Some(existing) if existing == opener => return Ok(EditorBrowserUpdate::Unchanged),
+        Some(existing) if !existing.is_empty() && !is_tsk_url_opener(existing) => {
+            return Ok(EditorBrowserUpdate::Skipped(format!(
+                "already set to {existing}"
+            )));
+        }
+        _ => {}
+    }
+    obj.insert(
+        "workbench.externalBrowser".into(),
+        serde_json::Value::String(opener.to_string()),
+    );
+    let body = format!(
+        "{}\n",
+        serde_json::to_string_pretty(&value).unwrap_or_else(|_| raw.clone())
+    );
+    fs::write(path, body).map_err(|source| TskError::Write {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    Ok(EditorBrowserUpdate::Set)
+}
+
+fn is_tsk_url_opener(path: &str) -> bool {
+    let name = Path::new(path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+    (name == "tsk-open" || name == "xdg-open") && path.contains("task-bin")
 }
 
 /// Drop a legacy `~/.local/bin/xdg-open` installed by older tsk versions.
@@ -619,6 +725,53 @@ mod tests {
         }
         let resolved = resolve_share_templates(None, InstallProfile::Prod).unwrap();
         assert_eq!(resolved, crate::share::system_share_dir());
+    }
+
+    #[test]
+    fn set_external_browser_setting_inserts_and_is_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        fs::write(&path, "{\n  \"editor.tabSize\": 4\n}\n").unwrap();
+        let opener = "/home/u/.local/share/tsk/task-bin/tsk-open";
+        assert_eq!(
+            set_external_browser_setting(&path, opener).unwrap(),
+            EditorBrowserUpdate::Set
+        );
+        assert_eq!(
+            set_external_browser_setting(&path, opener).unwrap(),
+            EditorBrowserUpdate::Unchanged
+        );
+        let parsed: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(parsed["workbench.externalBrowser"], opener);
+        assert_eq!(parsed["editor.tabSize"], 4);
+    }
+
+    #[test]
+    fn set_external_browser_setting_skips_custom_browser() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        fs::write(
+            &path,
+            "{\n  \"workbench.externalBrowser\": \"firefox\"\n}\n",
+        )
+        .unwrap();
+        let result =
+            set_external_browser_setting(&path, "/home/u/.local/share/tsk/task-bin/tsk-open")
+                .unwrap();
+        assert!(matches!(result, EditorBrowserUpdate::Skipped(_)));
+    }
+
+    #[test]
+    fn tsk_url_opener_detects_task_bin_helpers() {
+        assert!(is_tsk_url_opener(
+            "/home/u/.local/share/tsk/task-bin/tsk-open"
+        ));
+        assert!(is_tsk_url_opener(
+            "/home/u/.local/share/tsk/task-bin/xdg-open"
+        ));
+        assert!(!is_tsk_url_opener("firefox"));
+        assert!(!is_tsk_url_opener("/usr/bin/xdg-open"));
     }
 }
 

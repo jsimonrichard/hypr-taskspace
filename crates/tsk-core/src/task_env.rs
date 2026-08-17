@@ -135,7 +135,25 @@ pub fn apply_task_process_env(cmd: &mut Command, env: &[(String, String)], cfg: 
     if let Some(path) = task_path(cfg, std::env::var_os("PATH").as_deref()) {
         cmd.env("PATH", path);
     }
-    cmd.env("TSK_TASK_BIN", task_bin_dir(cfg).to_string_lossy().as_ref());
+    let task_bin = task_bin_dir(cfg);
+    cmd.env("TSK_TASK_BIN", task_bin.to_string_lossy().as_ref());
+    // Override Omarchy's BROWSER=omarchy-launch-browser so $BROWSER url and
+    // apps that consult it stay in the task Chromium rather than Zen/Firefox.
+    let opener = url_opener_path(cfg);
+    if opener.is_file() {
+        cmd.env("BROWSER", opener);
+    }
+}
+
+/// `tsk-open` helper (falls back to the xdg-open wrapper).
+pub fn url_opener_path(cfg: &TskConfig) -> PathBuf {
+    let dir = task_bin_dir(cfg);
+    let tsk_open = dir.join("tsk-open");
+    if tsk_open.is_file() {
+        tsk_open
+    } else {
+        dir.join("xdg-open")
+    }
 }
 
 #[cfg(test)]
@@ -242,5 +260,20 @@ mod tests {
         let path = task_path(&cfg, Some(OsStr::new("/usr/bin"))).unwrap();
         assert!(path.starts_with(&format!("{}:", task_bin.display())));
         assert!(path.ends_with(":/usr/bin"));
+    }
+
+    #[test]
+    fn url_opener_prefers_tsk_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let task_bin = dir.path().join("task-bin");
+        fs::create_dir_all(&task_bin).unwrap();
+        fs::write(task_bin.join("xdg-open"), "#!/bin/sh\n").unwrap();
+        let cfg = TskConfig {
+            data_dir: dir.path().to_path_buf(),
+            ..TskConfig::default()
+        };
+        assert!(url_opener_path(&cfg).ends_with("xdg-open"));
+        fs::write(task_bin.join("tsk-open"), "#!/bin/sh\n").unwrap();
+        assert!(url_opener_path(&cfg).ends_with("tsk-open"));
     }
 }

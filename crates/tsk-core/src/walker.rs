@@ -319,7 +319,11 @@ fn launch_with_env(ctx: &WalkerLaunchContext, program: Option<&str>, args: &[&st
 }
 
 fn apply_launch_env(cmd: &mut Command, ctx: &WalkerLaunchContext) {
-    task_env::apply_env(cmd, &ctx.env);
+    if let Ok(cfg) = load_config() {
+        task_env::apply_task_process_env(cmd, &ctx.env, &cfg);
+    } else {
+        task_env::apply_env(cmd, &ctx.env);
+    }
 }
 
 /// Args after the `uwsm` binary: `app -- <command or desktop-id>`.

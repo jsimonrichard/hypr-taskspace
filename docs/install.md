@@ -84,6 +84,8 @@ The helper writes `~/tsk-tasks/<id>/.tsk/browser-session.json` automatically as 
 
 `status` is the first thing to check: if `live-windows.json` is missing, the extension is not reaching the native host.
 
+http(s) links in a **task** taskspace go to that Chromium window via `tsk open`. The system default browser is unchanged; the default taskspace still uses it. Cursor/VS Code need `tsk install all` (or `tsk install omarchy`) so `workbench.externalBrowser` points at `tsk-open` (see [cursor.md](cursor.md#opening-https-links)).
+
 ---
 
 ## Manual install (non-Omarchy or custom keybinds)

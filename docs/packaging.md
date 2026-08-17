@@ -17,6 +17,8 @@ This installs:
 | `/usr/share/tsk/waybar/` | Waybar CFFI snippet + styles |
 | `/usr/share/tsk/chromium/` | Helper extension source (packed by `tsk install chromium`) |
 | `/usr/share/tsk/bin/tsk-chromium-host` | Native-messaging wrapper |
+| `/usr/share/tsk/bin/xdg-open` | Taskspace `xdg-open` wrapper (installed into `~/.local/share/tsk/task-bin`) |
+| `/usr/share/tsk/bin/tsk-open` | URL opener for `$BROWSER` / Cursor `workbench.externalBrowser` |
 | `/usr/share/tsk/lib/libtsk_waybar.so` | Waybar module |
 | `/usr/lib/systemd/user/tskd.service` | User daemon unit |
 | `/usr/share/tsk/config.toml.example` | Suggested user config |

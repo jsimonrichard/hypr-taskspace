@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 # Taskspace xdg-open — installed under ~/.local/share/tsk/task-bin; prepended to PATH in task spawns only.
+# http(s) always goes through `tsk open`, which uses Chromium in a task taskspace and the
+# system handler (your default browser) otherwise. Do not gate on the context file: GUI
+# apps launched via uwsm often have a stale or empty context, and `tsk open` already
+# syncs from the active Hyprland workspace.
 set -euo pipefail
 
 if [[ "${TSK_XDG_OPEN:-}" == "1" ]]; then
@@ -17,17 +21,6 @@ for arg in "$@"; do
 done
 
 if [[ "$has_http_url" -eq 0 ]]; then
-  exec "${TSK_REAL_XDG_OPEN:-/usr/bin/xdg-open}" "$@"
-fi
-
-runtime_dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
-context_file="$runtime_dir/tsk/context"
-if [[ ! -f "$context_file" ]]; then
-  exec "${TSK_REAL_XDG_OPEN:-/usr/bin/xdg-open}" "$@"
-fi
-
-context="$(tr -d '\n' <"$context_file")"
-if [[ "$context" != task:* ]]; then
   exec "${TSK_REAL_XDG_OPEN:-/usr/bin/xdg-open}" "$@"
 fi
 

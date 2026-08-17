@@ -35,10 +35,12 @@ if [[ -d "${repo_share}/omarchy-plugin" ]]; then
   done < <(find "${repo_share}/omarchy-plugin" -type f -print0)
 fi
 
-if [[ -f "${repo_share}/bin/xdg-open" ]]; then
-  sub "${repo_share}/bin/xdg-open" >"${pkgdir}${share}/bin/xdg-open"
-  chmod 755 "${pkgdir}${share}/bin/xdg-open"
-fi
+for helper in xdg-open tsk-open; do
+  if [[ -f "${repo_share}/bin/${helper}" ]]; then
+    sub "${repo_share}/bin/${helper}" >"${pkgdir}${share}/bin/${helper}"
+    chmod 755 "${pkgdir}${share}/bin/${helper}"
+  fi
+done
 
 # Waybar snippets
 for file in "${repo_share}/waybar/"*; do

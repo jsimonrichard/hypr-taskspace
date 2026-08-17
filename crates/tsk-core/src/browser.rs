@@ -19,13 +19,40 @@ use crate::models::{ContextMode, SessionState, Task};
 use crate::window_registry::infer_task_id;
 use crate::workspaces::primary_task_workspace;
 
-const BROWSER_CLASS_MARKERS: &[&str] = &["chromium", "chrome", "brave", "vivaldi", "opera", "edge"];
+/// Hyprland `class` values for real browser windows (not Chrome/Chromium PWAs).
+const BROWSER_WINDOW_CLASSES: &[&str] = &[
+    "chromium",
+    "chromium-browser",
+    "google-chrome",
+    "google-chrome-stable",
+    "chrome",
+    "brave-browser",
+    "brave",
+    "vivaldi-stable",
+    "vivaldi",
+    "opera",
+    "microsoft-edge",
+    "microsoft-edge-stable",
+    "msedge",
+];
 
+const CHROMIUM_FAMILY_MARKERS: &[&str] = &[
+    "chromium",
+    "chrome",
+    "brave",
+    "vivaldi",
+    "opera",
+    "msedge",
+    "microsoft-edge",
+];
+
+/// True for a Hyprland client class of a normal browser window.
+///
+/// Chrome PWAs use classes like `chrome-track.toggl.com__timer-Default` and must
+/// not be treated as the task browser (that used to steal `--new-tab` / focus).
 pub fn is_browser_class(class: &str) -> bool {
     let lower = class.to_lowercase();
-    BROWSER_CLASS_MARKERS
-        .iter()
-        .any(|marker| lower.contains(marker))
+    BROWSER_WINDOW_CLASSES.iter().any(|name| lower == *name)
 }
 
 const BROWSER_FALLBACKS: &[&str] = &[
@@ -175,7 +202,7 @@ fn open_urls_in_task_with_browser(
             focus_browser_window(window);
             return Ok(());
         }
-        // Focus first so `--new-tab` lands in this window when sharing a profile.
+        // Focus first so the running Chromium instance opens the URL in this window.
         focus_browser_window(window);
         spawn_chromium(browser, profile_dir.as_deref(), urls, false, true, cfg)?;
         return Ok(());
@@ -185,7 +212,7 @@ fn open_urls_in_task_with_browser(
         let restored = crate::browser_session::restore_pending(cfg, task)?;
         if restored > 0 {
             if !urls.is_empty() {
-                if let Some(window) = find_task_browser_window(state, task) {
+                if let Some(window) = wait_for_task_browser_window(state, task) {
                     focus_browser_window(&window);
                     spawn_chromium(browser, profile_dir.as_deref(), urls, false, true, cfg)?;
                 } else {
@@ -244,8 +271,12 @@ fn find_task_browser_window(state: &SessionState, task: &Task) -> Option<HyprWin
     }
     let clients = hyprland::get_clients().ok()?;
     let workspace_names: HashSet<String> = task.workspace_names().into_iter().collect();
+    let active = hyprland::get_active_workspace()
+        .ok()
+        .flatten()
+        .map(|ws| ws.name);
 
-    clients
+    let matches: Vec<HyprWindow> = clients
         .into_iter()
         .filter(|client| is_browser_class(&client.class_name))
         .filter(|client| {
@@ -253,7 +284,27 @@ fn find_task_browser_window(state: &SessionState, task: &Task) -> Option<HyprWin
                 || infer_task_id(state, &client.workspace_name, &client.title).as_deref()
                     == Some(task.id.as_str())
         })
-        .max_by_key(|client| client.address.clone())
+        .collect();
+
+    if let Some(active) = active.as_deref() {
+        if let Some(on_active) = matches
+            .iter()
+            .find(|client| client.workspace_name == active)
+        {
+            return Some(on_active.clone());
+        }
+    }
+    matches.into_iter().next()
+}
+
+fn wait_for_task_browser_window(state: &SessionState, task: &Task) -> Option<HyprWindow> {
+    for _ in 0..20 {
+        if let Some(window) = find_task_browser_window(state, task) {
+            return Some(window);
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    None
 }
 
 fn focus_browser_window(window: &HyprWindow) {
@@ -261,6 +312,9 @@ fn focus_browser_window(window: &HyprWindow) {
         hyprland::switch_workspace_for_navigation(&window.workspace_name);
     }
     hyprland::focus_window(&window.address);
+    // Chromium's process-singleton opens URLs in the last-activated window.
+    // Give the compositor focus event time to land before we spawn.
+    thread::sleep(Duration::from_millis(120));
 }
 
 fn ensure_browser_on_workspace(
@@ -352,18 +406,17 @@ fn chromium_argv(
         args.push("--no-default-browser-check".into());
     }
     if existing_instance {
-        for url in urls {
-            args.push(format!("--new-tab={url}"));
-        }
+        // Positional URLs only. `--new-tab=URL` is not a Chromium flag: the
+        // running instance treats `--new-tab` as "open NTP" and drops the value,
+        // which is the blank "New Tab" page. `--` before URLs is also stripped
+        // by the process-singleton rewriter on some builds.
+        args.extend(urls.iter().map(|u| (*u).to_string()));
         return args;
     }
     if new_window || urls.is_empty() {
         args.push("--new-window".into());
     }
-    if !urls.is_empty() {
-        args.push("--".into());
-        args.extend(urls.iter().map(|u| (*u).to_string()));
-    }
+    args.extend(urls.iter().map(|u| (*u).to_string()));
     args
 }
 
@@ -390,7 +443,14 @@ fn resolve_browser_override(cfg: &TskConfig, command: Option<&str>) -> Result<St
 
 /// Chromium-family binaries accept `--user-data-dir` when profile isolation is on.
 pub fn is_chromium_family(program: &str) -> bool {
-    is_browser_class(program)
+    let name = Path::new(program)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(program)
+        .to_lowercase();
+    CHROMIUM_FAMILY_MARKERS
+        .iter()
+        .any(|marker| name.contains(marker))
 }
 
 fn spawn_plain_browser(
@@ -545,7 +605,15 @@ mod tests {
     #[test]
     fn shared_profile_opens_urls_in_new_window() {
         let args = chromium_argv(None, &["https://example.com"], true, false);
-        assert_eq!(args, vec!["--new-window", "--", "https://example.com"]);
+        assert_eq!(args, vec!["--new-window", "https://example.com"]);
+    }
+
+    #[test]
+    fn existing_instance_passes_url_as_positional_arg() {
+        let args = chromium_argv(None, &["https://example.com/path"], false, true);
+        assert_eq!(args, vec!["https://example.com/path"]);
+        assert!(args.iter().all(|a| !a.starts_with("--new-tab")));
+        assert!(args.iter().all(|a| a != "--"));
     }
 
     #[test]
@@ -583,6 +651,8 @@ mod tests {
         assert!(is_browser_class("google-chrome"));
         assert!(is_browser_class("Brave-browser"));
         assert!(!is_browser_class("Alacritty"));
+        assert!(!is_browser_class("chrome-track.toggl.com__timer-Default"));
+        assert!(!is_browser_class("/usr/bin/chromium"));
     }
 
     #[test]

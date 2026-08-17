@@ -80,6 +80,24 @@ pub fn run_doctor_checks(cfg: &TskConfig) -> Result<Vec<DoctorCheck>> {
         detail: path_detail,
     });
 
+    let opener = crate::task_env::url_opener_path(cfg);
+    checks.push(DoctorCheck {
+        label: "Taskspace URL opener (tsk-open)".into(),
+        passed: opener.is_file(),
+        detail: if opener.is_file() {
+            opener.display().to_string()
+        } else {
+            format!(
+                "{} missing — run `tsk install all` (or `tsk install omarchy`)",
+                opener.display()
+            )
+        },
+    });
+
+    if let Some(check) = editor_external_browser_check(&opener) {
+        checks.push(check);
+    }
+
     if quattro {
         push_omarchy_shell_checks(&mut checks, cfg);
     } else {
@@ -329,6 +347,29 @@ pub fn run_doctor_checks(cfg: &TskConfig) -> Result<Vec<DoctorCheck>> {
     }
 
     Ok(checks)
+}
+
+fn editor_external_browser_check(opener: &Path) -> Option<DoctorCheck> {
+    let path = crate::xdg::config_home().join("Cursor/User/settings.json");
+    if !path.is_file() {
+        return None;
+    }
+    let raw = fs::read_to_string(&path).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let current = value
+        .get("workbench.externalBrowser")
+        .and_then(|v| v.as_str());
+    let expected = opener.to_string_lossy();
+    let passed = opener.is_file() && current == Some(expected.as_ref());
+    Some(DoctorCheck {
+        label: "Cursor opens taskspace links via tsk-open".into(),
+        passed,
+        detail: match current {
+            Some(v) if passed => v.to_string(),
+            Some(v) => format!("{v} — run `tsk install all` to use {expected}"),
+            None => format!("unset — run `tsk install all` to set workbench.externalBrowser"),
+        },
+    })
 }
 
 fn push_omarchy_shell_checks(checks: &mut Vec<DoctorCheck>, cfg: &TskConfig) {
