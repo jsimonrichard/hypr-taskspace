@@ -1662,7 +1662,7 @@ fn cmd_task_list(json: bool, include_archived: bool) -> Result<()> {
         let items = svc.tasks_for_menu()?;
         if include_archived {
             let mut archived_tasks = svc.list_archived_tasks()?;
-            archived_tasks.sort_by(|a, b| a.cmp_list_order(b));
+            archived_tasks.sort_by(|a, b| a.cmp_access_order(b));
             let archived: Vec<_> = archived_tasks
                 .into_iter()
                 .map(|t| {
@@ -1673,7 +1673,7 @@ fn cmd_task_list(json: bool, include_archived: bool) -> Result<()> {
                         "kind": "task",
                         "current": false,
                         "repo_name": tsk_core::menu_repo_name(&t),
-                        "listed_at": t.listed_at,
+                        "last_active_at": t.last_active_at,
                     })
                 })
                 .collect();

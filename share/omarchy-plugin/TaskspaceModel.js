@@ -68,8 +68,8 @@ function matches(item, query) {
   return hay.indexOf(query) !== -1
 }
 
-function listedAtMs(item) {
-  var raw = item && item.listed_at
+function lastActiveAtMs(item) {
+  var raw = item && item.last_active_at
   if (!raw) return 0
   var ms = Date.parse(raw)
   return isNaN(ms) ? 0 : ms
@@ -79,8 +79,8 @@ function sortItems(items) {
   return items.slice().sort(function(left, right) {
     if (left.kind === "default" && right.kind !== "default") return -1
     if (right.kind === "default" && left.kind !== "default") return 1
-    var listed = listedAtMs(right) - listedAtMs(left)
-    if (listed !== 0) return listed
+    var accessed = lastActiveAtMs(right) - lastActiveAtMs(left)
+    if (accessed !== 0) return accessed
     var nameCmp = String(rowLabel(left)).toLowerCase().localeCompare(String(rowLabel(right)).toLowerCase())
     if (nameCmp !== 0) return nameCmp
     return String(left.id || "").localeCompare(String(right.id || ""))

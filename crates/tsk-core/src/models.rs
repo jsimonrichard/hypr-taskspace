@@ -88,6 +88,15 @@ impl Task {
             .then_with(|| self.name.to_lowercase().cmp(&other.name.to_lowercase()))
             .then_with(|| self.id.cmp(&other.id))
     }
+
+    /// Newest `last_active_at` first; name then id break ties.
+    pub fn cmp_access_order(&self, other: &Self) -> Ordering {
+        other
+            .last_active_at
+            .cmp(&self.last_active_at)
+            .then_with(|| self.name.to_lowercase().cmp(&other.name.to_lowercase()))
+            .then_with(|| self.id.cmp(&other.id))
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -233,5 +242,18 @@ mod tests {
         tasks.sort_by(|a, b| a.cmp_list_order(b));
         assert_eq!(tasks[0].id, "ta");
         assert_eq!(tasks[1].id, "tz");
+    }
+
+    #[test]
+    fn cmp_access_order_newest_active_first() {
+        let t0 = Utc::now();
+        let mut older = sample_task("told", "older", t0);
+        let mut newer = sample_task("tnew", "newer", t0);
+        older.last_active_at = t0;
+        newer.last_active_at = t0 + chrono::Duration::seconds(1);
+        let mut tasks = [&older, &newer];
+        tasks.sort_by(|a, b| a.cmp_access_order(b));
+        assert_eq!(tasks[0].id, "tnew");
+        assert_eq!(tasks[1].id, "told");
     }
 }

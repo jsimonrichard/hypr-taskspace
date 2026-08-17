@@ -223,7 +223,7 @@ Item {
           kind: "task",
           status: item.status || "archived",
           repo_name: item.repo_name || "",
-          listed_at: item.listed_at || "",
+          last_active_at: item.last_active_at || "",
           current: false
         }
       })
