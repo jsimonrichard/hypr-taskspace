@@ -42,6 +42,13 @@ Item {
   property string confirmId: ""
   property string confirmLabel: ""
   property bool selectCurrentOnRebuild: false
+  property int switchSerial: 0
+  property bool switchPending: false
+  property bool switchOsdOpen: false
+  property bool switchFromAction: false
+  property string switchOsdMessage: ""
+  property string switchOsdIcon: "󱓝"
+  property int switchStartRev: 0
 
   property color background: Color.menu.background
   property color foreground: Color.menu.text
@@ -76,6 +83,7 @@ Item {
   }
 
   function open(payloadJson) {
+    root.closeSwitchFeedback(root.switchSerial)
     let tab = root.pendingTab
     try {
       const payload = JSON.parse(payloadJson || "{}")
@@ -110,6 +118,42 @@ Item {
   function toggle() {
     if (root.opened) root.dismiss()
     else root.open("{}")
+  }
+
+  function readStateRev() {
+    try {
+      return parseInt(String(stateRevFile.text() || "0").trim(), 10) || 0
+    } catch (e) {
+      return 0
+    }
+  }
+
+  function beginSwitchFeedback(message, icon) {
+    root.switchSerial++
+    root.switchOsdMessage = String(message || "Switching…")
+    root.switchOsdIcon = icon || "󱓝"
+    root.switchPending = true
+    root.switchOsdOpen = false
+    root.switchStartRev = root.readStateRev()
+    switchDelay.restart()
+    switchTimeout.restart()
+  }
+
+  function closeSwitchFeedback(serial) {
+    if (serial !== root.switchSerial) return
+    switchDelay.stop()
+    switchTimeout.stop()
+    root.switchPending = false
+    root.switchOsdOpen = false
+  }
+
+  function maybeFinishSwitchFeedback() {
+    if (!root.switchPending && !root.switchOsdOpen) return
+    // Archive restore commits state before Hyprland restore finishes; wait for
+    // the command to exit instead of the first rev bump.
+    if (root.switchFromAction) return
+    if (root.readStateRev() <= root.switchStartRev) return
+    root.closeSwitchFeedback(root.switchSerial)
   }
 
   function refresh() {
@@ -346,11 +390,15 @@ Item {
       return
     }
     if (root.tab === "repos") return
-    root.dismiss()
-    if (row.kind === "default")
+    if (row.kind === "default") {
+      root.beginSwitchFeedback("Switching to default…", "󰣇")
+      root.dismiss()
       Util.execDetached(Util.shellQuote(root.tskCmd) + " taskspace default")
-    else
-      Util.execDetached(Util.shellQuote(root.tskCmd) + " task switch " + Util.shellQuote(row.taskId))
+      return
+    }
+    root.beginSwitchFeedback("Switching to " + row.label + "…", "󱓝")
+    root.dismiss()
+    Util.execDetached(Util.shellQuote(root.tskCmd) + " task switch " + Util.shellQuote(row.taskId))
   }
 
   function submitNew() {
@@ -415,7 +463,12 @@ Item {
     const id = root.confirmId
     confirmDialog.opened = false
     if (action === "archive") root.runTsk(["task", "archive", id])
-    else if (action === "restore") root.runTsk(["task", "restore", id])
+    else if (action === "restore") {
+      root.switchFromAction = true
+      root.beginSwitchFeedback("Restoring " + root.confirmLabel + "…", "󱓝")
+      root.dismiss()
+      root.runTsk(["task", "restore", id])
+    }
     else if (action === "delete") root.runTsk(["task", "delete", id])
     else if (action === "remove-repo") root.runTsk(["repo", "remove", id])
   }
@@ -612,6 +665,18 @@ Item {
         root.reopenOverlay()
         return
       }
+      if (root.switchFromAction) {
+        root.switchFromAction = false
+        if (Number(exitCode) !== 0) {
+          root.closeSwitchFeedback(root.switchSerial)
+          root.pendingTab = "archived"
+          root.pendingError = "Could not restore that task"
+          root.reopenOverlay()
+          return
+        }
+        root.closeSwitchFeedback(root.switchSerial)
+        return
+      }
       root.reloadAll()
     }
   }
@@ -656,11 +721,36 @@ Item {
   }
 
   FileView {
+    id: stateRevFile
     path: (Quickshell.env("XDG_RUNTIME_DIR") || "/run/user/0") + "/tsk/state.rev"
     watchChanges: true
     printErrors: false
     onFileChanged: reload()
-    onLoaded: if (root.opened && root.screen === "list") root.reloadAll()
+    onLoaded: {
+      root.maybeFinishSwitchFeedback()
+      if (root.opened && root.screen === "list") root.reloadAll()
+    }
+  }
+
+  // Same idea as omarchy's delayed "Launching X…" OSD: stay quiet on a fast
+  // switch, then show a status card if restore is still running.
+  Timer {
+    id: switchDelay
+    interval: 400
+    onTriggered: {
+      if (!root.switchPending) return
+      if (!root.switchFromAction && root.readStateRev() > root.switchStartRev) {
+        root.closeSwitchFeedback(root.switchSerial)
+        return
+      }
+      root.switchOsdOpen = true
+    }
+  }
+
+  Timer {
+    id: switchTimeout
+    interval: 15000
+    onTriggered: root.closeSwitchFeedback(root.switchSerial)
   }
 
   PanelWindow {
@@ -1089,6 +1179,83 @@ Item {
           font.pixelSize: Style.font.caption
           elide: Text.ElideRight
           verticalAlignment: Text.AlignVCenter
+        }
+      }
+    }
+  }
+
+  TextMetrics {
+    id: switchMessageMetrics
+    font.family: Style.font.family
+    font.bold: true
+    font.pixelSize: Style.font.title
+    text: root.switchOsdMessage
+  }
+
+  TextMetrics {
+    id: switchIconMetrics
+    font.family: Style.font.family
+    font.pixelSize: Style.font.displayLarge
+    text: root.switchOsdIcon
+  }
+
+  PanelWindow {
+    id: switchPanel
+    visible: root.switchOsdOpen
+    anchors { top: true; bottom: true; left: true; right: true }
+    color: "transparent"
+    WlrLayershell.namespace: "tsk-taskspace-switch"
+    WlrLayershell.layer: WlrLayer.Overlay
+    WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+    exclusionMode: ExclusionMode.Ignore
+    mask: Region {}
+
+    readonly property int pad: Style.space(16)
+    readonly property int gap: Math.round(Style.space(16) * 2 / 3)
+    readonly property int iconInkWidth: Math.ceil(switchIconMetrics.tightBoundingRect.width)
+    readonly property int messageWidth: Math.min(Math.ceil(switchMessageMetrics.advanceWidth), Style.space(325))
+    readonly property int contentWidth: switchPanel.iconInkWidth + switchPanel.gap + switchPanel.messageWidth
+
+    BorderSurface {
+      id: switchCard
+      width: switchCard.borderLeft + switchPanel.pad + switchPanel.contentWidth + switchPanel.pad + switchCard.borderRight
+      height: switchCard.borderTop + switchPanel.pad + Style.font.displayLarge + switchPanel.pad + switchCard.borderBottom
+      anchors.horizontalCenter: parent.horizontalCenter
+      anchors.bottom: parent.bottom
+      anchors.bottomMargin: Style.space(67)
+      color: Util.alpha(Color.background, 0.97)
+      borderSpec: Border.surfaceSpec("popups", "border", Color.popups.border, Math.max(1, Style.space(2)))
+      radius: Style.cornerRadius
+      opacity: root.switchOsdOpen ? 1 : 0
+
+      Row {
+        anchors.fill: parent
+        anchors.topMargin: switchCard.borderTop + switchPanel.pad
+        anchors.rightMargin: switchCard.borderRight + switchPanel.pad
+        anchors.bottomMargin: switchCard.borderBottom + switchPanel.pad
+        anchors.leftMargin: switchCard.borderLeft + switchPanel.pad
+        spacing: switchPanel.gap
+
+        Item {
+          width: switchPanel.iconInkWidth
+          height: parent.height
+          Text {
+            x: Math.round(-switchIconMetrics.tightBoundingRect.x)
+            anchors.verticalCenter: parent.verticalCenter
+            text: root.switchOsdIcon
+            font: switchIconMetrics.font
+            color: Color.popups.text
+          }
+        }
+
+        Text {
+          width: switchPanel.messageWidth
+          anchors.verticalCenter: parent.verticalCenter
+          text: root.switchOsdMessage
+          font: switchMessageMetrics.font
+          color: Color.popups.text
+          elide: Text.ElideRight
+          maximumLineCount: 1
         }
       }
     }
