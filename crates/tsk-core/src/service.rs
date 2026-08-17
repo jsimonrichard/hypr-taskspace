@@ -583,7 +583,11 @@ impl TaskService {
             entry.listed_at = now;
         }
 
+        // Persist Active before switch_task (it rejects archived tasks). Always
+        // enter the restored taskspace — including from default after archive.
         self.commit_state(&state, Some(StateChangeKind::Full))?;
+        let task = self.switch_task(task_id)?;
+        let state = self.load_state()?;
 
         if let Err(err) = crate::task_on_start::run_on_restore_after_restore(
             &task,
@@ -1162,12 +1166,48 @@ mod tests {
         assert_eq!(restored.status, TaskStatus::Active);
         assert_eq!(restored.created_at, created_at);
         assert!(restored.listed_at > created_at);
-        assert_eq!(restored.listed_at, restored.last_active_at);
+        assert!(restored.last_active_at >= restored.listed_at);
+        assert_eq!(state.context_mode, ContextMode::Task);
+        assert_eq!(state.current_task_id.as_deref(), Some(task.id.as_str()));
         assert!(svc
             .tasks_for_menu()
             .unwrap()
             .iter()
             .any(|t| t.id == task.id));
+    }
+
+    #[test]
+    fn restore_task_switches_from_another_taskspace() {
+        let dir = tempdir().unwrap();
+        let svc = test_service(dir.path());
+        let paused = svc
+            .create_task(
+                "paused",
+                false,
+                crate::task_repo::TaskRepoSource::Scratch,
+                None,
+                crate::task_repo::TaskRepoOptions::default(),
+            )
+            .unwrap();
+        svc.archive_task(&paused.id).unwrap();
+        let current = svc
+            .create_task(
+                "current",
+                true,
+                crate::task_repo::TaskRepoSource::Scratch,
+                None,
+                crate::task_repo::TaskRepoOptions::default(),
+            )
+            .unwrap();
+        assert_eq!(
+            svc.load_state().unwrap().current_task_id.as_deref(),
+            Some(current.id.as_str())
+        );
+
+        svc.restore_task(&paused.id).unwrap();
+        let state = svc.load_state().unwrap();
+        assert_eq!(state.context_mode, ContextMode::Task);
+        assert_eq!(state.current_task_id.as_deref(), Some(paused.id.as_str()));
     }
 
     #[test]

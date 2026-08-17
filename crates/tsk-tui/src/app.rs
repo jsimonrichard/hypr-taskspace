@@ -975,13 +975,10 @@ impl App {
     }
 
     fn handle_confirm_restore_key(&mut self, key: KeyEvent) -> Result<()> {
-        let (task_id, task_name, action) = match &mut self.screen {
+        let (task_id, action) = match &mut self.screen {
             Screen::ConfirmRestore {
-                task_id,
-                task_name,
-                buttons,
-                ..
-            } => (task_id.clone(), task_name.clone(), buttons.handle_key(key)),
+                task_id, buttons, ..
+            } => (task_id.clone(), buttons.handle_key(key)),
             _ => return Ok(()),
         };
 
@@ -990,15 +987,13 @@ impl App {
             Some(ModalButtonAction::Confirm) => {
                 match self.client.restore_task(&task_id) {
                     Ok(()) => {
-                        self.reload()?;
-                        self.status = Some((true, format!("Restored {task_name}")));
-                        self.panel = Panel::Tasks;
+                        self.should_quit = true;
                     }
                     Err(err) => {
                         self.status = Some((false, err.to_string()));
+                        self.screen = Screen::Main;
                     }
                 }
-                self.screen = Screen::Main;
             }
             None => {}
         }
