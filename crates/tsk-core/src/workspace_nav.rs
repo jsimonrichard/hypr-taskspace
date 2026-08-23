@@ -7,7 +7,7 @@ use crate::hyprland::{self, Monitor};
 use crate::models::{ContextMode, SessionState};
 use crate::workspaces::{
     allowed_workspace_names, default_taskspace_workspace_name, default_taskspace_workspace_names,
-    is_global_workspace_slot, primary_task_workspace_slot,
+    is_global_workspace_slot,
 };
 
 /// Monitor that should receive a new task's primary workspace during on_start.
@@ -226,21 +226,12 @@ pub fn focus_last_workspace(state: &mut SessionState) -> Option<String> {
 
 /// Slot to focus when entering / restoring a taskspace.
 ///
-/// In the default taskspace, skip remembered global slots (e.g. `"1"`). Landing on the
-/// shared global workspace after `context_default` looks identical to visiting global
-/// from a task — and with a stale dual-daemon listener it can fail to change context.
+/// Global slots (e.g. `"1"`) are ordinary last-active locations for every
+/// taskspace, including default. They are shared Hyprland workspaces, not a
+/// separate context.
 fn remembered_focus_slot(state: &SessionState) -> i32 {
     let key = state.taskspace_key();
-    let relative = state.last_workspace.get(&key).copied().unwrap_or(1);
-    if state.context_mode == ContextMode::Default
-        && is_global_workspace_slot(relative as u32, &state.global_workspace_slots)
-    {
-        return primary_task_workspace_slot(
-            state.default_workspace_count,
-            &state.global_workspace_slots,
-        ) as i32;
-    }
-    relative
+    state.last_workspace.get(&key).copied().unwrap_or(1)
 }
 
 /// Refresh per-monitor slot memory from the current Hyprland layout.
@@ -471,7 +462,7 @@ fn set_taskspace_inner(
     // Hot-path keybinds read slot cache without the daemon lock. Publish the new
     // mapping before Hyprland restore so SUPER+N targets the destination taskspace.
     crate::workspace_slots::write_slot_cache(state);
-    adopt_active_slot_for_taskspace_switch(state, old_allowed);
+    adopt_active_slot_for_taskspace_switch(state);
     crate::taskspace_switch_guard::record(&state.taskspace_key(), old_allowed);
 
     if hyprland::available() {
@@ -763,10 +754,10 @@ fn relative_slot_in_allowed(workspace_name: &str, allowed: &[String]) -> Option<
 
 /// Honor a concurrent workspace keybind during a taskspace switch.
 ///
-/// If the user pressed SUPER+N while switching taskspaces, Hyprland may already be on
-/// the leaving taskspace's slot N (stale cache) or the destination slot (fresh cache).
-/// Map that slot onto the destination before monitor restore runs.
-fn adopt_active_slot_for_taskspace_switch(state: &mut SessionState, old_allowed: &[String]) {
+/// Only adopt when Hyprland is already on a destination-taskspace workspace
+/// (fresh slot cache / SUPER+N after `write_slot_cache`). Copying the leaving
+/// taskspace's slot produced a-3 → b-3 instead of restoring b's last-active.
+fn adopt_active_slot_for_taskspace_switch(state: &mut SessionState) {
     if !hyprland::available() {
         return;
     }
@@ -779,19 +770,12 @@ fn adopt_active_slot_for_taskspace_switch(state: &mut SessionState, old_allowed:
 
     let key = state.taskspace_key();
     let new_allowed = allowed_workspace_names(state);
-    let Some(slot) = relative_slot_in_allowed(&active.name, &new_allowed)
-        .or_else(|| relative_slot_in_allowed(&active.name, old_allowed))
-    else {
+    let Some(slot) = slot_to_adopt_for_taskspace_switch(
+        &active.name,
+        &new_allowed,
+        &state.global_workspace_slots,
+    ) else {
         return;
-    };
-
-    let slot = if state.context_mode == ContextMode::Default
-        && is_global_workspace_slot(slot as u32, &state.global_workspace_slots)
-    {
-        primary_task_workspace_slot(state.default_workspace_count, &state.global_workspace_slots)
-            as i32
-    } else {
-        slot
     };
 
     hypr_log::note(format!(
@@ -800,6 +784,23 @@ fn adopt_active_slot_for_taskspace_switch(state: &mut SessionState, old_allowed:
     ));
     state.last_workspace.insert(key.clone(), slot);
     refresh_monitor_slots(state);
+}
+
+/// Slot to remember for the destination taskspace, if the active workspace
+/// already belongs there.
+///
+/// Shared global workspaces (`"1"`, …) appear in every taskspace's allowed
+/// list, so being on one is not evidence the destination was already focused.
+fn slot_to_adopt_for_taskspace_switch(
+    active_name: &str,
+    new_allowed: &[String],
+    global_slots: &[u32],
+) -> Option<i32> {
+    let slot = relative_slot_in_allowed(active_name, new_allowed)?;
+    if is_global_workspace_slot(slot as u32, global_slots) {
+        return None;
+    }
+    Some(slot)
 }
 
 fn active_relative(state: &SessionState) -> Option<i32> {
@@ -979,7 +980,7 @@ mod tests {
     }
 
     #[test]
-    fn remembered_focus_slot_skips_global_in_default_taskspace() {
+    fn remembered_focus_slot_keeps_global_in_default_taskspace() {
         let state = SessionState {
             context_mode: ContextMode::Default,
             default_workspace_count: 10,
@@ -987,7 +988,7 @@ mod tests {
             last_workspace: HashMap::from([("default".into(), 1)]),
             ..Default::default()
         };
-        assert_eq!(remembered_focus_slot(&state), 2);
+        assert_eq!(remembered_focus_slot(&state), 1);
     }
 
     #[test]
@@ -1137,5 +1138,46 @@ mod tests {
             &new_allowed,
             &old_allowed,
         ));
+    }
+
+    #[test]
+    fn adopt_ignores_leaving_taskspace_slot() {
+        let dest = vec!["beta-1".into(), "beta-2".into(), "beta-3".into()];
+        assert_eq!(
+            slot_to_adopt_for_taskspace_switch("alpha-3", &dest, &[]),
+            None
+        );
+        assert_eq!(
+            slot_to_adopt_for_taskspace_switch("3", &dest, &[1]),
+            None
+        );
+    }
+
+    #[test]
+    fn adopt_keeps_destination_slot_already_focused() {
+        let dest = vec!["beta-1".into(), "beta-2".into(), "beta-3".into()];
+        assert_eq!(
+            slot_to_adopt_for_taskspace_switch("beta-3", &dest, &[]),
+            Some(3)
+        );
+        let default_dest = vec!["1".into(), "2".into(), "3".into()];
+        assert_eq!(
+            slot_to_adopt_for_taskspace_switch("3", &default_dest, &[1]),
+            Some(3)
+        );
+    }
+
+    #[test]
+    fn adopt_ignores_shared_global_workspace() {
+        let task_dest = vec!["1".into(), "beta-2".into(), "beta-3".into()];
+        let default_dest = vec!["1".into(), "2".into(), "3".into()];
+        assert_eq!(
+            slot_to_adopt_for_taskspace_switch("1", &task_dest, &[1]),
+            None
+        );
+        assert_eq!(
+            slot_to_adopt_for_taskspace_switch("1", &default_dest, &[1]),
+            None
+        );
     }
 }
