@@ -413,6 +413,22 @@ pub fn load_config() -> Result<TskConfig> {
     load_config_at(&ensure_config()?)
 }
 
+/// Config file `load_config()` reads for this process (prod or active dev session).
+pub fn runtime_config_path() -> PathBuf {
+    if crate::dev_session::dev_session_active() {
+        dev_config_path()
+    } else {
+        tsk_config_path()
+    }
+}
+
+/// Whether `raw` deserializes as a tsk config (unknown keys are ignored).
+pub(crate) fn config_text_is_valid(raw: &str) -> std::result::Result<(), String> {
+    toml::from_str::<RawConfig>(raw)
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
 pub fn load_config_at(path: &std::path::Path) -> Result<TskConfig> {
     let raw = std::fs::read_to_string(path).map_err(|source| TskError::Read {
         path: path.to_path_buf(),
@@ -598,6 +614,13 @@ mod tests {
     fn default_workspace_count_is_ten() {
         let cfg = parse_config(toml::from_str("").unwrap());
         assert_eq!(cfg.default_workspace_count, 10);
+    }
+
+    #[test]
+    fn config_text_is_valid_rejects_bad_types() {
+        assert!(config_text_is_valid("[default]\nworkspace_count = 10\n").is_ok());
+        assert!(config_text_is_valid("[default\n").is_err());
+        assert!(config_text_is_valid("[default]\nworkspace_count = \"nope\"\n").is_err());
     }
 
     #[test]

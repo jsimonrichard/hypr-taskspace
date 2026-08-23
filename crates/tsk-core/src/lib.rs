@@ -57,7 +57,8 @@ pub use browser_session::{
     session_path,
 };
 pub use config::{
-    ensure_config, load_config, load_config_at, load_dev_config, load_prod_config, TskConfig,
+    ensure_config, load_config, load_config_at, load_dev_config, load_prod_config,
+    runtime_config_path, TskConfig,
 };
 pub use context_sync::sync_from_workspace_name;
 pub use daemon::{

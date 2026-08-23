@@ -984,17 +984,15 @@ impl App {
 
         match action {
             Some(ModalButtonAction::Cancel) => self.screen = Screen::Main,
-            Some(ModalButtonAction::Confirm) => {
-                match self.client.restore_task(&task_id) {
-                    Ok(()) => {
-                        self.should_quit = true;
-                    }
-                    Err(err) => {
-                        self.status = Some((false, err.to_string()));
-                        self.screen = Screen::Main;
-                    }
+            Some(ModalButtonAction::Confirm) => match self.client.restore_task(&task_id) {
+                Ok(()) => {
+                    self.should_quit = true;
                 }
-            }
+                Err(err) => {
+                    self.status = Some((false, err.to_string()));
+                    self.screen = Screen::Main;
+                }
+            },
             None => {}
         }
         Ok(())

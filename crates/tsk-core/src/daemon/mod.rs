@@ -1,6 +1,7 @@
 //! TSK control-plane daemon — single writer for `state.db`, Unix-socket RPC.
 
 mod client;
+mod config_watch;
 mod server;
 
 pub use client::{

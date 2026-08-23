@@ -13,11 +13,20 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 
-use crate::daemon::client::{daemon_pid_path, daemon_socket_path, ping_daemon_at};
+use crate::config::runtime_config_path;
+use crate::daemon::client::{
+    daemon_pid_path, daemon_pid_path_for_socket, daemon_socket_path, ping_daemon_at,
+};
+use crate::daemon::config_watch::ConfigWatch;
 use crate::error::{Result, TskError};
 use crate::hyprland_events::{parse_workspace_v2, HyprlandEventListener};
 use crate::service::TaskService;
 use crate::xdg::ensure_parent;
+
+enum RunOutcome {
+    Stopped,
+    Restart(DaemonServer),
+}
 
 /// Exclusive flock held for the lifetime of the daemon process.
 ///
@@ -72,6 +81,16 @@ impl DaemonServer {
     }
 
     pub fn run_foreground(self) -> Result<()> {
+        let mut server = self;
+        loop {
+            match server.run_once()? {
+                RunOutcome::Stopped => return Ok(()),
+                RunOutcome::Restart(next) => server = next,
+            }
+        }
+    }
+
+    fn run_once(self) -> Result<RunOutcome> {
         let socket_path = daemon_socket_path()?;
         ensure_parent(&socket_path)?;
 
@@ -93,7 +112,7 @@ impl DaemonServer {
             })?;
         }
 
-        write_pid_file()?;
+        write_pid_file(&socket_path)?;
 
         let listener = UnixListener::bind(&socket_path).map_err(|source| TskError::Write {
             path: socket_path.clone(),
@@ -114,6 +133,10 @@ impl DaemonServer {
 
         eprintln!("tsk daemon listening on {}", socket_path.display());
 
+        let restart = Arc::new(AtomicBool::new(false));
+        let mut config_watch =
+            ConfigWatch::start(runtime_config_path(), self.stop.clone(), restart.clone());
+
         // Fast DB sync first; Hyprland slot rename runs in the background.
         {
             let svc = self
@@ -123,8 +146,8 @@ impl DaemonServer {
             svc.initialize()?;
         }
         if shutdown_requested(&self) {
-            cleanup_runtime_files();
-            return Ok(());
+            cleanup_socket_runtime(&socket_path);
+            return Ok(RunOutcome::Stopped);
         }
 
         // Reboot/crash recovery: archive leftover active tasks (like powering off).
@@ -148,8 +171,8 @@ impl DaemonServer {
             }
         }
         if shutdown_requested(&self) {
-            cleanup_runtime_files();
-            return Ok(());
+            cleanup_socket_runtime(&socket_path);
+            return Ok(RunOutcome::Stopped);
         }
 
         let service = self.service.clone();
@@ -164,8 +187,8 @@ impl DaemonServer {
         let _hyprland_listener = start_hyprland_listener(self.service.clone());
         if shutdown_requested(&self) {
             let _ = provision.join();
-            cleanup_runtime_files();
-            return Ok(());
+            cleanup_socket_runtime(&socket_path);
+            return Ok(RunOutcome::Stopped);
         }
 
         if let Ok(svc) = self.service.lock() {
@@ -175,12 +198,33 @@ impl DaemonServer {
         }
         if shutdown_requested(&self) {
             let _ = provision.join();
-            cleanup_runtime_files();
-            return Ok(());
+            cleanup_socket_runtime(&socket_path);
+            return Ok(RunOutcome::Stopped);
         }
 
         // Nonblocking accept — SIGINT/SIGTERM use the default disposition (terminate).
         while !shutdown_requested(&self) {
+            if restart.load(Ordering::SeqCst) {
+                match DaemonServer::new() {
+                    Ok(next) => {
+                        let _ = provision.join();
+                        drop(config_watch);
+                        cleanup_socket_runtime(&socket_path);
+                        return Ok(RunOutcome::Restart(next));
+                    }
+                    Err(err) => {
+                        eprintln!(
+                            "tsk daemon: config reload failed, keeping current process: {err}"
+                        );
+                        restart.store(false, Ordering::SeqCst);
+                        config_watch = ConfigWatch::start(
+                            runtime_config_path(),
+                            self.stop.clone(),
+                            restart.clone(),
+                        );
+                    }
+                }
+            }
             match listener.accept() {
                 Ok((stream, _)) => {
                     let service = self.service.clone();
@@ -200,8 +244,8 @@ impl DaemonServer {
         }
 
         let _ = provision.join();
-        cleanup_runtime_files();
-        Ok(())
+        cleanup_socket_runtime(&socket_path);
+        Ok(RunOutcome::Stopped)
     }
 
     pub fn stop(&self) {
@@ -209,8 +253,8 @@ impl DaemonServer {
     }
 }
 
-fn write_pid_file() -> Result<()> {
-    let path = daemon_pid_path()?;
+fn write_pid_file(socket: &Path) -> Result<()> {
+    let path = daemon_pid_path_for_socket(socket);
     ensure_parent(&path)?;
     fs::write(&path, format!("{}\n", std::process::id()))
         .map_err(|source| TskError::Write { path, source })
@@ -218,11 +262,13 @@ fn write_pid_file() -> Result<()> {
 
 fn cleanup_runtime_files() {
     if let Ok(path) = daemon_socket_path() {
-        let _ = fs::remove_file(path);
+        cleanup_socket_runtime(&path);
     }
-    if let Ok(path) = daemon_pid_path() {
-        let _ = fs::remove_file(path);
-    }
+}
+
+fn cleanup_socket_runtime(socket: &Path) {
+    let _ = fs::remove_file(socket);
+    let _ = fs::remove_file(daemon_pid_path_for_socket(socket));
 }
 
 fn start_hyprland_listener(service: Arc<Mutex<TaskService>>) -> Option<HyprlandEventListener> {
