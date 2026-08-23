@@ -15,17 +15,15 @@ optdepends=(
 options=(!strip !lto)
 install="$pkgname.install"
 
-# Same PKGBUILD builds from this checkout (`makepkg -si`) and from an AUR clone.
-# In-tree: packaging/arch/install-share.sh sits beside this file.
-# AUR: that helper lives inside the GitHub tarball, not the AUR git repo.
-# Force tarball mode (checksums / .SRCINFO) with TSK_AUR_PKGBUILD=1.
+# If this PKGBUILD sits next to install-share.sh (git checkout), build that tree
+# instead of the GitHub tarball. Set TSK_AUR_PKGBUILD=1 to force the tarball.
 _aur=1
 if [[ -z ${TSK_AUR_PKGBUILD:-} && -f "$startdir/install-share.sh" ]]; then
   _aur=0
 fi
 
-# Filled by packaging/arch/publish-aur.sh from the v$pkgver GitHub archive.
-_aur_sha256='SKIP'
+# sha256 of the v$pkgver GitHub archive
+_aur_sha256='b1051b389fb96ae8bfad19ef2bc652a58b6b80a1eaef33767e9238109a818a2c'
 
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
 sha256sums=("$_aur_sha256")
