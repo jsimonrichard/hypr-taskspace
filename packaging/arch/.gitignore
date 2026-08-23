@@ -9,3 +9,4 @@ target/
 
 # generated for AUR submissions (see docs/packaging.md)
 .SRCINFO
+*.tar.gz

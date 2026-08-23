@@ -29,6 +29,8 @@ cd packaging/arch && makepkg -si
 systemctl --user enable --now tskd.service
 ```
 
+After the AUR package is published: `yay -S hypr-taskspace` (see [docs/packaging.md](docs/packaging.md)).
+
 Then run `tsk install omarchy` (Lua bindings + bar plugin + overlay + menu launch prefix). Use `tsk install omarchy --tui` to keep the bar widget but open the ratatui TUI from **SUPER+Tab** and the task label. Non-Omarchy Hyprland can source `/usr/share/tsk/hypr/bindings.conf` and optionally merge Waybar snippets under `/usr/share/tsk/waybar/`.
 
 **Cargo / from source:**

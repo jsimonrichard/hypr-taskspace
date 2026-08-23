@@ -1,33 +1,81 @@
-# Maintainer: Your Name <you@example.com>
+# Maintainer: J. Simon Richard <jsimonrichard@gmail.com>
 pkgname=hypr-taskspace
 pkgver=0.1.0
-pkgrel=2
-pkgdesc="Task-centric Hyprland control plane with Waybar integration"
+pkgrel=1
+pkgdesc="Task-centric Hyprland control plane with Omarchy and Waybar integration"
 arch=('x86_64' 'aarch64')
 url="https://github.com/jsimonrichard/hypr-taskspace"
 license=('MIT')
-depends=('hyprland' 'waybar')
-makedepends=('cargo' 'rust')
-source=()
+depends=('gcc-libs' 'glibc' 'gtk3' 'hyprland')
+makedepends=('cargo' 'pkgconf')
+optdepends=(
+  'waybar: CFFI taskspace/workspace module'
+  'chromium: helper extension for tab restore'
+)
 options=(!strip !lto)
+install="$pkgname.install"
+
+# Same PKGBUILD builds from this checkout (`makepkg -si`) and from an AUR clone.
+# In-tree: packaging/arch/install-share.sh sits beside this file.
+# AUR: that helper lives inside the GitHub tarball, not the AUR git repo.
+# Force tarball mode (checksums / .SRCINFO) with TSK_AUR_PKGBUILD=1.
+_aur=1
+if [[ -z ${TSK_AUR_PKGBUILD:-} && -f "$startdir/install-share.sh" ]]; then
+  _aur=0
+fi
+
+# Filled by packaging/arch/publish-aur.sh from the v$pkgver GitHub archive.
+_aur_sha256='SKIP'
+
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=("$_aur_sha256")
+if (( !_aur )); then
+  source=()
+  sha256sums=()
+fi
+
+_src_root() {
+  if (( !_aur )); then
+    ( cd "$startdir/../.." && pwd )
+    return
+  fi
+  local d
+  for d in "$srcdir/$pkgname-$pkgver" "$srcdir/$pkgname-v$pkgver"; do
+    if [[ -d $d ]]; then
+      printf '%s\n' "$d"
+      return
+    fi
+  done
+  echo "Cannot find extracted sources in $srcdir" >&2
+  return 1
+}
+
+_cargo_env() {
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR="$startdir/target"
+  # makepkg CFLAGS/LDFLAGS (-flto=auto, --as-needed) break bundled libsqlite3-sys linking
+  unset CFLAGS CXXFLAGS LDFLAGS RUSTFLAGS
+}
+
+prepare() {
+  cd "$(_src_root)"
+  _cargo_env
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
 
 build() {
-  local root="$startdir/../.."
-  cd "$root"
-
-  # makepkg CFLAGS/LDFLAGS (-flto=auto, --as-needed) break bundled libsqlite3-sys linking
-  export CARGO_TARGET_DIR="$startdir/target"
-  unset CFLAGS CXXFLAGS LDFLAGS RUSTFLAGS
-
-  cargo build --release -p tsk-cli -p tsk-waybar
+  cd "$(_src_root)"
+  _cargo_env
+  cargo build --frozen --release -p tsk-cli -p tsk-waybar
 }
 
 package() {
-  local root="$startdir/../.."
-  cd "$root"
+  local root
+  root="$(_src_root)"
+  _cargo_env
 
-  install -Dm755 "$startdir/target/release/tsk" "$pkgdir/usr/bin/tsk"
-  install -Dm755 "$startdir/target/release/libtsk_waybar.so" \
+  install -Dm755 "$CARGO_TARGET_DIR/release/tsk" "$pkgdir/usr/bin/tsk"
+  install -Dm755 "$CARGO_TARGET_DIR/release/libtsk_waybar.so" \
     "$pkgdir/usr/share/tsk/lib/libtsk_waybar.so"
 
   bash "$root/packaging/arch/install-share.sh" "$pkgdir" "$root"
@@ -36,4 +84,5 @@ package() {
     "$pkgdir/usr/share/libalpm/hooks/90-hypr-taskspace-reload.hook"
   install -Dm755 "$root/packaging/arch/reload-hyprland.sh" \
     "$pkgdir/usr/share/libalpm/scripts/hypr-taskspace-reload-hyprland"
+  install -Dm644 "$root/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }

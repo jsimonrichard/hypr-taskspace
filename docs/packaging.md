@@ -101,6 +101,17 @@ That copies templates to `~/.local/share/tsk/` instead of `/usr/share/tsk`. See 
 
 ## AUR publish
 
-1. Tag a release and set `source` + `sha512sums` in `PKGBUILD`.
-2. Copy `packaging/arch/PKGBUILD` to the AUR repo.
-3. Run `makepkg --printsrcinfo > .SRCINFO`.
+One PKGBUILD covers in-tree `makepkg -si` (empty `source`, builds this checkout) and the AUR (GitHub tag tarball). Helpers (`install-share.sh`, hooks) stay in the tarball, so the AUR git repo only needs `PKGBUILD`, `.SRCINFO`, and `hypr-taskspace.install`.
+
+1. Match `pkgver` to `[workspace.package] version` in `Cargo.toml`.
+2. Tag and push `v$pkgver` (`git tag v0.1.0 && git push origin v0.1.0`).
+3. From a machine with `makepkg`:
+
+```bash
+packaging/arch/publish-aur.sh
+# first time:
+git clone ssh://aur@aur.archlinux.org/hypr-taskspace.git /tmp/aur-hypr-taskspace
+packaging/arch/publish-aur.sh --sync /tmp/aur-hypr-taskspace --push
+```
+
+You need an [AUR account](https://aur.archlinux.org) with an SSH key. The script fills `_aur_sha256`, writes `.SRCINFO`, and copies those three files into the AUR clone. It does not push unless you pass `--push`.
