@@ -25,6 +25,8 @@ Item {
   property var repos: []
   property string listError: ""
   property string formError: ""
+  property string errorTitle: ""
+  property string errorDetail: ""
   property string formName: ""
   property string formFocus: "name"
   property int formRepoIndex: 0
@@ -33,6 +35,8 @@ Item {
   property string renameName: ""
   property string pendingTab: ""
   property string pendingError: ""
+  property string pendingErrorTitle: ""
+  property string pendingErrorDetail: ""
   property bool pendingReopen: false
   property string progressLog: ""
   property string progressTaskId: ""
@@ -98,8 +102,7 @@ Item {
     root.selectedIndex = 0
     root.cursorActive = true
     root.selectCurrentOnRebuild = root.tab === "tasks"
-    root.formError = root.pendingError
-    root.pendingError = ""
+    root.applyPendingError()
     root.disarmPointer()
     root.reloadAll()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
@@ -176,7 +179,8 @@ Item {
 
   function applyList(text, exitCode) {
     if (Number(exitCode) !== 0) {
-      root.listError = "tskd is not running"
+      root.listError = Model.commandErrorSummary(Model.commandOutput(text, listErr.text))
+        || "tskd is not running"
       root.activeTasks = []
       root.archivedTasks = []
       root.rebuildDisplay()
@@ -312,7 +316,7 @@ Item {
 
   function showList() {
     root.screen = "list"
-    root.formError = ""
+    root.clearCommandError()
     root.rebuildDisplay()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
@@ -328,7 +332,7 @@ Item {
     root.formRepoIndex = 0
     root.formWorktree = true
     root.formContainer = false
-    root.formError = ""
+    root.clearCommandError()
     root.reloadRepos()
   }
 
@@ -337,7 +341,7 @@ Item {
     if (!row || row.kind === "default" || row.kind === "repo" || row.kind === "new-task" || row.kind === "new-repo") return
     root.screen = "rename"
     root.renameName = row.label
-    root.formError = ""
+    root.clearCommandError()
   }
 
   function requestArchive() {
@@ -360,6 +364,48 @@ Item {
       return
     }
     root.openConfirm("delete", row.taskId, row.label, "Delete “" + row.label + "”? This cannot be undone.")
+  }
+
+  function clearCommandError() {
+    root.formError = ""
+    root.errorTitle = ""
+    root.errorDetail = ""
+    errorDialog.opened = false
+  }
+
+  function showCommandError(title, detail) {
+    const text = String(detail || "").trim()
+    const summary = Model.commandErrorSummary(text) || String(title || "Command failed")
+    root.errorTitle = String(title || "Command failed")
+    root.errorDetail = text || summary
+    root.formError = summary
+    errorDialog.opened = true
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  function queuePendingError(title, fallback, detail) {
+    const text = String(detail || "").trim()
+    root.pendingErrorTitle = String(title || "")
+    root.pendingError = Model.commandErrorSummary(text) || String(fallback || title || "Command failed")
+    root.pendingErrorDetail = text || root.pendingError
+  }
+
+  function applyPendingError() {
+    const title = root.pendingErrorTitle
+    const summary = root.pendingError
+    const detail = root.pendingErrorDetail
+    root.pendingErrorTitle = ""
+    root.pendingError = ""
+    root.pendingErrorDetail = ""
+    if (!summary && !detail) {
+      root.clearCommandError()
+      return
+    }
+    root.showCommandError(title || summary, detail || summary)
+  }
+
+  function actionFailureText() {
+    return Model.commandOutput(actionOut.text, actionErr.text)
   }
 
   function openConfirm(action, id, label, message) {
@@ -405,6 +451,9 @@ Item {
     const name = String(root.formName || "").trim()
     if (!name) {
       root.formError = "Name is required"
+      root.errorTitle = ""
+      root.errorDetail = ""
+      errorDialog.opened = false
       root.formFocus = "name"
       return
     }
@@ -435,6 +484,9 @@ Item {
     const name = String(root.renameName || "").trim()
     if (!row || !name) {
       root.formError = "Name is required"
+      root.errorTitle = ""
+      root.errorDetail = ""
+      errorDialog.opened = false
       return
     }
     root.runTsk(["task", "rename", row.taskId, name])
@@ -445,6 +497,8 @@ Item {
     if (folderPickProc.running) return
     root.pendingTab = "repos"
     root.pendingError = ""
+    root.pendingErrorTitle = ""
+    root.pendingErrorDetail = ""
     root.pendingReopen = false
     root.dismiss()
     folderPickProc.running = true
@@ -593,7 +647,7 @@ Item {
     }
     if (root.formFocus === "name") {
       const next = root.appendFilter(root.formName, event)
-      if (next !== null) { root.formName = next; root.formError = ""; return true }
+      if (next !== null) { root.formName = next; root.clearCommandError(); return true }
     }
     return false
   }
@@ -602,15 +656,20 @@ Item {
     if (event.key === Qt.Key_Escape) { root.showList(); return true }
     if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { root.submitRename(); return true }
     const next = root.appendFilter(root.renameName, event)
-    if (next !== null) { root.renameName = next; root.formError = ""; return true }
+    if (next !== null) { root.renameName = next; root.clearCommandError(); return true }
     return false
   }
 
   function handleProgressKey(event) {
     if (!root.progressDone) return true
     if (event.key === Qt.Key_Escape || event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-      if (root.progressFailed) root.showList()
-      else root.dismiss()
+      if (root.progressFailed) {
+        root.screen = "list"
+        root.rebuildDisplay()
+        Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+      } else {
+        root.dismiss()
+      }
       return true
     }
     return true
@@ -632,6 +691,10 @@ Item {
       id: listOut
       waitForEnd: true
     }
+    stderr: StdioCollector {
+      id: listErr
+      waitForEnd: true
+    }
     onExited: function(exitCode) { root.applyList(listOut.text, exitCode) }
   }
 
@@ -647,21 +710,33 @@ Item {
 
   Process {
     id: actionProc
-    stdout: StdioCollector { waitForEnd: true }
+    stdout: StdioCollector {
+      id: actionOut
+      waitForEnd: true
+    }
+    stderr: StdioCollector {
+      id: actionErr
+      waitForEnd: true
+    }
     onExited: function(exitCode) {
+      const detail = root.actionFailureText()
       if (root.pendingClose) {
         root.pendingClose = false
         if (Number(exitCode) === 0) root.dismiss()
         else {
-          root.formError = "Command failed"
           root.screen = "new"
+          root.showCommandError("Could not create that task", detail)
         }
         return
       }
       if (root.pendingReopen) {
         root.pendingReopen = false
         if (Number(exitCode) !== 0)
-          root.pendingError = "Could not register that folder — pick a git or jj checkout"
+          root.queuePendingError(
+            "Could not register that folder",
+            "Could not register that folder — pick a git or jj checkout",
+            detail
+          )
         root.reopenOverlay()
         return
       }
@@ -670,11 +745,15 @@ Item {
         if (Number(exitCode) !== 0) {
           root.closeSwitchFeedback(root.switchSerial)
           root.pendingTab = "archived"
-          root.pendingError = "Could not restore that task"
+          root.queuePendingError("Could not restore that task", "Could not restore that task", detail)
           root.reopenOverlay()
           return
         }
         root.closeSwitchFeedback(root.switchSerial)
+        return
+      }
+      if (Number(exitCode) !== 0) {
+        root.showCommandError("Command failed", detail)
         return
       }
       root.reloadAll()
@@ -712,11 +791,22 @@ Item {
         if (!root.progressTaskId) root.progressTaskId = Model.createdTaskId(root.progressLog)
       }
     }
+    stderr: SplitParser {
+      onRead: function(line) {
+        root.progressLog += line + "\n"
+      }
+    }
     onExited: function(exitCode) {
       root.progressDone = true
       root.progressFailed = Number(exitCode) !== 0
-      if (root.progressFailed) root.progressLog += "\nFailed.\n"
-      else root.progressLog += "\nDone. Press Enter to close.\n"
+      if (root.progressFailed) {
+        root.progressLog += "\nFailed.\n"
+        root.errorTitle = "Could not create that task"
+        root.errorDetail = String(root.progressLog || "").trim()
+        root.formError = "Container setup failed"
+      } else {
+        root.progressLog += "\nDone. Press Enter to close.\n"
+      }
     }
   }
 
@@ -770,7 +860,10 @@ Item {
 
     MouseArea {
       anchors.fill: parent
-      onClicked: root.dismiss()
+      onClicked: {
+        if (errorDialog.opened || confirmDialog.opened) return
+        root.dismiss()
+      }
     }
 
     BorderSurface {
@@ -788,11 +881,15 @@ Item {
       Item {
         id: keyCatcher
         anchors.fill: parent
-        z: confirmDialog.opened ? 20 : 0
+        z: (confirmDialog.opened || errorDialog.opened) ? 20 : 0
         focus: true
 
         Keys.priority: Keys.BeforeItem
         Keys.onPressed: function(event) {
+          if (errorDialog.opened) {
+            if (errorDialog.handleKey(event)) event.accepted = true
+            return
+          }
           if (confirmDialog.opened) {
             if (confirmDialog.handleKey(event)) event.accepted = true
             return
@@ -819,6 +916,118 @@ Item {
           cornerRadius: root.cornerRadius
           onCanceled: confirmDialog.opened = false
           onConfirmed: root.confirmPending()
+        }
+
+        Item {
+          id: errorDialog
+          anchors.fill: parent
+          visible: opened
+          z: 11
+          property bool opened: false
+
+          function handleKey(event) {
+            if (!errorDialog.opened) return false
+            if (event.key === Qt.Key_Escape || event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+              errorDialog.opened = false
+              return true
+            }
+            return true
+          }
+
+          Rectangle {
+            anchors.fill: parent
+            color: root.scrim
+            MouseArea {
+              anchors.fill: parent
+              onClicked: errorDialog.opened = false
+            }
+
+            BorderSurface {
+              id: errorCard
+              width: Math.min(parent.width - Style.space(32), parent.width * 0.92)
+              height: errorCard.contentTopInset + errorCard.contentBottomInset
+                + errorTitleText.implicitHeight + Style.space(10)
+                + errorBodyFlick.height + Style.space(12) + Style.space(34)
+              anchors.centerIn: parent
+              color: root.background
+              borderSpec: Border.flat(Color.urgent, Style.normalBorderWidth)
+              padding: Style.space(18)
+              radius: root.cornerRadius
+
+              MouseArea { anchors.fill: parent; onClicked: {} }
+
+              Item {
+                anchors.fill: parent
+                anchors.topMargin: errorCard.contentTopInset
+                anchors.rightMargin: errorCard.contentRightInset
+                anchors.bottomMargin: errorCard.contentBottomInset
+                anchors.leftMargin: errorCard.contentLeftInset
+
+                Text {
+                  id: errorTitleText
+                  anchors.left: parent.left
+                  anchors.right: parent.right
+                  anchors.top: parent.top
+                  text: root.errorTitle || "Command failed"
+                  color: Color.urgent
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.title
+                  wrapMode: Text.WordWrap
+                }
+
+                Flickable {
+                  id: errorBodyFlick
+                  anchors.left: parent.left
+                  anchors.right: parent.right
+                  anchors.top: errorTitleText.bottom
+                  anchors.topMargin: Style.space(10)
+                  height: Math.min(errorBodyText.implicitHeight, Math.min(Style.space(260), Math.round(errorDialog.height * 0.5)))
+                  clip: true
+                  contentWidth: width
+                  contentHeight: errorBodyText.implicitHeight
+                  boundsBehavior: Flickable.StopAtBounds
+                  interactive: contentHeight > height
+                  flickableDirection: Flickable.VerticalFlick
+
+                  Text {
+                    id: errorBodyText
+                    width: errorBodyFlick.width
+                    text: root.errorDetail || root.formError
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                    wrapMode: Text.Wrap
+                  }
+                }
+
+                BorderSurface {
+                  id: errorOk
+                  width: Style.space(88)
+                  height: Style.space(34)
+                  anchors.right: parent.right
+                  anchors.bottom: parent.bottom
+                  color: root.selectedBackground
+                  borderSpec: Border.flat(root.selectedText, Style.normalBorderWidth)
+                  radius: 0
+
+                  Text {
+                    anchors.centerIn: parent
+                    text: "OK"
+                    color: root.selectedText
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                  }
+
+                  MouseArea {
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: errorDialog.opened = false
+                  }
+                }
+              }
+            }
+          }
         }
       }
 
@@ -929,21 +1138,53 @@ Item {
           }
         }
 
-        Text {
+        Item {
+          id: errorBanner
           width: parent.width
-          visible: root.formError.length > 0 && root.screen !== "list"
-          text: root.formError
-          color: root.selectedText
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-          wrapMode: Text.WordWrap
+          visible: root.formError.length > 0
+          height: errorBannerColumn.implicitHeight
+          implicitHeight: errorBannerColumn.implicitHeight
+
+          Column {
+            id: errorBannerColumn
+            width: parent.width
+            spacing: Style.space(2)
+
+            Text {
+              width: parent.width
+              text: root.formError
+              color: Color.urgent
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              elide: Text.ElideRight
+              wrapMode: Text.NoWrap
+            }
+
+            Text {
+              width: parent.width
+              visible: root.errorDetail.length > 0
+              text: "Show details"
+              color: root.selectedText
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+          }
+
+          MouseArea {
+            anchors.fill: parent
+            enabled: root.errorDetail.length > 0
+            cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+            onClicked: {
+              if (root.errorDetail.length > 0) errorDialog.opened = true
+            }
+          }
         }
 
         Item {
           width: parent.width
           height: parent.height - root.headerHeight - root.footerHeight - root.contentSpacing * 2
             - (root.screen === "list" ? root.tabHeight + root.contentSpacing : 0)
-            - (root.formError.length > 0 && root.screen !== "list" ? Style.font.caption + root.contentSpacing : 0)
+            - (errorBanner.visible ? errorBanner.implicitHeight + root.contentSpacing : 0)
 
           ListView {
             id: resultList
@@ -1166,12 +1407,13 @@ Item {
           width: parent.width
           height: root.footerHeight
           text: {
-            if (root.screen === "new") return "Tab fields · ↑↓ repo · Space toggle · Enter create · Esc back"
-            if (root.screen === "rename") return "Enter save · Esc back"
+            const details = root.errorDetail.length > 0 ? "Show details · " : ""
+            if (root.screen === "new") return details + "Tab fields · ↑↓ repo · Space toggle · Enter create · Esc back"
+            if (root.screen === "rename") return details + "Enter save · Esc back"
             if (root.screen === "progress") return root.progressDone ? "Enter close" : "Creating…"
-            if (root.tab === "archived") return "↵ restore · ⌥n new · ⌥e rename · ⌥⇧d delete · ←→ tabs"
-            if (root.tab === "repos") return "⌥n add · ⌥d remove · ←→ tabs"
-            return "↵ switch · ⌥n new · ⌥e rename · ⌥d archive · ⌥⇧d delete · ←→ tabs"
+            if (root.tab === "archived") return details + "↵ restore · ⌥n new · ⌥e rename · ⌥⇧d delete · ←→ tabs"
+            if (root.tab === "repos") return details + "⌥n add · ⌥d remove · ←→ tabs"
+            return details + "↵ switch · ⌥n new · ⌥e rename · ⌥d archive · ⌥⇧d delete · ←→ tabs"
           }
           color: root.foreground
           opacity: 0.55

@@ -91,3 +91,21 @@ function createdTaskId(text) {
   var match = String(text || "").match(/Created task\s+(\S+)/)
   return match ? match[1] : ""
 }
+
+function commandOutput(stdout, stderr) {
+  var err = String(stderr || "").trim()
+  var out = String(stdout || "").trim()
+  if (err && out && err !== out) return err + "\n" + out
+  return err || out
+}
+
+function commandErrorSummary(detail) {
+  var text = String(detail || "").replace(/\r/g, "").trim()
+  if (!text) return ""
+  var lines = text.split("\n")
+  for (var i = 0; i < lines.length; i++) {
+    var line = String(lines[i] || "").replace(/^error:\s*/i, "").trim()
+    if (line) return line
+  }
+  return ""
+}
