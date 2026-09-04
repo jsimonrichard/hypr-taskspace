@@ -618,6 +618,12 @@ impl TaskService {
             )));
         }
 
+        // Snapshot tabs before leaving the taskspace. Attribution is Hypr-only,
+        // so after the switch those windows are no longer on this task.
+        if let Err(err) = crate::browser_session::capture_and_save(&self.config, &task) {
+            eprintln!("tsk: archive browser session: {err}");
+        }
+
         let was_current = crate::task_cleanup::is_active_task_context(&state, &task);
         if was_current {
             workspace_nav::set_taskspace(&mut state, ContextMode::Default, None)
