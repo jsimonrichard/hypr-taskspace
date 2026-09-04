@@ -11,13 +11,13 @@ Do **not** bump `share/chromium/extension/manifest.json` (`version` is a `0.0.0`
 ## Development (JS / extension source changes)
 
 1. Leave the workspace version and `manifest.json` alone.
-2. `tsk install chromium` (or `tsk install all`). From-source installs write `0.1.0.N` and increment `N` automatically so Chromium treats it as an update.
+2. `tsk install chromium` (or `tsk install all`). From-source installs write `0.1.1.N` and increment `N` automatically so Chromium treats it as an update.
 3. Fully quit Chromium, then reopen.
 
 Never remove the extension in `chrome://extensions` — that blocklists the id and External Extensions will not put it back.
 
-To go **down** in version (e.g. `0.1.0.12` → `0.1.0`) without blocklisting: quit Chromium, delete `~/.config/chromium/External Extensions/<id>.json`, start Chromium once and quit, delete `~/.local/share/tsk/chromium/dev-revision` (or the tsk-dev copy), then `tsk install chromium`.
+To go **down** in version (e.g. `0.1.1.12` → `0.1.1`) without blocklisting: quit Chromium, delete `~/.config/chromium/External Extensions/<id>.json`, start Chromium once and quit, delete `~/.local/share/tsk/chromium/dev-revision` (or the tsk-dev copy), then `tsk install chromium`.
 
 ## Release
 
-Bump **only** `[workspace.package] version` in the root `Cargo.toml`. Packaged installs (`/usr/share/tsk`) use that exact version (`0.1.0`). A real project bump is always newer than any `0.1.0.N` dev revision.
+Bump **only** `[workspace.package] version` in the root `Cargo.toml`. Packaged installs (`/usr/share/tsk`) use that exact version (`0.1.1`). A real project bump is always newer than any leftover `0.1.0.N` (or other previous) dev revision.

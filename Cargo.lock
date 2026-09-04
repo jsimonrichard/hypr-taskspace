@@ -1595,7 +1595,7 @@ dependencies = [
 
 [[package]]
 name = "tsk-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clap",
  "serde_json",
@@ -1605,7 +1605,7 @@ dependencies = [
 
 [[package]]
 name = "tsk-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "libc",
@@ -1621,7 +1621,7 @@ dependencies = [
 
 [[package]]
 name = "tsk-tui"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "crossterm 0.29.0",
  "ratatui",
@@ -1630,7 +1630,7 @@ dependencies = [
 
 [[package]]
 name = "tsk-waybar"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "tsk-core",

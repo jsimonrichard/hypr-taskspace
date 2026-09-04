@@ -69,7 +69,7 @@ tsk install chromium
 
 Restart Chromium afterwards (fully quit first). The extension is loaded via `External Extensions/<id>.json` (not by writing into `Default/Extensions/`).
 
-The CRX version comes from the workspace package version in `Cargo.toml`. Bump that for a release — do not edit `share/chromium/extension/manifest.json`. From-source installs append a revision (`0.1.0.3`, …) so `tsk install chromium` updates Chromium without a version bump.
+The CRX version comes from the workspace package version in `Cargo.toml`. Bump that for a release — do not edit `share/chromium/extension/manifest.json`. From-source installs append a revision (`0.1.1.3`, …) so `tsk install chromium` updates Chromium without a version bump.
 
 Test the helper without archiving a task:
 

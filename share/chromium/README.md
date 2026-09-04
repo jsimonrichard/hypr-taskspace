@@ -19,12 +19,12 @@ The native messaging host is `~/.config/chromium/NativeMessagingHosts/org.tsk.br
 
 | Situation | What to bump | What Chromium sees |
 |-----------|--------------|--------------------|
-| Extension JS/source while developing | nothing — run `tsk install chromium` | `0.1.0.N` (`N` auto-increments) |
-| Releasing the project | `[workspace.package] version` only | exact `0.1.0` (packaged `/usr/share/tsk`) |
+| Extension JS/source while developing | nothing — run `tsk install chromium` | `0.1.1.N` (`N` auto-increments) |
+| Releasing the project | `[workspace.package] version` only | exact `0.1.1` (packaged `/usr/share/tsk`) |
 
 Fully quit Chromium after install (the helper snapshots on tab changes or
 about once a minute). Do not Remove the extension in `chrome://extensions`
-(that blocklists the id). To drop a high `0.1.0.N` back to a lower version,
+(that blocklists the id). To drop a high `0.1.1.N` back to a lower version,
 quit Chromium, delete `~/.config/chromium/External Extensions/<id>.json`,
 start Chromium once and quit, delete `~/.local/share/tsk/chromium/dev-revision`,
 then reinstall. Agents: `.cursor/rules/chromium-extension-version.mdc`.

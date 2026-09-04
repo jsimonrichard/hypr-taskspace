@@ -104,7 +104,7 @@ That copies templates to `~/.local/share/tsk/` instead of `/usr/share/tsk`. See 
 One PKGBUILD covers in-tree `makepkg -si` (empty `source`, builds this checkout) and the AUR (GitHub tag tarball). Helpers (`install-share.sh`, hooks) stay in the tarball, so the AUR git repo only needs `PKGBUILD`, `.SRCINFO`, and `hypr-taskspace.install`.
 
 1. Match `pkgver` to `[workspace.package] version` in `Cargo.toml`.
-2. Tag and push `v$pkgver` (`git tag v0.1.0 && git push origin v0.1.0`).
+2. Tag and push `v$pkgver` (`git tag v0.1.1 && git push origin v0.1.1`).
 3. From a machine with `makepkg`:
 
 ```bash
