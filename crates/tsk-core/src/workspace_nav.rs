@@ -332,11 +332,15 @@ fn reconcile_monitor_topology_from_layout(
 
     let key = state.taskspace_key();
     let focused_monitor = monitors.iter().find(|m| m.focused).map(|m| m.name.clone());
-    capture_monitor_slots(state, &key, &allowed, monitors);
+    let previously_known: HashSet<String> = state
+        .last_monitor_workspace
+        .get(&key)
+        .map(|map| map.keys().cloned().collect())
+        .unwrap_or_default();
 
     let max_slots = allowed.len();
     for (index, monitor) in monitors.iter().enumerate() {
-        if relative_slot_in_allowed(&monitor.workspace_name, &allowed).is_some() {
+        if !monitor_needs_hotplug_adopt(state, &previously_known, monitor, &allowed) {
             continue;
         }
         let slot = first_unused_adopt_slot(state, &key, index, max_slots);
@@ -850,6 +854,21 @@ fn monitor_needs_move(
         return true;
     }
     !monitor_at_target(Some(current), target, new_allowed)
+}
+
+fn monitor_needs_hotplug_adopt(
+    state: &SessionState,
+    previously_known: &HashSet<String>,
+    monitor: &Monitor,
+    allowed: &[String],
+) -> bool {
+    if previously_known.contains(&monitor.name) {
+        return false;
+    }
+    match relative_slot_in_allowed(&monitor.workspace_name, allowed) {
+        Some(slot) => is_global_workspace_slot(slot as u32, &state.global_workspace_slots),
+        None => true,
+    }
 }
 
 /// First free slot for a newly plugged monitor in the current taskspace.
@@ -1577,6 +1596,52 @@ mod tests {
         );
         assert_eq!(state.context_mode, ContextMode::Task);
         assert_eq!(state.current_task_id.as_deref(), Some("auth-fix"));
+    }
+
+    #[test]
+    fn reconcile_adopts_new_monitor_parked_on_global_workspace() {
+        let mut state = task_session("auth-fix");
+        let monitors = vec![
+            monitor("eDP-1", "auth-fix-2", true, 0),
+            monitor("DP-4", "1", false, 1410),
+        ];
+        reconcile_monitor_topology_from_layout(&mut state, &monitors, false);
+        assert_eq!(
+            state
+                .last_monitor_workspace
+                .get("task:auth-fix")
+                .and_then(|map| map.get("DP-4"))
+                .copied(),
+            Some(3)
+        );
+        let names = allowed_workspace_names(&state);
+        assert_eq!(
+            workspace_name_at_relative(&names, 3).as_deref(),
+            Some("auth-fix-3")
+        );
+    }
+
+    #[test]
+    fn reconcile_leaves_known_monitor_on_global_workspace() {
+        let mut state = task_session("auth-fix");
+        state
+            .last_monitor_workspace
+            .get_mut("task:auth-fix")
+            .unwrap()
+            .insert("DP-4".into(), 3);
+        let monitors = vec![
+            monitor("eDP-1", "auth-fix-2", true, 0),
+            monitor("DP-4", "1", false, 1410),
+        ];
+        reconcile_monitor_topology_from_layout(&mut state, &monitors, false);
+        assert_eq!(
+            state
+                .last_monitor_workspace
+                .get("task:auth-fix")
+                .and_then(|map| map.get("DP-4"))
+                .copied(),
+            Some(3)
+        );
     }
 
     #[test]
