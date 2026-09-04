@@ -136,6 +136,31 @@ pub fn parse_focusedmon_v2(payload: &str) -> Option<i32> {
     id_raw.trim().parse().ok()
 }
 
+/// Monitor name from `monitoradded` / `monitorremoved` (v1 or v2).
+///
+/// v1 payload is the name. v2 is `ID,NAME,DESCRIPTION` (description may contain commas).
+pub fn parse_monitor_topology_name(event: &str, payload: &str) -> Option<String> {
+    if !is_monitor_topology_event(event) {
+        return None;
+    }
+    if event.ends_with("v2") {
+        let mut parts = payload.splitn(3, ',');
+        let _id = parts.next()?;
+        let name = parts.next()?.trim();
+        if name.is_empty() {
+            return None;
+        }
+        Some(name.to_string())
+    } else {
+        let name = payload.trim();
+        if name.is_empty() {
+            None
+        } else {
+            Some(name.to_string())
+        }
+    }
+}
+
 /// Uses `workspacev2` payload only: `WORKSPACEID,WORKSPACENAME`.
 pub fn is_workspace_focus_event(event: &str) -> bool {
     event == "workspacev2"
@@ -144,6 +169,14 @@ pub fn is_workspace_focus_event(event: &str) -> bool {
 /// Monitor focus carries workspace id — same fast path as native Waybar.
 pub fn is_monitor_focus_event(event: &str) -> bool {
     matches!(event, "focusedmon" | "focusedmonv2")
+}
+
+/// Hyprland added or removed a monitor (hotplug).
+pub fn is_monitor_topology_event(event: &str) -> bool {
+    matches!(
+        event,
+        "monitoradded" | "monitoraddedv2" | "monitorremoved" | "monitorremovedv2"
+    )
 }
 
 /// Events that need a full refresh (occupied slots, visibility, task label).
@@ -158,7 +191,7 @@ pub fn is_full_refresh_event(event: &str) -> bool {
             | "createworkspacev2"
             | "destroyworkspace"
             | "destroyworkspacev2"
-    )
+    ) || is_monitor_topology_event(event)
 }
 
 pub struct HyprlandEventListener {
@@ -249,6 +282,35 @@ mod tests {
     fn parse_workspace_v2_payload() {
         assert_eq!(parse_workspace_v2("3,code"), Some((3, "code".into())));
         assert_eq!(parse_workspace_v2("2,2"), Some((2, "2".into())));
+    }
+
+    #[test]
+    fn monitor_topology_events_include_add_and_remove() {
+        assert!(is_monitor_topology_event("monitoradded"));
+        assert!(is_monitor_topology_event("monitoraddedv2"));
+        assert!(is_monitor_topology_event("monitorremoved"));
+        assert!(is_monitor_topology_event("monitorremovedv2"));
+        assert!(is_full_refresh_event("monitoraddedv2"));
+        assert!(!is_monitor_topology_event("focusedmonv2"));
+        assert!(!is_monitor_topology_event("workspacev2"));
+    }
+
+    #[test]
+    fn parse_monitor_topology_name_v1_and_v2() {
+        assert_eq!(
+            parse_monitor_topology_name("monitoradded", "DP-2"),
+            Some("DP-2".into())
+        );
+        assert_eq!(
+            parse_monitor_topology_name("monitoraddedv2", "1,HDMI-A-1,Dell Inc. U2720Q"),
+            Some("HDMI-A-1".into())
+        );
+        assert_eq!(
+            parse_monitor_topology_name("monitorremovedv2", "0,eDP-1"),
+            Some("eDP-1".into())
+        );
+        assert_eq!(parse_monitor_topology_name("workspacev2", "2,2"), None);
+        assert_eq!(parse_monitor_topology_name("monitoradded", "  "), None);
     }
 
     #[test]

@@ -1,6 +1,8 @@
 //! Taskspace-scoped Hyprland workspace navigation.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use crate::hypr_log;
 use crate::hyprland::{self, Monitor};
@@ -9,6 +11,9 @@ use crate::workspaces::{
     allowed_workspace_names, default_taskspace_workspace_name, default_taskspace_workspace_names,
     is_global_workspace_slot,
 };
+
+static MONITOR_HOTPLUG_AT: Mutex<Option<Instant>> = Mutex::new(None);
+const MONITOR_HOTPLUG_TTL: Duration = Duration::from_secs(2);
 
 /// Monitor that should receive a new task's primary workspace during on_start.
 ///
@@ -245,8 +250,150 @@ pub fn refresh_monitor_slots(state: &mut SessionState) {
         return;
     }
     if let Ok(monitors) = hyprland::list_monitors() {
+        if !monitors.is_empty() {
+            prune_disconnected_monitors(state, &live_monitor_names(&monitors));
+        }
         capture_monitor_slots(state, &key, &allowed, &monitors);
     }
+}
+
+/// Reconcile remembered layout after a monitor is added or removed.
+///
+/// Drops disconnected monitor names, records the live layout, and assigns a
+/// current-taskspace workspace to any new monitor that Hyprland parked on a
+/// foreign/unmanaged workspace (so hotplug does not look like a taskspace switch).
+pub fn reconcile_monitor_topology(state: &mut SessionState) {
+    if !hyprland::available() {
+        return;
+    }
+    record_monitor_hotplug();
+    let monitors = sort_monitors_by_layout(list_monitors_with_retry());
+    hypr_log::scoped(
+        format!("reconcile_monitor_topology n={}", monitors.len()),
+        || reconcile_monitor_topology_from_layout(state, &monitors, true),
+    );
+}
+
+/// Whether a workspace focus that would change taskspace is a hotplug side-effect.
+pub fn should_treat_as_monitor_hotplug(state: &SessionState, workspace_name: &str) -> bool {
+    if monitor_hotplug_is_recent() {
+        return true;
+    }
+    let Ok(monitors) = hyprland::list_monitors() else {
+        return false;
+    };
+    should_treat_as_monitor_hotplug_from_layout(state, workspace_name, &monitors, false)
+}
+
+fn record_monitor_hotplug() {
+    if let Ok(mut guard) = MONITOR_HOTPLUG_AT.lock() {
+        *guard = Some(Instant::now());
+    }
+}
+
+fn monitor_hotplug_is_recent() -> bool {
+    let Ok(guard) = MONITOR_HOTPLUG_AT.lock() else {
+        return false;
+    };
+    guard
+        .as_ref()
+        .is_some_and(|at| at.elapsed() <= MONITOR_HOTPLUG_TTL)
+}
+
+fn live_monitor_names(monitors: &[Monitor]) -> HashSet<String> {
+    monitors.iter().map(|m| m.name.clone()).collect()
+}
+
+fn prune_disconnected_monitors(state: &mut SessionState, live: &HashSet<String>) {
+    if live.is_empty() {
+        return;
+    }
+    for map in state.last_monitor_workspace.values_mut() {
+        map.retain(|name, _| live.contains(name));
+    }
+    state
+        .last_monitor_workspace
+        .retain(|_, map| !map.is_empty());
+}
+
+fn reconcile_monitor_topology_from_layout(
+    state: &mut SessionState,
+    monitors: &[Monitor],
+    apply_hypr: bool,
+) {
+    if !monitors.is_empty() {
+        prune_disconnected_monitors(state, &live_monitor_names(monitors));
+    }
+
+    let allowed = allowed_workspace_names(state);
+    if allowed.is_empty() {
+        return;
+    }
+
+    let key = state.taskspace_key();
+    let focused_monitor = monitors.iter().find(|m| m.focused).map(|m| m.name.clone());
+    capture_monitor_slots(state, &key, &allowed, monitors);
+
+    let max_slots = allowed.len();
+    for (index, monitor) in monitors.iter().enumerate() {
+        if relative_slot_in_allowed(&monitor.workspace_name, &allowed).is_some() {
+            continue;
+        }
+        let slot = first_unused_adopt_slot(state, &key, index, max_slots);
+        let Some(target) = workspace_name_at_relative(&allowed, slot) else {
+            continue;
+        };
+        hypr_log::note(format!(
+            "adopt new monitor {} → slot {slot} ({target})",
+            monitor.name
+        ));
+        if apply_hypr {
+            hyprland::switch_workspace_on_monitor(&monitor.name, &target);
+        }
+        state
+            .last_monitor_workspace
+            .entry(key.clone())
+            .or_default()
+            .insert(monitor.name.clone(), slot);
+    }
+
+    if apply_hypr {
+        if let Some(name) = focused_monitor.as_deref() {
+            if monitors.iter().any(|m| m.name == name) {
+                hyprland::focus_monitor(name);
+            }
+        }
+        persist_monitor_layout_from_hyprland(state, &allowed, focused_monitor.as_deref());
+    }
+}
+
+fn should_treat_as_monitor_hotplug_from_layout(
+    state: &SessionState,
+    workspace_name: &str,
+    monitors: &[Monitor],
+    hotplug_recent: bool,
+) -> bool {
+    if hotplug_recent {
+        return true;
+    }
+    let key = state.taskspace_key();
+    let Some(saved) = state.last_monitor_workspace.get(&key) else {
+        return false;
+    };
+    if saved.is_empty() {
+        return false;
+    }
+    let Some(holder) = monitors.iter().find(|m| m.workspace_name == workspace_name) else {
+        return false;
+    };
+    if saved.contains_key(&holder.name) {
+        return false;
+    }
+    let allowed = allowed_workspace_names(state);
+    monitors.iter().any(|monitor| {
+        saved.contains_key(&monitor.name)
+            && relative_slot_in_allowed(&monitor.workspace_name, &allowed).is_some()
+    })
 }
 
 /// When switching taskspaces, map each monitor's slot onto the new taskspace.
@@ -528,6 +675,10 @@ fn capture_monitor_slots(
         .last_monitor_workspace
         .entry(taskspace_key.to_string())
         .or_default();
+    if !monitors.is_empty() {
+        let live: HashSet<&str> = monitors.iter().map(|m| m.name.as_str()).collect();
+        entry.retain(|name, _| live.contains(name.as_str()));
+    }
     for monitor in monitors {
         if let Some(slot) = relative_slot_in_allowed(&monitor.workspace_name, allowed) {
             entry.insert(monitor.name.clone(), slot);
@@ -700,6 +851,45 @@ fn monitor_needs_move(
     !monitor_at_target(Some(current), target, new_allowed)
 }
 
+/// First free slot for a newly plugged monitor in the current taskspace.
+///
+/// Skips global slots (`"1"`, …) — those are shared numeric workspaces, not
+/// `{task}-1`. Prefers physical-order enumeration, then the next unused
+/// non-global slot.
+fn first_unused_adopt_slot(
+    state: &SessionState,
+    dest_key: &str,
+    monitor_index: usize,
+    max_slots: usize,
+) -> i32 {
+    let used: HashSet<i32> = state
+        .last_monitor_workspace
+        .get(dest_key)
+        .map(|map| map.values().copied().collect())
+        .unwrap_or_default();
+    let preferred = (monitor_index + 1).min(max_slots.max(1)) as i32;
+    let usable = |slot: i32| {
+        slot >= 1
+            && (slot as usize) <= max_slots.max(1)
+            && !used.contains(&slot)
+            && !is_global_workspace_slot(slot as u32, &state.global_workspace_slots)
+    };
+    if usable(preferred) {
+        return preferred;
+    }
+    for slot in (preferred as usize + 1)..=max_slots {
+        if usable(slot as i32) {
+            return slot as i32;
+        }
+    }
+    for slot in 1..preferred {
+        if usable(slot) {
+            return slot;
+        }
+    }
+    resolve_monitor_slot(state, dest_key, "", monitor_index, max_slots)
+}
+
 /// Resolve the relative workspace slot for a monitor entering a taskspace.
 ///
 /// Uses the saved per-monitor layout when available; otherwise assigns slots by
@@ -720,8 +910,27 @@ fn resolve_monitor_slot(
         return slot;
     }
 
-    let slot = monitor_index + 1;
-    slot.min(max_slots.max(1)) as i32
+    let used: HashSet<i32> = state
+        .last_monitor_workspace
+        .get(dest_key)
+        .map(|map| map.values().copied().collect())
+        .unwrap_or_default();
+    let preferred = (monitor_index + 1).min(max_slots.max(1)) as i32;
+    if !used.contains(&preferred) {
+        return preferred;
+    }
+    for slot in (preferred as usize + 1)..=max_slots {
+        let slot = slot as i32;
+        if !used.contains(&slot) {
+            return slot;
+        }
+    }
+    for slot in 1..preferred {
+        if !used.contains(&slot) {
+            return slot;
+        }
+    }
+    preferred
 }
 
 fn relative_to_name(state: &SessionState, relative: i32) -> Option<String> {
@@ -1147,10 +1356,7 @@ mod tests {
             slot_to_adopt_for_taskspace_switch("alpha-3", &dest, &[]),
             None
         );
-        assert_eq!(
-            slot_to_adopt_for_taskspace_switch("3", &dest, &[1]),
-            None
-        );
+        assert_eq!(slot_to_adopt_for_taskspace_switch("3", &dest, &[1]), None);
     }
 
     #[test]
@@ -1179,5 +1385,188 @@ mod tests {
             slot_to_adopt_for_taskspace_switch("1", &default_dest, &[1]),
             None
         );
+    }
+
+    fn monitor(name: &str, workspace: &str, focused: bool, x: i32) -> Monitor {
+        Monitor {
+            name: name.into(),
+            workspace_name: workspace.into(),
+            focused,
+            x,
+            y: 0,
+        }
+    }
+
+    fn task_session(task_id: &str) -> SessionState {
+        use crate::models::{Task, TaskStatus};
+
+        let mut state = SessionState {
+            context_mode: ContextMode::Task,
+            current_task_id: Some(task_id.into()),
+            default_workspace_count: 10,
+            global_workspace_slots: vec![1],
+            last_monitor_workspace: HashMap::from([(
+                format!("task:{task_id}"),
+                HashMap::from([("eDP-1".into(), 2)]),
+            )]),
+            last_workspace: HashMap::from([(format!("task:{task_id}"), 2)]),
+            ..Default::default()
+        };
+        state.tasks.insert(
+            task_id.into(),
+            Task {
+                id: task_id.into(),
+                name: task_id.into(),
+                status: TaskStatus::Active,
+                repo_url: None,
+                repo_path: "/tmp".into(),
+                source_repo_path: None,
+                branch: None,
+                container_name: format!("tsk-{task_id}"),
+                container_isolation: false,
+                workspace_count: 10,
+                browser_profile: None,
+                created_at: chrono::Utc::now(),
+                last_active_at: chrono::Utc::now(),
+                listed_at: chrono::Utc::now(),
+                agent_notes_path: None,
+                ports: vec![],
+            },
+        );
+        state
+    }
+
+    #[test]
+    fn resolve_monitor_slot_skips_already_used_slots() {
+        let state = SessionState {
+            last_monitor_workspace: HashMap::from([(
+                "task:auth-fix".into(),
+                HashMap::from([("eDP-1".into(), 2)]),
+            )]),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_monitor_slot(&state, "task:auth-fix", "DP-2", 1, 10),
+            3
+        );
+    }
+
+    #[test]
+    fn capture_monitor_slots_prunes_disconnected_monitors() {
+        let mut state = SessionState {
+            last_monitor_workspace: HashMap::from([(
+                "default".into(),
+                HashMap::from([("eDP-1".into(), 1), ("DP-2".into(), 3)]),
+            )]),
+            ..Default::default()
+        };
+        let allowed = vec!["1".into(), "2".into(), "3".into()];
+        capture_monitor_slots(
+            &mut state,
+            "default",
+            &allowed,
+            &[monitor("eDP-1", "1", true, 0)],
+        );
+        assert_eq!(
+            state.last_monitor_workspace.get("default"),
+            Some(&HashMap::from([("eDP-1".into(), 1)]))
+        );
+    }
+
+    #[test]
+    fn prune_disconnected_monitors_clears_all_taskspaces() {
+        let mut state = SessionState {
+            last_monitor_workspace: HashMap::from([
+                (
+                    "default".into(),
+                    HashMap::from([("eDP-1".into(), 1), ("DP-2".into(), 2)]),
+                ),
+                ("task:auth-fix".into(), HashMap::from([("DP-2".into(), 4)])),
+            ]),
+            ..Default::default()
+        };
+        prune_disconnected_monitors(&mut state, &HashSet::from(["eDP-1".into()]));
+        assert_eq!(
+            state.last_monitor_workspace.get("default"),
+            Some(&HashMap::from([("eDP-1".into(), 1)]))
+        );
+        assert!(!state.last_monitor_workspace.contains_key("task:auth-fix"));
+    }
+
+    #[test]
+    fn first_unused_adopt_slot_skips_global_workspace() {
+        let state = task_session("auth-fix");
+        // Preferred slot for a new leftmost monitor is 1, but that is global.
+        assert_eq!(first_unused_adopt_slot(&state, "task:auth-fix", 0, 10), 3);
+        assert_eq!(first_unused_adopt_slot(&state, "task:auth-fix", 1, 10), 3);
+        let names = allowed_workspace_names(&state);
+        assert_eq!(
+            workspace_name_at_relative(&names, 3).as_deref(),
+            Some("auth-fix-3")
+        );
+        assert_ne!(
+            workspace_name_at_relative(&names, 1).as_deref(),
+            Some("auth-fix-1")
+        );
+    }
+
+    #[test]
+    fn reconcile_adopts_new_monitor_onto_unused_task_slot() {
+        let mut state = task_session("auth-fix");
+        let monitors = vec![
+            monitor("DP-2", "3", false, -1920),
+            monitor("eDP-1", "auth-fix-2", true, 0),
+        ];
+        reconcile_monitor_topology_from_layout(&mut state, &monitors, false);
+        assert_eq!(
+            state
+                .last_monitor_workspace
+                .get("task:auth-fix")
+                .and_then(|map| map.get("DP-2"))
+                .copied(),
+            Some(3)
+        );
+        assert_eq!(
+            state
+                .last_monitor_workspace
+                .get("task:auth-fix")
+                .and_then(|map| map.get("eDP-1"))
+                .copied(),
+            Some(2)
+        );
+        assert_eq!(state.context_mode, ContextMode::Task);
+        assert_eq!(state.current_task_id.as_deref(), Some("auth-fix"));
+    }
+
+    #[test]
+    fn hotplug_guard_treats_foreign_workspace_as_layout_change() {
+        let state = task_session("auth-fix");
+        let monitors = vec![
+            monitor("eDP-1", "auth-fix-2", true, 0),
+            monitor("DP-2", "3", false, 1920),
+        ];
+        assert!(should_treat_as_monitor_hotplug_from_layout(
+            &state, "3", &monitors, true
+        ));
+        assert!(should_treat_as_monitor_hotplug_from_layout(
+            &state, "3", &monitors, false
+        ));
+    }
+
+    #[test]
+    fn known_monitor_foreign_workspace_is_user_taskspace_switch() {
+        let mut state = task_session("auth-fix");
+        state
+            .last_monitor_workspace
+            .get_mut("task:auth-fix")
+            .unwrap()
+            .insert("DP-2".into(), 3);
+        let monitors = vec![
+            monitor("eDP-1", "auth-fix-2", true, 0),
+            monitor("DP-2", "3", false, 1920),
+        ];
+        assert!(!should_treat_as_monitor_hotplug_from_layout(
+            &state, "3", &monitors, false
+        ));
     }
 }

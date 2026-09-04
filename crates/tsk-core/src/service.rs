@@ -75,6 +75,8 @@ impl TaskService {
                     let _ = self.apply_external_workspace(&mut state, &active.name)?;
                 }
             }
+            // Baseline per-monitor layout so a later hotplug can tell new displays from known ones.
+            workspace_nav::refresh_monitor_slots(&mut state);
         }
         self.commit_state(&state, None)
     }
@@ -168,6 +170,14 @@ impl TaskService {
         }
 
         if crate::context_sync::taskspace_would_change(state, workspace_name) {
+            if workspace_nav::should_treat_as_monitor_hotplug(state, workspace_name) {
+                hypr_log::note(format!(
+                    "skip taskspace switch during monitor hotplug: {workspace_name}"
+                ));
+                workspace_nav::reconcile_monitor_topology(state);
+                self.commit_state(state, Some(StateChangeKind::Workspace))?;
+                return Ok(true);
+            }
             if crate::taskspace_switch_guard::should_ignore_external_revert(state, workspace_name) {
                 hypr_log::note(format!(
                     "skip revert to leaving taskspace workspace: {workspace_name}"
@@ -192,6 +202,16 @@ impl TaskService {
             return Ok(true);
         }
         Ok(false)
+    }
+
+    /// Rebuild per-monitor slot memory after Hyprland adds or removes a display.
+    pub fn sync_monitor_topology(&self) -> Result<()> {
+        if !self.config.hyprland_enabled {
+            return Ok(());
+        }
+        let mut state = self.load_state()?;
+        workspace_nav::reconcile_monitor_topology(&mut state);
+        self.commit_state(&state, Some(StateChangeKind::Workspace))
     }
 
     /// Rename default numeric slots — run once after daemon start (background).

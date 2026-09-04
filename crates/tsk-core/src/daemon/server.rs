@@ -19,7 +19,10 @@ use crate::daemon::client::{
 };
 use crate::daemon::config_watch::ConfigWatch;
 use crate::error::{Result, TskError};
-use crate::hyprland_events::{parse_workspace_v2, HyprlandEventListener};
+use crate::hyprland_events::{
+    is_monitor_topology_event, parse_monitor_topology_name, parse_workspace_v2,
+    HyprlandEventListener,
+};
 use crate::service::TaskService;
 use crate::xdg::ensure_parent;
 
@@ -286,6 +289,14 @@ fn start_hyprland_listener(service: Arc<Mutex<TaskService>>) -> Option<HyprlandE
                     if let Err(err) = svc.sync_external_workspace(&name) {
                         eprintln!("tsk daemon: workspace sync: {err}");
                     }
+                }
+            }
+        }
+        event if is_monitor_topology_event(event) => {
+            let name = parse_monitor_topology_name(event, payload).unwrap_or_default();
+            if let Ok(svc) = service.lock() {
+                if let Err(err) = svc.sync_monitor_topology() {
+                    eprintln!("tsk daemon: monitor topology sync ({event} {name}): {err}");
                 }
             }
         }

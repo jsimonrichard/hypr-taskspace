@@ -74,8 +74,9 @@ pub use distrobox::create_container_with_progress;
 pub use error::{Result, TskError};
 pub use hypr_log::{clear_log as clear_hypr_log, hypr_log_path, tail_raw as tail_hypr_log};
 pub use hyprland_events::{
-    diagnose_socket2, is_full_refresh_event, is_monitor_focus_event, is_workspace_focus_event,
-    parse_focusedmon_v2, parse_workspace_v2, socket2_path, HyprlandEventListener,
+    diagnose_socket2, is_full_refresh_event, is_monitor_focus_event, is_monitor_topology_event,
+    is_workspace_focus_event, parse_focusedmon_v2, parse_monitor_topology_name, parse_workspace_v2,
+    socket2_path, HyprlandEventListener,
 };
 pub use install::{
     chromium_present, detected_integrations, dev_config_path, dev_share_dir, format_doctor_report,
