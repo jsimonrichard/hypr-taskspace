@@ -183,19 +183,10 @@ pub fn bar_active_workspace_name(
 /// Occupied bar slots for the current taskspace strip.
 pub fn bar_occupied_names(_state: &SessionState, bar_names: &[String]) -> HashSet<String> {
     let bar_set: HashSet<String> = bar_names.iter().cloned().collect();
-    let mut occupied = HashSet::new();
-    if !crate::hyprland::available() {
-        return occupied;
-    }
-    if let Ok(clients) = crate::hyprland::get_clients() {
-        for client in clients {
-            let name = &client.workspace_name;
-            if bar_set.contains(name) {
-                occupied.insert(name.clone());
-            }
-        }
-    }
-    occupied
+    crate::hyprland::occupied_workspace_names()
+        .into_iter()
+        .filter(|name| bar_set.contains(name))
+        .collect()
 }
 
 #[cfg(test)]

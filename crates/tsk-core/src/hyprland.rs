@@ -50,6 +50,7 @@ pub struct HyprWindow {
 pub struct Workspace {
     pub id: i32,
     pub name: String,
+    pub windows: i32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,7 +64,11 @@ pub struct Monitor {
 }
 
 pub fn available() -> bool {
-    which::which("hyprctl").is_ok() && has_instance()
+    if which::which("hyprctl").is_err() {
+        return false;
+    }
+    ensure_instance_env();
+    has_instance()
 }
 
 /// Whether hyprctl dispatches may mutate the live compositor (disabled under `cfg(test)`).
@@ -99,7 +104,12 @@ pub fn ensure_instance_env() {
     };
     let mut names: Vec<String> = entries
         .filter_map(|entry| entry.ok())
-        .filter(|entry| entry.path().join(".socket.sock").is_file())
+        .filter(|entry| {
+            let sock = entry.path().join(".socket.sock");
+            std::fs::metadata(&sock)
+                .map(|meta| meta.file_type().is_socket())
+                .unwrap_or(false)
+        })
         .filter_map(|entry| entry.file_name().into_string().ok())
         .collect();
     names.sort();
@@ -389,7 +399,34 @@ fn parse_workspace_value(data: &Value) -> Result<Workspace> {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .into(),
+        windows: data.get("windows").and_then(|v| v.as_i64()).unwrap_or(0) as i32,
     })
+}
+
+/// Hyprland workspace names that currently have windows.
+///
+/// Prefer `clients` (covers mapped windows) and also `workspaces[].windows`
+/// so occupancy still works when a client is missing from the clients list.
+pub fn occupied_workspace_names() -> HashSet<String> {
+    let mut occupied = HashSet::new();
+    if !available() {
+        return occupied;
+    }
+    if let Ok(clients) = get_clients() {
+        for client in clients {
+            if !client.workspace_name.is_empty() {
+                occupied.insert(client.workspace_name);
+            }
+        }
+    }
+    if let Ok(workspaces) = list_workspaces() {
+        for ws in workspaces {
+            if ws.windows > 0 && !ws.name.is_empty() {
+                occupied.insert(ws.name);
+            }
+        }
+    }
+    occupied
 }
 
 fn parse_client(item: &Value) -> Option<HyprWindow> {
@@ -791,6 +828,28 @@ mod tests {
     #[test]
     fn lua_quote_escapes_quotes() {
         assert_eq!(lua_quote(r#"a"b"#), r#""a\"b""#);
+    }
+
+    #[test]
+    fn parse_workspace_includes_window_count() {
+        let data = serde_json::json!({"id": -1339, "name": "2", "windows": 1});
+        let ws = parse_workspace_value(&data).unwrap();
+        assert_eq!(ws.id, -1339);
+        assert_eq!(ws.name, "2");
+        assert_eq!(ws.windows, 1);
+    }
+
+    #[test]
+    fn hypr_ipc_socket_is_not_a_regular_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".socket.sock");
+        let _listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        assert!(
+            !path.is_file(),
+            "Unix sockets must not pass Path::is_file(); instance discovery must use is_socket()"
+        );
+        let meta = std::fs::metadata(&path).unwrap();
+        assert!(meta.file_type().is_socket());
     }
 
     #[test]

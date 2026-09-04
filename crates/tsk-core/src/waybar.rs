@@ -168,33 +168,20 @@ pub fn build_waybar_data_with(
 }
 
 fn occupied_relative_indices(allowed: &[String]) -> HashSet<i32> {
-    let mut occupied = HashSet::new();
-    if !hyprland::available() {
-        return occupied;
-    }
-    if let Ok(clients) = hyprland::get_clients() {
-        for client in clients {
-            if let Some(idx) = allowed.iter().position(|n| n == &client.workspace_name) {
-                occupied.insert((idx + 1) as i32);
-            }
-        }
-    }
-    occupied
+    let names = hyprland::occupied_workspace_names();
+    allowed
+        .iter()
+        .enumerate()
+        .filter(|(_, n)| names.contains(*n))
+        .map(|(i, _)| (i + 1) as i32)
+        .collect()
 }
 
 fn occupied_names(allowed: &HashSet<String>) -> HashSet<String> {
-    let mut occupied = HashSet::new();
-    if !hyprland::available() {
-        return occupied;
-    }
-    if let Ok(clients) = hyprland::get_clients() {
-        for client in clients {
-            if allowed.contains(&client.workspace_name) {
-                occupied.insert(client.workspace_name);
-            }
-        }
-    }
-    occupied
+    hyprland::occupied_workspace_names()
+        .into_iter()
+        .filter(|name| allowed.contains(name))
+        .collect()
 }
 
 fn task_module(data: &WaybarData, state: &SessionState) -> WaybarModuleJson {

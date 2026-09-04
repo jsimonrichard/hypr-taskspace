@@ -522,11 +522,9 @@ impl Runtime {
         let task_changed = context_changed || before_task != state.current_task_id;
         let bar = bar_workspace_names(&state);
         let strip_changed = self.taskspace_changed(&state, &bar);
-        let occupied = if strip_changed || task_changed || context_changed {
-            bar_occupied_names(&state, &bar)
-        } else {
-            self.occupied.borrow().clone()
-        };
+        // Always re-query occupancy. Window open/close can race a workspace
+        // focus event; keeping a stale set leaves occupied slots looking empty.
+        let occupied = bar_occupied_names(&state, &bar);
         let bar_active = bar_active_workspace_name(&workspace_name, &state, &bar);
         let old_active = self.active_name.borrow().clone();
         let old_visible = *self.visible_count.borrow();

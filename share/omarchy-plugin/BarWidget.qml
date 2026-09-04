@@ -25,13 +25,35 @@ BarWidget {
   // Hoisted so Repeater delegates bind to a real QML property, not a nested
   // JSON field (those don't always retrigger).
   property var globalWorkspaceSlots: []
+  property var occupiedWorkspaceIndices: []
+  property bool refreshQueued: false
+
+  // Subscribe to each workspace's lastIpcObject.windows so occupancy
+  // re-evaluates when Hyprland fills in window counts after a plugin reload
+  // (workspaces.values.length often stays the same).
+  readonly property int liveWindowsRev: {
+    const _ = root.hyprRev
+    const values = Hyprland.workspaces ? Hyprland.workspaces.values : []
+    let n = 0
+    for (let i = 0; i < values.length; i++) {
+      const ipc = values[i].lastIpcObject
+      if (ipc && Number(ipc.windows) > 0) n += Number(ipc.windows)
+      const tops = values[i].toplevels ? values[i].toplevels.values : null
+      if (tops) n += tops.length
+    }
+    return n
+  }
 
   // Match Waybar `#cffi-tsk #tsk-workspaces label.global` (`share/waybar/tsk-style.css`).
   readonly property color globalSlotColor: "#7ab392"
   readonly property color globalSlotEmptyColor: Qt.rgba(122 / 255, 179 / 255, 146 / 255, 0.55)
 
   function refresh() {
-    if (!statusProc.running) statusProc.running = true
+    if (statusProc.running) {
+      root.refreshQueued = true
+      return
+    }
+    statusProc.running = true
   }
 
   function applyStatus(text) {
@@ -45,6 +67,12 @@ BarWidget {
         for (let i = 0; i < raw.length; i++) next.push(Number(raw[i]))
       }
       root.globalWorkspaceSlots = next
+      const occ = parsed.occupied_workspace_indices
+      const nextOcc = []
+      if (occ && occ.length) {
+        for (let i = 0; i < occ.length; i++) nextOcc.push(Number(occ[i]))
+      }
+      root.occupiedWorkspaceIndices = nextOcc
     } catch (e) {
     }
   }
@@ -57,10 +85,30 @@ BarWidget {
 
   function workspaceByName(name) {
     const values = Hyprland.workspaces.values
+    const want = String(name)
     for (let i = 0; i < values.length; i++) {
-      if (values[i].name === name) return values[i]
+      if (String(values[i].name) === want) return values[i]
     }
     return null
+  }
+
+  // Nested `workspace.toplevels` often fails to notify, and a workspace object
+  // with an empty toplevel list used to win over `tsk bar status` occupancy
+  // (false empty). Treat a slot as occupied if ANY live source says so.
+  function workspaceOccupiedLive(name) {
+    if (!name) return false
+    const want = String(name)
+    const values = Hyprland.workspaces ? Hyprland.workspaces.values : null
+    if (!values) return false
+    for (let i = 0; i < values.length; i++) {
+      const ws = values[i]
+      if (String(ws.name) !== want) continue
+      const ipc = ws.lastIpcObject
+      if (ipc && Number(ipc.windows) > 0) return true
+      const tops = ws.toplevels ? ws.toplevels.values : null
+      if (tops && tops.length > 0) return true
+    }
+    return false
   }
 
   readonly property int focusedSlotIndex: {
@@ -76,7 +124,8 @@ BarWidget {
 
   readonly property int highestOccupiedSlot: {
     const _ = root.hyprRev
-    const __ = Hyprland.workspaces.values.length
+    const __ = root.liveWindowsRev
+    const ___ = root.occupiedWorkspaceIndices
     const names = root.status.workspaces || []
     let highest = 0
     for (let i = 0; i < names.length; i++) {
@@ -109,11 +158,14 @@ BarWidget {
 
   function slotOccupied(index) {
     const _ = root.hyprRev
+    const __ = root.liveWindowsRev
+    const n = Number(index)
+    const occupied = root.occupiedWorkspaceIndices
+    for (let i = 0; i < occupied.length; i++) {
+      if (Number(occupied[i]) === n) return true
+    }
     const name = (root.status.workspaces || [])[index - 1]
-    const workspace = name ? root.workspaceByName(name) : null
-    if (workspace) return workspace.toplevels.values.length > 0
-    const occupied = root.status.occupied_workspace_indices || []
-    return occupied.indexOf(index) !== -1
+    return root.workspaceOccupiedLive(name)
   }
 
   function slotFocused(index) {
@@ -162,7 +214,24 @@ BarWidget {
   implicitWidth: grid.implicitWidth + trailingGap
   implicitHeight: grid.implicitHeight
 
-  Component.onCompleted: root.refresh()
+  function pingHyprland() {
+    if (Hyprland.refreshWorkspaces) Hyprland.refreshWorkspaces()
+    root.hyprRev++
+  }
+
+  function statusEnvironment() {
+    const env = ({ TSK_CMD: root.tskCmd })
+    const sig = Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE")
+    if (sig) env.HYPRLAND_INSTANCE_SIGNATURE = sig
+    const runtime = Quickshell.env("XDG_RUNTIME_DIR")
+    if (runtime) env.XDG_RUNTIME_DIR = runtime
+    return env
+  }
+
+  Component.onCompleted: {
+    root.pingHyprland()
+    root.refresh()
+  }
 
   IpcHandler {
     target: "tsk.taskspace"
@@ -174,10 +243,25 @@ BarWidget {
 
   Process {
     id: statusProc
-    command: [root.tskCmd, "bar", "status", "--json"]
+    // Additive: do not set HYPRLAND to "" or it wipes an inherited value.
+    environment: root.statusEnvironment()
+    command: ["sh", "-c",
+      "if [ -z \"$HYPRLAND_INSTANCE_SIGNATURE\" ]; then " +
+      "for d in \"$XDG_RUNTIME_DIR/hypr\"/*; do " +
+      "[ -S \"$d/.socket.sock\" ] || continue; " +
+      "export HYPRLAND_INSTANCE_SIGNATURE=\"${d##*/}\"; break; " +
+      "done; fi; " +
+      "exec \"$TSK_CMD\" bar status --json"
+    ]
     stdout: StdioCollector {
       waitForEnd: true
-      onStreamFinished: root.applyStatus(text)
+      onStreamFinished: {
+        root.applyStatus(text)
+        if (root.refreshQueued) {
+          root.refreshQueued = false
+          statusProc.running = true
+        }
+      }
     }
   }
 
@@ -196,12 +280,16 @@ BarWidget {
       const name = String(event.name)
       if (name === "workspace" || name === "workspacev2"
           || name === "focusedmon" || name === "focusedmonv2"
-          || name === "openwindow" || name === "closewindow"
-          || name === "movewindow" || name === "movewindowv2"
-          || name === "createworkspace" || name === "createworkspacev2"
-          || name === "destroyworkspace" || name === "destroyworkspacev2"
           || name === "renameworkspace") {
         root.hyprRev++
+        return
+      }
+      if (name === "openwindow" || name === "closewindow"
+          || name === "movewindow" || name === "movewindowv2"
+          || name === "createworkspace" || name === "createworkspacev2"
+          || name === "destroyworkspace" || name === "destroyworkspacev2") {
+        root.pingHyprland()
+        root.refresh()
       }
     }
   }
@@ -210,7 +298,10 @@ BarWidget {
     interval: 2000
     running: true
     repeat: true
-    onTriggered: root.refresh()
+    onTriggered: {
+      root.pingHyprland()
+      root.refresh()
+    }
   }
 
   GridLayout {
@@ -236,7 +327,10 @@ BarWidget {
       WidgetButton {
         required property int modelData
 
-        readonly property bool occupied: root.slotOccupied(modelData)
+        readonly property bool occupied: {
+          const _ = root.occupiedWorkspaceIndices
+          return root.slotOccupied(modelData)
+        }
         readonly property bool focused: root.slotFocused(modelData)
         readonly property bool isGlobal: root.slotGlobal(modelData)
 
