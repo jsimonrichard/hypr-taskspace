@@ -543,6 +543,7 @@ fn apply_context_from_workspace_name(state: &mut SessionState, name: &str) -> Re
     if let Some(task_id) = task_for_workspace_name(state, name).map(|task| task.id.clone()) {
         state.context_mode = ContextMode::Task;
         state.current_task_id = Some(task_id);
+        crate::context_sync::touch_active_task(state);
         return Ok(());
     }
 
@@ -1186,6 +1187,46 @@ mod tests {
         set_taskspace(&mut state, ContextMode::Default, None).unwrap();
         assert_eq!(state.context_mode, ContextMode::Default);
         assert!(state.current_task_id.is_none());
+    }
+
+    #[test]
+    fn apply_context_from_workspace_touches_last_active_at() {
+        use crate::models::{ContextMode, Task, TaskStatus};
+
+        let older_at = chrono::Utc::now() - chrono::Duration::seconds(60);
+        let mut state = SessionState {
+            context_mode: ContextMode::Task,
+            current_task_id: Some("billing".into()),
+            default_workspace_count: 10,
+            ..Default::default()
+        };
+        state.tasks.insert(
+            "auth-fix".into(),
+            Task {
+                id: "auth-fix".into(),
+                name: "Auth Fix".into(),
+                status: TaskStatus::Active,
+                repo_url: None,
+                repo_path: "/tmp".into(),
+                source_repo_path: None,
+                branch: None,
+                container_name: "tsk-auth-fix".into(),
+                container_isolation: false,
+                workspace_count: 10,
+                browser_profile: None,
+                created_at: older_at,
+                last_active_at: older_at,
+                listed_at: older_at,
+                agent_notes_path: None,
+                ports: vec![],
+            },
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        apply_context_from_workspace_name(&mut state, "auth-fix-2").unwrap();
+        assert_eq!(state.current_task_id.as_deref(), Some("auth-fix"));
+        let auth = state.tasks.get("auth-fix").unwrap();
+        assert!(auth.last_active_at > older_at);
+        assert_eq!(auth.listed_at, older_at);
     }
 
     #[test]

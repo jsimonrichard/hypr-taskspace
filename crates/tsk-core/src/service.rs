@@ -1312,6 +1312,57 @@ mod tests {
     }
 
     #[test]
+    fn workspace_driven_taskspace_switch_reorders_menu_recency() {
+        let dir = tempdir().unwrap();
+        let svc = test_service(dir.path());
+        let older = svc
+            .create_task(
+                "older",
+                false,
+                crate::task_repo::TaskRepoSource::Scratch,
+                None,
+                crate::task_repo::TaskRepoOptions::default(),
+            )
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let newer = svc
+            .create_task(
+                "newer",
+                false,
+                crate::task_repo::TaskRepoSource::Scratch,
+                None,
+                crate::task_repo::TaskRepoOptions::default(),
+            )
+            .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+
+        let mut state = svc.load_state().unwrap();
+        assert!(crate::context_sync::sync_from_workspace_name(
+            &mut state,
+            &format!("{}-1", older.id)
+        ));
+        svc.save_state(&state).unwrap();
+
+        let older = svc
+            .load_state()
+            .unwrap()
+            .tasks
+            .get(&older.id)
+            .unwrap()
+            .clone();
+        assert!(older.last_active_at > newer.last_active_at);
+
+        let items = svc.tasks_for_menu().unwrap();
+        let task_ids: Vec<&str> = items
+            .iter()
+            .filter(|item| item.kind == "task")
+            .map(|item| item.id.as_str())
+            .collect();
+        assert_eq!(task_ids, vec![older.id.as_str(), newer.id.as_str()]);
+        assert!(items.iter().any(|item| item.id == older.id && item.current));
+    }
+
+    #[test]
     fn rename_task_updates_display_name() {
         let dir = tempdir().unwrap();
         let svc = test_service(dir.path());

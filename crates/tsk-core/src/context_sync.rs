@@ -1,3 +1,5 @@
+use chrono::Utc;
+
 use crate::models::SessionState;
 use crate::workspaces::{
     allowed_workspace_names, is_default_taskspace_workspace_name, is_global_workspace_name,
@@ -31,6 +33,7 @@ pub fn sync_from_workspace_name(state: &mut SessionState, name: &str) -> bool {
         {
             state.context_mode = crate::models::ContextMode::Task;
             state.current_task_id = Some(task_id);
+            touch_active_task(state);
             changed = true;
         }
     }
@@ -64,6 +67,16 @@ pub fn sync_from_workspace_name(state: &mut SessionState, name: &str) -> bool {
     }
 
     changed
+}
+
+/// Bump overlay recency for the current task. No-op in the default taskspace.
+pub(crate) fn touch_active_task(state: &mut SessionState) {
+    let Some(id) = state.current_task_id.clone() else {
+        return;
+    };
+    if let Some(task) = state.tasks.get_mut(&id) {
+        task.last_active_at = Utc::now();
+    }
 }
 
 /// Whether focusing `name` would change context mode or active task.
@@ -100,25 +113,29 @@ mod tests {
     use std::collections::HashMap;
     use std::path::PathBuf;
 
-    fn task_state() -> SessionState {
-        let task = Task {
-            id: "auth-fix".into(),
-            name: "Auth Fix".into(),
+    fn sample_task(id: &str, last_active_at: chrono::DateTime<chrono::Utc>) -> Task {
+        Task {
+            id: id.into(),
+            name: id.into(),
             status: TaskStatus::Active,
             repo_url: None,
-            repo_path: PathBuf::from("/tmp/auth-fix/repo"),
+            repo_path: PathBuf::from(format!("/tmp/{id}/repo")),
             source_repo_path: None,
             branch: None,
-            container_name: "tsk-auth-fix".into(),
+            container_name: format!("tsk-{id}"),
             container_isolation: false,
             workspace_count: 10,
             browser_profile: None,
-            created_at: chrono::Utc::now(),
-            last_active_at: chrono::Utc::now(),
-            listed_at: chrono::Utc::now(),
+            created_at: last_active_at,
+            last_active_at,
+            listed_at: last_active_at,
             agent_notes_path: None,
             ports: vec![],
-        };
+        }
+    }
+
+    fn task_state() -> SessionState {
+        let task = sample_task("auth-fix", chrono::Utc::now());
         SessionState {
             context_mode: ContextMode::Task,
             current_task_id: Some("auth-fix".into()),
@@ -180,5 +197,37 @@ mod tests {
         let mut state = task_state();
         state.global_workspace_slots = vec![1];
         assert!(!taskspace_would_change(&state, "1"));
+    }
+
+    #[test]
+    fn switching_taskspace_via_workspace_updates_last_active_at() {
+        let older_at = chrono::Utc::now() - chrono::Duration::seconds(60);
+        let newer_at = older_at + chrono::Duration::seconds(30);
+        let mut state = task_state();
+        state
+            .tasks
+            .insert("auth-fix".into(), sample_task("auth-fix", older_at));
+        state
+            .tasks
+            .insert("billing".into(), sample_task("billing", newer_at));
+        state.current_task_id = Some("billing".into());
+
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        assert!(sync_from_workspace_name(&mut state, "auth-fix-3"));
+        assert_eq!(state.current_task_id.as_deref(), Some("auth-fix"));
+        let auth = state.tasks.get("auth-fix").unwrap();
+        assert!(auth.last_active_at > older_at);
+        assert!(auth.last_active_at > newer_at);
+        assert_eq!(auth.listed_at, older_at);
+        assert_eq!(state.tasks.get("billing").unwrap().last_active_at, newer_at);
+    }
+
+    #[test]
+    fn same_taskspace_workspace_does_not_touch_last_active_at() {
+        let mut state = task_state();
+        let at = state.tasks.get("auth-fix").unwrap().last_active_at;
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        sync_from_workspace_name(&mut state, "auth-fix-8");
+        assert_eq!(state.tasks.get("auth-fix").unwrap().last_active_at, at);
     }
 }

@@ -1,6 +1,7 @@
 use std::cell::Cell;
 use std::collections::HashSet;
 use std::io::ErrorKind;
+use std::os::unix::fs::FileTypeExt;
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 
