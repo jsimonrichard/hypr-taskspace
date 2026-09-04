@@ -44,6 +44,9 @@ pub struct WaybarData {
     pub active_workspace: i32,
     pub active_workspace_name: Option<String>,
     pub global_workspace_slots: Vec<u32>,
+    /// Hyprland output name → workspace currently shown on that monitor.
+    #[serde(default)]
+    pub monitor_workspaces: HashMap<String, String>,
 }
 
 /// Snapshot used by `tsk bar status --json` and the Omarchy bar widget.
@@ -144,6 +147,12 @@ pub fn build_waybar_data_with(
         .and_then(|id| state.tasks.get(id));
 
     let visible = visible_default_workspace_count(state, &allowed, active_rel, occupied);
+    let monitor_workspaces = hyprland::list_monitors()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|monitor| !monitor.workspace_name.is_empty())
+        .map(|monitor| (monitor.name, monitor.workspace_name))
+        .collect();
 
     WaybarData {
         taskspace: state.taskspace_label(),
@@ -164,6 +173,7 @@ pub fn build_waybar_data_with(
         active_workspace: active_rel,
         active_workspace_name: active_name,
         global_workspace_slots: state.global_workspace_slots.clone(),
+        monitor_workspaces,
     }
 }
 

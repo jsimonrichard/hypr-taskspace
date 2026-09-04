@@ -20,12 +20,14 @@ BarWidget {
     occupied_workspace_indices: [],
     active_workspace: 1,
     active_workspace_name: null,
-    global_workspace_slots: []
+    global_workspace_slots: [],
+    monitor_workspaces: ({})
   })
   // Hoisted so Repeater delegates bind to a real QML property, not a nested
   // JSON field (those don't always retrigger).
   property var globalWorkspaceSlots: []
   property var occupiedWorkspaceIndices: []
+  property var monitorWorkspaces: ({})
   property bool refreshQueued: false
 
   // Subscribe to each workspace's lastIpcObject.windows so occupancy
@@ -73,6 +75,15 @@ BarWidget {
         for (let i = 0; i < occ.length; i++) nextOcc.push(Number(occ[i]))
       }
       root.occupiedWorkspaceIndices = nextOcc
+      const rawMon = parsed.monitor_workspaces
+      const nextMon = ({})
+      if (rawMon && typeof rawMon === "object") {
+        for (const key in rawMon) {
+          if (Object.prototype.hasOwnProperty.call(rawMon, key))
+            nextMon[key] = String(rawMon[key])
+        }
+      }
+      root.monitorWorkspaces = nextMon
     } catch (e) {
     }
   }
@@ -82,6 +93,70 @@ BarWidget {
   property int hyprRev: 0
   readonly property int minVisibleSlots: 5
   readonly property string focusedWorkspaceName: Hyprland.focusedWorkspace ? String(Hyprland.focusedWorkspace.name) : ""
+  // Loader-created widgets often see a null `QsWindow.window` until parented.
+  // Walk the visual parent chain (the per-monitor PanelWindow has `screen`)
+  // and match Hyprland monitors by name instead of object identity.
+  readonly property string barScreenName: {
+    const _ = root.hyprRev
+    const __ = root.parent
+    const attached = root.QsWindow
+    const win = attached ? attached.window : null
+    const ___ = win && win.screen ? String(win.screen.name || "") : ""
+    return root.resolveScreenName()
+  }
+  readonly property string localWorkspaceName: {
+    const _ = root.hyprRev
+    const __ = root.monitorWorkspaces
+    const ___ = Hyprland.monitors ? Hyprland.monitors.values.length : 0
+    const found = root.workspaceNameForScreen(root.barScreenName)
+    if (found) return found
+    return root.focusedWorkspaceName
+  }
+
+  function resolveScreenName() {
+    const attached = root.QsWindow
+    const win = attached ? attached.window : null
+    if (win && win.screen && win.screen.name)
+      return String(win.screen.name)
+    if (win) {
+      const mapped = Hyprland.monitorFor(win.screen)
+      if (mapped && mapped.name) return String(mapped.name)
+    }
+
+    let item = root
+    for (let i = 0; i < 32 && item; i++) {
+      if (item.screen && item.screen.name)
+        return String(item.screen.name)
+      item = item.parent
+    }
+    return ""
+  }
+
+  function workspaceNameForScreen(screenName) {
+    if (!screenName) return ""
+    const want = String(screenName)
+    const monitors = Hyprland.monitors ? Hyprland.monitors.values : []
+    for (let i = 0; i < monitors.length; i++) {
+      const mon = monitors[i]
+      if (String(mon.name) !== want) continue
+      if (mon.activeWorkspace && mon.activeWorkspace.name)
+        return String(mon.activeWorkspace.name)
+      const ipc = mon.lastIpcObject
+      if (ipc && ipc.activeWorkspace && ipc.activeWorkspace.name)
+        return String(ipc.activeWorkspace.name)
+    }
+
+    const workspaces = Hyprland.workspaces ? Hyprland.workspaces.values : []
+    for (let i = 0; i < workspaces.length; i++) {
+      const ws = workspaces[i]
+      const mon = ws.monitor
+      if (!mon || String(mon.name) !== want) continue
+      if (ws.active) return String(ws.name)
+    }
+
+    const fromStatus = root.monitorWorkspaces ? root.monitorWorkspaces[want] : ""
+    return fromStatus ? String(fromStatus) : ""
+  }
 
   function workspaceByName(name) {
     const values = Hyprland.workspaces.values
@@ -111,14 +186,24 @@ BarWidget {
     return false
   }
 
-  readonly property int focusedSlotIndex: {
+  function slotIndexForName(workspaceName) {
     const names = root.status.workspaces || []
-    const focusedName = root.focusedWorkspaceName
-    if (focusedName) {
-      for (let i = 0; i < names.length; i++) {
-        if (names[i] === focusedName) return i + 1
-      }
+    if (!workspaceName) return 0
+    for (let i = 0; i < names.length; i++) {
+      if (names[i] === workspaceName) return i + 1
     }
+    return 0
+  }
+
+  readonly property int localSlotIndex: {
+    const found = root.slotIndexForName(root.localWorkspaceName)
+    if (found) return found
+    return Number(root.status.active_workspace) || 1
+  }
+
+  readonly property int focusedSlotIndex: {
+    const found = root.slotIndexForName(root.focusedWorkspaceName)
+    if (found) return found
     return Number(root.status.active_workspace) || 1
   }
 
@@ -141,7 +226,12 @@ BarWidget {
     const names = root.status.workspaces || []
     const total = names.length
     const visible = Math.min(
-      Math.max(root.minVisibleSlots, root.focusedSlotIndex, root.highestOccupiedSlot),
+      Math.max(
+        root.minVisibleSlots,
+        root.localSlotIndex,
+        root.focusedSlotIndex,
+        root.highestOccupiedSlot
+      ),
       total,
       10
     )
@@ -152,7 +242,7 @@ BarWidget {
 
   function slotLabel(index) {
     const name = (root.status.workspaces || [])[index - 1]
-    if (name && root.focusedWorkspaceName === name) return "\uDB85\uDCFB"
+    if (name && root.localWorkspaceName === name) return "\uDB85\uDCFB"
     return index === 10 ? "0" : String(index)
   }
 
@@ -170,10 +260,10 @@ BarWidget {
 
   function slotFocused(index) {
     const name = (root.status.workspaces || [])[index - 1]
-    if (!name || !root.focusedWorkspaceName) {
+    if (!name || !root.localWorkspaceName) {
       return Number(root.status.active_workspace) === index
     }
-    return root.focusedWorkspaceName === name
+    return root.localWorkspaceName === name
   }
 
   function slotGlobal(index) {
@@ -215,6 +305,7 @@ BarWidget {
   implicitHeight: grid.implicitHeight
 
   function pingHyprland() {
+    if (Hyprland.refreshMonitors) Hyprland.refreshMonitors()
     if (Hyprland.refreshWorkspaces) Hyprland.refreshWorkspaces()
     root.hyprRev++
   }
@@ -280,8 +371,10 @@ BarWidget {
       const name = String(event.name)
       if (name === "workspace" || name === "workspacev2"
           || name === "focusedmon" || name === "focusedmonv2"
+          || name === "moveworkspace" || name === "moveworkspacev2"
           || name === "renameworkspace") {
         root.hyprRev++
+        root.refresh()
         return
       }
       if (name === "openwindow" || name === "closewindow"
