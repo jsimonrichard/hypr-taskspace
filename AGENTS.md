@@ -123,6 +123,47 @@ Two things are part of the deliverable, not optional extras.
   `docs/` and `README.md`. A superseded plan gets an implementation-status
   banner (see `notes/poc-plan.md`).
 
-Gate before every push: `cargo fmt --all`, `cargo clippy --all-targets`,
-`cargo test --workspace`, `cargo build --release`. There is no CI in this repo,
-so these are the only gate — confirm the set is right before relying on it.
+Gate before every push: **enforced by hooks, not by your memory of this file.**
+See § Enforced gate below.
+
+## Enforced gate
+
+The quality gate is executed by the harness, so skipping it is not an option
+available to you:
+
+| When | What runs | Effect on failure |
+|------|-----------|-------------------|
+| A `git push` command | `.claude/gate.sh full` | The push is **denied**; the failure is handed to you |
+| End of a turn, with uncommitted changes | `.claude/gate.sh fast` | The failure is handed back for you to fix before finishing |
+
+Wiring lives in `.claude/settings.json` (Claude Code) and `.cursor/hooks.json`
+(Cursor). Run it yourself at any point — don't wait to be blocked:
+
+```bash
+.claude/gate.sh fast    # the quick checks
+.claude/gate.sh full    # everything, same as the push gate
+```
+
+Do not work around the gate. `CLAUDE_GATE_SKIP=1` exists for a failure that is
+pre-existing or that the user has explicitly accepted for a specific change —
+per rule 6, establish that baseline and **ask** before using it.
+
+Works under **git and Jujutsu**, colocated or not (`jj` wins when both are
+present, matching `vcs_kind_at()` in tsk-core). `git push` and `jj git push` are
+both gated, including behind a `cd x &&`. If no repo or no gate script is found,
+the push is denied rather than allowed unverified.
+
+`fast` = `cargo fmt --all -- --check` + `cargo clippy --all-targets --workspace`
+(~6s warm). `full` adds `cargo test --workspace` + `cargo build --workspace`.
+
+Clippy runs **without** `-D warnings`: this workspace has a pre-existing backlog
+of 44 clippy lints (measured 2026-09-05), so `-D warnings` would block every
+push. Plain clippy still fails on real compile errors. Tighten it once the
+backlog is cleared. There is no CI here, so this gate is the only one.
+
+**Known-failing baseline (2026-09-05):** `cargo test --workspace` fails on
+`tsk-tui grep_dir_picker::tests::match_score_prefers_exact_then_prefix` —
+`match_score("local", "local")` returns `None`, so the test's `.unwrap()`
+panics at `crates/tsk-tui/src/grep_dir_picker.rs:369`. Until that is fixed the
+`full` gate blocks every push here. This is inherited, not something you broke;
+fix the test or the function rather than reaching for `CLAUDE_GATE_SKIP`.
