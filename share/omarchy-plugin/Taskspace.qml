@@ -321,19 +321,41 @@ Item {
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
+  function formRepoIndexForId(repoId) {
+    const id = String(repoId || "")
+    if (!id) return -1
+    const items = root.formRepoChoices
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].kind === "repo" && String(items[i].id || "") === id) return i
+    }
+    return -1
+  }
+
+  function beginNewTask(repoId) {
+    let repoIndex = 0
+    if (repoId) {
+      repoIndex = root.formRepoIndexForId(repoId)
+      if (repoIndex < 0) {
+        root.showCommandError("Repo not found", "Repo “" + repoId + "” is not registered")
+        return
+      }
+    }
+    root.screen = "new"
+    root.formName = ""
+    root.formFocus = "name"
+    root.formRepoIndex = repoIndex
+    root.formWorktree = true
+    root.formContainer = false
+    root.clearCommandError()
+    root.reloadRepos()
+  }
+
   function beginCreate() {
     if (root.tab === "repos") {
       root.pickRepoDirectory()
       return
     }
-    root.screen = "new"
-    root.formName = ""
-    root.formFocus = "name"
-    root.formRepoIndex = 0
-    root.formWorktree = true
-    root.formContainer = false
-    root.clearCommandError()
-    root.reloadRepos()
+    root.beginNewTask()
   }
 
   function beginRename() {
@@ -433,6 +455,15 @@ Item {
     }
     if (row.kind === "new-task" || row.kind === "new-repo") {
       root.beginCreate()
+      return
+    }
+    if (row.kind === "repo") {
+      const repoId = String(row.taskId || "")
+      if (!repoId) {
+        root.showCommandError("Repo not found", "Selected repo has no id")
+        return
+      }
+      root.beginNewTask(repoId)
       return
     }
     if (root.tab === "repos") return
@@ -1412,7 +1443,7 @@ Item {
             if (root.screen === "rename") return details + "Enter save · Esc back"
             if (root.screen === "progress") return root.progressDone ? "Enter close" : "Creating…"
             if (root.tab === "archived") return details + "↵ restore · ⌥n new · ⌥e rename · ⌥⇧d delete · ←→ tabs"
-            if (root.tab === "repos") return details + "⌥n add · ⌥d remove · ←→ tabs"
+            if (root.tab === "repos") return details + "↵ new task · ⌥n add · ⌥d remove · ←→ tabs"
             return details + "↵ switch · ⌥n new · ⌥e rename · ⌥d archive · ⌥⇧d delete · ←→ tabs"
           }
           color: root.foreground

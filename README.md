@@ -60,7 +60,7 @@ Full steps, config examples, and uninstall: **[docs/install.md](docs/install.md)
 
 ### Task manager
 
-On **Omarchy**, **SUPER+Tab** and the bar task label open the control UI chosen at install time. `tsk install omarchy` (the default) toggles a modal `tsk.taskspace` overlay (exclusive keyboard focus, click-scrim to dismiss). A second press closes it instead of opening another window. Type to filter, arrows to move, **Enter** to switch, **Esc** to dismiss. **Tab** or **←/→** cycle Tasks / Archived / Repos. **Alt+N** creates a task (or opens the desktop folder picker to register a repo), **Alt+E** renames, **Alt+D** archives or unregisters, **Alt+Shift+D** deletes, **Alt+R** restores. `tsk install omarchy --tui` keeps the bar widget and opens the floating ratatui window instead.
+On **Omarchy**, **SUPER+Tab** and the bar task label open the control UI chosen at install time. `tsk install omarchy` (the default) toggles a modal `tsk.taskspace` overlay (exclusive keyboard focus, click-scrim to dismiss). A second press closes it instead of opening another window. Type to filter, arrows to move, **Enter** to switch a task, restore an archived one, or open New Task with the selected repo, **Esc** to dismiss. **Tab** or **←/→** cycle Tasks / Archived / Repos. **Alt+N** creates a task (or opens the desktop folder picker to register a repo), **Alt+E** renames, **Alt+D** archives or unregisters, **Alt+Shift+D** deletes, **Alt+R** restores. `tsk install omarchy --tui` keeps the bar widget and opens the floating ratatui window instead.
 
 The **ratatui** TUI is still there for creating, renaming, and archiving tasks, and as the fallback when the overlay is not installed.
 
