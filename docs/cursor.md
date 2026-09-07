@@ -14,7 +14,13 @@ Optional settings in `.tsk/repo.toml`:
 # on_start_monitor = "eDP-1"
 # on_create = ".tsk/on-create.sh"   # override for create only
 # on_restore = ".tsk/on-restore.sh" # override for restore only
+
+# First Chromium launch in a new taskspace (no saved session):
+# [browser]
+# default_tabs = ["https://github.com/org/app"]
 ```
+
+If `default_tabs` is unset, tsk opens the repo browse page derived from `url` or the git/jj `origin` remote (GitHub, GitLab, …). If that cannot be derived, it opens one new tab.
 
 Default script behavior (see the repo’s `.tsk/on-start.sh`):
 

@@ -38,10 +38,13 @@ then reinstall. Agents: `.cursor/rules/chromium-extension-version.mdc`.
    should list that tab. If it says missing, the extension is not talking to
    the native host yet.
 4. `tsk chromium status` should show a **Saved session** for the current task
-   (written automatically from the live snapshot). `tsk chromium snapshot`
-   forces the same write.
+   once a Chromium window is on that task's workspace (written from the live
+   snapshot). `tsk chromium snapshot` forces the same write. A brand-new
+   taskspace has no session until then.
 5. Close that Chromium window, then open Chromium from Walker (or
-   `tsk task browser`). The first launch reopens the saved tabs.
+   `tsk task browser`). The first launch reopens the saved tabs. Without a
+   session it opens `.tsk/repo.toml` `[browser].default_tabs`, else the repo
+   browse page, else one new tab.
 
 Archiving freezes the last snapshot and closes those windows. Restoring the
 task does **not** open Chromium. The first Walker / `tsk task browser` launch

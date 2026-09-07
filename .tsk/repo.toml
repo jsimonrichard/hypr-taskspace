@@ -5,3 +5,8 @@
 # on_start = ".tsk/custom-start.sh"
 # on_create = ".tsk/on-create.sh"
 # on_restore = ".tsk/on-restore.sh"
+
+# First Chromium launch in a new taskspace (no saved session). Unset: derive
+# the repo browse page from `url` or the git/jj origin remote, else a new tab.
+# [browser]
+# default_tabs = ["https://github.com/jsimonrichard/hypr-taskspace"]

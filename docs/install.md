@@ -80,7 +80,7 @@ tsk chromium status      # live tabs + per-task snapshot
 # or: tsk task browser / tsk chromium restore
 ```
 
-The helper writes `~/tsk-tasks/<id>/.tsk/browser-session.json` automatically as tabs change. Archiving freezes that snapshot; restoring a task leaves it pending. The first Chromium launch in that taskspace (`tsk launch`, menu, or `tsk task browser`) reopens the tabs.
+The helper writes `~/tsk-tasks/<id>/.tsk/browser-session.json` automatically when a Chromium window on that task's workspace changes. Archiving freezes that snapshot; restoring a task leaves it pending. The first Chromium launch in that taskspace (`tsk launch`, menu, or `tsk task browser`) reopens those tabs. A new taskspace with no snapshot opens `.tsk/repo.toml` `[browser].default_tabs`, else the repo browse page, else one new tab — never another task's tabs.
 
 `status` is the first thing to check: if `live-windows.json` is missing, the extension is not reaching the native host.
 

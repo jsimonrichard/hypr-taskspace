@@ -165,7 +165,7 @@ Default and task taskspaces both use **10** slots so keybinds feel the same. Cha
 
 **SUPER+Space** Apps on Omarchy go through a cloned `omarchy.menu` whose app-launch line calls `tsk launch <id>.desktop` (not Walker). Omarchy menu updates may require re-running `tsk install omarchy` to re-apply that patch.
 
-Chromium in a taskspace (`tsk launch chromium.desktop`, **SUPER+B**, or `tsk task browser`) uses the **host profile** so extensions and logins (password manager, etc.) are shared. Set `isolate_profile = true` under `[browser]` for a blank per-task `--user-data-dir`. Tabs are snapshotted automatically; the first Chromium launch in a taskspace with no window reopens that snapshot (including after archive/restore).
+Chromium in a taskspace (`tsk launch chromium.desktop`, **SUPER+B**, or `tsk task browser`) uses the **host profile** so extensions and logins (password manager, etc.) are shared. Set `isolate_profile = true` under `[browser]` for a blank per-task `--user-data-dir`. Tabs that actually belong to the task (Hyprland window on that task's workspace) are snapshotted automatically; the next Chromium launch with no window reopens that snapshot, including after archive/restore. A new taskspace with no snapshot opens `[browser].default_tabs` from `.tsk/repo.toml` if set, otherwise the repo's browse page (from `url` or the git/jj remote), otherwise a single new tab.
 
 ### Useful commands
 

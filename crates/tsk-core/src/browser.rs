@@ -16,8 +16,13 @@ use crate::config::{load_config, TskConfig};
 use crate::error::{Result, TskError};
 use crate::hyprland::{self, HyprWindow};
 use crate::models::{ContextMode, SessionState, Task};
+use crate::repos::{load_repo_config, RepoConfig};
+use crate::vcs::{detect_vcs_root, read_origin_remote_url, remote_to_browse_url};
 use crate::window_registry::infer_task_id;
 use crate::workspaces::primary_task_workspace;
+
+/// Explicit NTP so a shared host profile cannot restore another window's session.
+pub const NEW_TAB_URL: &str = "chrome://newtab";
 
 /// Hyprland `class` values for real browser windows (not Chrome/Chromium PWAs).
 const BROWSER_WINDOW_CLASSES: &[&str] = &[
@@ -73,7 +78,7 @@ pub fn default_browser_profile_dir(config: &TskConfig, task_id: &str) -> PathBuf
 pub fn browser_profile_path(task: &Task, config: &TskConfig) -> PathBuf {
     task.browser_profile
         .as_ref()
-        .map(|p| PathBuf::from(p))
+        .map(PathBuf::from)
         .unwrap_or_else(|| default_browser_profile_dir(config, &task.id))
 }
 
@@ -228,10 +233,10 @@ fn open_urls_in_task_with_browser(
         hyprland::switch_workspace_for_navigation(&target_ws);
     }
 
-    let open_urls: Vec<&str> = if urls.is_empty() {
-        vec![]
-    } else {
-        urls.to_vec()
+    let initial_owned = urls.is_empty().then(|| initial_launch_urls(task));
+    let open_urls: Vec<&str> = match &initial_owned {
+        Some(owned) => owned.iter().map(String::as_str).collect(),
+        None => urls.to_vec(),
     };
     // Always a new window: with a shared host profile, omitting this would
     // open a tab in whatever Chromium window is already running.
@@ -249,6 +254,77 @@ fn open_urls_in_task_with_browser(
     }
 
     Ok(())
+}
+
+/// URLs for the first Chromium window when this task has no saved session.
+///
+/// Order: `.tsk/repo.toml` `[browser].default_tabs`, then a browse URL derived
+/// from `repo.toml` `url` / `task.repo_url` / the git or jj remote, then NTP.
+pub fn initial_launch_urls(task: &Task) -> Vec<String> {
+    let config = task_repo_config(task);
+    let configured = config
+        .as_ref()
+        .map(configured_default_tabs)
+        .unwrap_or_default();
+    if !configured.is_empty() {
+        return configured;
+    }
+    if let Some(url) = config
+        .as_ref()
+        .and_then(|c| c.url.as_deref())
+        .and_then(remote_to_browse_url)
+    {
+        return vec![url];
+    }
+    if let Some(url) = task.repo_url.as_deref().and_then(remote_to_browse_url) {
+        return vec![url];
+    }
+    if let Some(url) = remote_browse_url_for_task(task) {
+        return vec![url];
+    }
+    vec![NEW_TAB_URL.to_string()]
+}
+
+fn configured_default_tabs(config: &RepoConfig) -> Vec<String> {
+    config
+        .browser
+        .default_tabs
+        .iter()
+        .map(|tab| tab.trim())
+        .filter(|tab| !tab.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+fn task_repo_config(task: &Task) -> Option<RepoConfig> {
+    for root in task_config_roots(task) {
+        if let Ok(Some(config)) = load_repo_config(root) {
+            return Some(config);
+        }
+    }
+    None
+}
+
+fn task_config_roots(task: &Task) -> Vec<&Path> {
+    let mut roots = vec![task.repo_path.as_path()];
+    if let Some(src) = task.source_repo_path.as_deref() {
+        if src != task.repo_path.as_path() {
+            roots.push(src);
+        }
+    }
+    roots
+}
+
+fn remote_browse_url_for_task(task: &Task) -> Option<String> {
+    for root in task_config_roots(task) {
+        let vcs_root = detect_vcs_root(Some(root)).unwrap_or_else(|| root.to_path_buf());
+        if let Some(url) =
+            read_origin_remote_url(&vcs_root).and_then(|remote| remote_to_browse_url(&remote))
+        {
+            return Some(url);
+        }
+    }
+    None
 }
 
 fn target_workspace_for_browser(state: &SessionState, task: &Task) -> String {
@@ -661,5 +737,109 @@ mod tests {
         assert!(is_chromium_family("google-chrome-stable"));
         assert!(!is_chromium_family("firefox"));
         assert!(!is_chromium_family("/usr/lib/firefox/firefox"));
+    }
+
+    fn sample_task(repo_path: PathBuf) -> Task {
+        Task {
+            id: "tabc123".into(),
+            name: "test".into(),
+            status: crate::models::TaskStatus::Active,
+            repo_url: None,
+            repo_path,
+            source_repo_path: None,
+            branch: None,
+            container_name: "tsk-tabc123".into(),
+            container_isolation: false,
+            workspace_count: 3,
+            browser_profile: None,
+            created_at: chrono::Utc::now(),
+            last_active_at: chrono::Utc::now(),
+            listed_at: chrono::Utc::now(),
+            agent_notes_path: None,
+            ports: vec![],
+        }
+    }
+
+    #[test]
+    fn initial_launch_urls_uses_new_tab_without_repo() {
+        let task = sample_task(PathBuf::from("/tmp/tsk-no-such-repo"));
+        assert_eq!(initial_launch_urls(&task), vec![NEW_TAB_URL]);
+    }
+
+    #[test]
+    fn initial_launch_urls_prefers_repo_default_tabs() {
+        let dir = tempfile::tempdir().unwrap();
+        let checkout = dir.path().join("app");
+        std::fs::create_dir_all(&checkout).unwrap();
+        crate::repos::save_repo_config(
+            &checkout,
+            &crate::repos::RepoConfig {
+                browser: crate::repos::RepoBrowserConfig {
+                    default_tabs: vec![
+                        "https://github.com/org/app".into(),
+                        "https://docs.example".into(),
+                    ],
+                },
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let task = sample_task(checkout);
+        assert_eq!(
+            initial_launch_urls(&task),
+            vec!["https://github.com/org/app", "https://docs.example"]
+        );
+    }
+
+    #[test]
+    fn initial_launch_urls_derives_browse_url_from_repo_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        let checkout = dir.path().join("app");
+        std::fs::create_dir_all(&checkout).unwrap();
+        crate::repos::save_repo_config(
+            &checkout,
+            &crate::repos::RepoConfig {
+                url: Some("git@github.com:org/app.git".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let task = sample_task(checkout);
+        assert_eq!(
+            initial_launch_urls(&task),
+            vec!["https://github.com/org/app"]
+        );
+    }
+
+    #[test]
+    fn initial_launch_urls_derives_browse_url_from_task_repo_url() {
+        let mut task = sample_task(PathBuf::from("/tmp/tsk-no-such-repo"));
+        task.repo_url = Some("https://github.com/org/app.git".into());
+        assert_eq!(
+            initial_launch_urls(&task),
+            vec!["https://github.com/org/app"]
+        );
+    }
+
+    #[test]
+    fn initial_launch_urls_derives_browse_url_from_git_remote() {
+        let dir = tempfile::tempdir().unwrap();
+        let checkout = dir.path().join("app");
+        crate::vcs::init_scratch_repo(&checkout).unwrap();
+        let mut add = std::process::Command::new("git");
+        add.args([
+            "-C",
+            checkout.to_str().unwrap(),
+            "remote",
+            "add",
+            "origin",
+            "git@github.com:org/from-remote.git",
+        ]);
+        assert!(add.status().unwrap().success());
+        let task = sample_task(checkout);
+        assert_eq!(
+            initial_launch_urls(&task),
+            vec!["https://github.com/org/from-remote"]
+        );
     }
 }

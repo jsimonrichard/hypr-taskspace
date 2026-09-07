@@ -1138,6 +1138,145 @@ fn jj_workspace_name(checkout: &Path) -> Result<String> {
         })
 }
 
+/// Clone URL for `origin` (or the first remote if `origin` is missing).
+pub fn read_origin_remote_url(repo: &Path) -> Option<String> {
+    let repo = expand(repo);
+    match vcs_kind_at(&repo)? {
+        VcsKind::Git => git_origin_url(&repo),
+        VcsKind::Jj => jj_origin_url(&repo),
+    }
+}
+
+fn git_origin_url(repo: &Path) -> Option<String> {
+    let path = repo.to_str()?;
+    if let Some(url) = git_remote_get_url(path, "origin") {
+        return Some(url);
+    }
+    let list = Command::new("git")
+        .args(["-C", path, "remote"])
+        .output()
+        .ok()?;
+    if !list.status.success() {
+        return None;
+    }
+    let first = String::from_utf8_lossy(&list.stdout)
+        .lines()
+        .map(str::trim)
+        .find(|name| !name.is_empty())?
+        .to_string();
+    git_remote_get_url(path, &first)
+}
+
+fn git_remote_get_url(repo: &str, name: &str) -> Option<String> {
+    let out = Command::new("git")
+        .args(["-C", repo, "remote", "get-url", name])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let url = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if url.is_empty() {
+        None
+    } else {
+        Some(url)
+    }
+}
+
+fn jj_origin_url(repo: &Path) -> Option<String> {
+    let mut cmd = jj_inspect(repo).ok()?;
+    cmd.args(["git", "remote", "list"]);
+    let out = cmd.output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    parse_jj_remote_list(&String::from_utf8_lossy(&out.stdout))
+}
+
+fn parse_jj_remote_list(stdout: &str) -> Option<String> {
+    let mut first = None;
+    for line in stdout.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let Some((name, url)) = line.split_once(char::is_whitespace) else {
+            continue;
+        };
+        let url = url.trim();
+        if url.is_empty() {
+            continue;
+        }
+        if name == "origin" {
+            return Some(url.to_string());
+        }
+        if first.is_none() {
+            first = Some(url.to_string());
+        }
+    }
+    first
+}
+
+/// Turn a git/jj clone URL into an https browse page, or `None` if it is not web-reachable.
+pub fn remote_to_browse_url(remote: &str) -> Option<String> {
+    let remote = remote.trim();
+    if remote.is_empty() {
+        return None;
+    }
+    if let Some((user_host, path)) = scp_style_remote(remote) {
+        let host = user_host.rsplit('@').next()?;
+        return https_browse(host, path);
+    }
+    if let Some(rest) = remote.strip_prefix("ssh://") {
+        return ssh_style_browse(rest);
+    }
+    if let Some(rest) = remote.strip_prefix("git://") {
+        let (host, path) = rest.split_once('/')?;
+        return https_browse(host, path);
+    }
+    if remote.starts_with("http://") || remote.starts_with("https://") {
+        return Some(strip_git_suffix(remote));
+    }
+    None
+}
+
+fn scp_style_remote(remote: &str) -> Option<(&str, &str)> {
+    if remote.contains("://") {
+        return None;
+    }
+    let (user_host, path) = remote.split_once(':')?;
+    if user_host.contains('/') || path.is_empty() {
+        return None;
+    }
+    Some((user_host, path))
+}
+
+fn ssh_style_browse(rest: &str) -> Option<String> {
+    let rest = rest
+        .split_once('@')
+        .map(|(_, hostpath)| hostpath)
+        .unwrap_or(rest);
+    let (hostport, path) = rest.split_once('/')?;
+    let host = hostport.split(':').next()?;
+    https_browse(host, path)
+}
+
+fn https_browse(host: &str, path: &str) -> Option<String> {
+    let host = host.trim();
+    let path = path.trim().trim_start_matches('/');
+    if host.is_empty() || path.is_empty() {
+        return None;
+    }
+    Some(format!("https://{host}/{}", strip_git_suffix(path)))
+}
+
+fn strip_git_suffix(url: &str) -> String {
+    url.trim()
+        .trim_end_matches('/')
+        .trim_end_matches(".git")
+        .to_string()
+}
+
 /// Current branch/bookmark name when available.
 pub fn current_branch(checkout: &Path) -> Option<String> {
     let checkout = expand(checkout);
@@ -1218,6 +1357,60 @@ mod tests {
     }
 
     #[test]
+    fn remote_to_browse_url_converts_common_clone_urls() {
+        assert_eq!(
+            remote_to_browse_url("git@github.com:jsimonrichard/hypr-taskspace.git"),
+            Some("https://github.com/jsimonrichard/hypr-taskspace".into())
+        );
+        assert_eq!(
+            remote_to_browse_url("https://github.com/org/app.git"),
+            Some("https://github.com/org/app".into())
+        );
+        assert_eq!(
+            remote_to_browse_url("ssh://git@gitlab.com/group/sub/repo.git"),
+            Some("https://gitlab.com/group/sub/repo".into())
+        );
+        assert_eq!(
+            remote_to_browse_url("git://codeberg.org/foo/bar.git"),
+            Some("https://codeberg.org/foo/bar".into())
+        );
+        assert_eq!(remote_to_browse_url("file:///tmp/repo.git"), None);
+        assert_eq!(remote_to_browse_url(""), None);
+    }
+
+    #[test]
+    fn parse_jj_remote_list_prefers_origin() {
+        let stdout = "upstream git@example.com:other/repo.git\norigin git@github.com:org/app.git\n";
+        assert_eq!(
+            parse_jj_remote_list(stdout).as_deref(),
+            Some("git@github.com:org/app.git")
+        );
+    }
+
+    #[test]
+    fn read_origin_remote_url_from_git() {
+        let dir = tempdir().unwrap();
+        let repo = dir.path().join("app");
+        init_scratch_repo(&repo).unwrap();
+        run_checked(
+            Command::new("git").args([
+                "-C",
+                repo.to_str().unwrap(),
+                "remote",
+                "add",
+                "origin",
+                "git@github.com:org/app.git",
+            ]),
+            "git remote add",
+        )
+        .unwrap();
+        assert_eq!(
+            read_origin_remote_url(&repo).as_deref(),
+            Some("git@github.com:org/app.git")
+        );
+    }
+
+    #[test]
     fn git_worktree_roundtrip() {
         let dir = tempdir().unwrap();
         let source = dir.path().join("main");
@@ -1291,12 +1484,11 @@ mod tests {
 
     #[test]
     fn jj_workspace_detach_reattach_preserves_change_id() {
-        if Command::new("jj")
+        if !Command::new("jj")
             .arg("--version")
             .output()
             .map(|o| o.status.success())
             .unwrap_or(false)
-            == false
         {
             eprintln!(
                 "skipping jj_workspace_detach_reattach_preserves_change_id: jj not available"
@@ -1392,12 +1584,11 @@ mod tests {
 
     #[test]
     fn jj_workspace_detach_reattach_empty_wc_uses_parent_base() {
-        if Command::new("jj")
+        if !Command::new("jj")
             .arg("--version")
             .output()
             .map(|o| o.status.success())
             .unwrap_or(false)
-            == false
         {
             eprintln!(
                 "skipping jj_workspace_detach_reattach_empty_wc_uses_parent_base: jj not available"

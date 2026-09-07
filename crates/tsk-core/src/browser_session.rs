@@ -11,10 +11,9 @@ use crate::browser::{is_browser_class, open_new_window_with_urls, task_chromium_
 use crate::config::TskConfig;
 use crate::error::{Result, TskError};
 use crate::hyprland::{self, HyprWindow};
-use crate::models::{ContextMode, SessionState, Task, TaskStatus};
+use crate::models::{Task, TaskStatus};
 use crate::task_cleanup::{clients_for_task, task_data_dir};
 use crate::window_registry::client_workspace_name;
-use crate::workspaces::primary_task_workspace;
 use crate::xdg::ensure_parent;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -141,7 +140,7 @@ pub fn refresh_snapshots_from_live(cfg: &TskConfig, live: &LiveWindows) -> Resul
         if read_task_session(cfg, &task.id)?.is_some_and(|s| s.pending) {
             continue;
         }
-        let windows = snapshot_windows_for_task(cfg, &state, task, live)?;
+        let windows = snapshot_windows_for_task(cfg, task, live)?;
         if windows.is_empty() {
             continue;
         }
@@ -160,7 +159,6 @@ pub fn refresh_snapshots_from_live(cfg: &TskConfig, live: &LiveWindows) -> Resul
 
 fn snapshot_windows_for_task(
     cfg: &TskConfig,
-    state: &SessionState,
     task: &Task,
     live: &LiveWindows,
 ) -> Result<Vec<SessionWindow>> {
@@ -168,36 +166,7 @@ fn snapshot_windows_for_task(
         .into_iter()
         .filter(|c| is_browser_class(&c.class_name))
         .collect::<Vec<_>>();
-    let mut windows = assign_session_windows(&hypr, &live.windows);
-    if windows.is_empty() {
-        windows = fallback_current_task_windows(state, task, live);
-    }
-    Ok(windows)
-}
-
-fn fallback_current_task_windows(
-    state: &SessionState,
-    task: &Task,
-    live: &LiveWindows,
-) -> Vec<SessionWindow> {
-    if state.context_mode != ContextMode::Task
-        || state.current_task_id.as_deref() != Some(task.id.as_str())
-    {
-        return Vec::new();
-    }
-    let workspace = primary_task_workspace(
-        &task.id,
-        state.default_workspace_count,
-        &state.global_workspace_slots,
-    );
-    if live.windows.len() == 1 {
-        return vec![session_window_from_live(&workspace, &live.windows[0])];
-    }
-    live.windows
-        .iter()
-        .find(|w| w.focused)
-        .map(|w| vec![session_window_from_live(&workspace, w)])
-        .unwrap_or_default()
+    Ok(assign_session_windows(&hypr, &live.windows))
 }
 
 pub fn save_task_session(cfg: &TskConfig, session: &TaskBrowserSession) -> Result<()> {
@@ -297,15 +266,6 @@ pub fn assign_session_windows(hypr: &[HyprWindow], live: &[LiveWindow]) -> Vec<S
         if let Some(idx) = best_live_match(client, &unused) {
             let live = unused.remove(idx);
             out.push(session_window_from_live(&workspace, live));
-        }
-    }
-
-    if out.is_empty() && hypr.len() == 1 {
-        let workspace = client_workspace_name(&hypr[0]);
-        if live.len() == 1 {
-            out.push(session_window_from_live(&workspace, &live[0]));
-        } else if let Some(focused) = live.iter().find(|w| w.focused) {
-            out.push(session_window_from_live(&workspace, focused));
         }
     }
 
@@ -412,6 +372,7 @@ fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<Option<T>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::ContextMode;
 
     fn hypr(title: &str, workspace: &str) -> HyprWindow {
         HyprWindow {
@@ -463,18 +424,16 @@ mod tests {
     }
 
     #[test]
-    fn assign_falls_back_when_only_one_window_each() {
+    fn assign_does_not_guess_when_titles_do_not_match() {
         let assigned = assign_session_windows(
             &[hypr("something else", "task-1")],
             &[live("Unrelated title", "https://example.com")],
         );
-        assert_eq!(assigned.len(), 1);
-        assert_eq!(assigned[0].urls, vec!["https://example.com"]);
-        assert_eq!(assigned[0].workspace, "task-1");
+        assert!(assigned.is_empty());
     }
 
     #[test]
-    fn assign_falls_back_to_focused_when_one_hypr_and_many_live() {
+    fn assign_does_not_guess_focused_window_without_title_match() {
         let extra = LiveWindow {
             id: 2,
             focused: false,
@@ -495,8 +454,7 @@ mod tests {
         };
         let assigned =
             assign_session_windows(&[hypr("something else", "tid-2")], &[extra, focused]);
-        assert_eq!(assigned.len(), 1);
-        assert_eq!(assigned[0].urls, vec!["https://focused.test"]);
+        assert!(assigned.is_empty());
     }
 
     #[test]
@@ -511,8 +469,10 @@ mod tests {
     #[test]
     fn mark_consumed_clears_pending() {
         let dir = tempfile::tempdir().unwrap();
-        let mut cfg = TskConfig::default();
-        cfg.tasks_base_dir = dir.path().to_path_buf();
+        let cfg = TskConfig {
+            tasks_base_dir: dir.path().to_path_buf(),
+            ..TskConfig::default()
+        };
         let session = TaskBrowserSession {
             task_id: "task-1".into(),
             saved_at: Utc::now(),
@@ -533,8 +493,10 @@ mod tests {
     #[test]
     fn ingest_windows_message_roundtrips() {
         let dir = tempfile::tempdir().unwrap();
-        let mut cfg = TskConfig::default();
-        cfg.data_dir = dir.path().to_path_buf();
+        let cfg = TskConfig {
+            data_dir: dir.path().to_path_buf(),
+            ..TskConfig::default()
+        };
         let raw = br#"{"op":"windows","windows":[{"id":7,"focused":true,"tabs":[{"url":"https://x.test","title":"X","active":true}]}]}"#;
         ingest_native_message(&cfg, raw).unwrap();
         let live = read_live_windows(&cfg).unwrap().unwrap();
@@ -565,11 +527,13 @@ mod tests {
     }
 
     #[test]
-    fn ingest_writes_current_task_snapshot() {
+    fn ingest_does_not_snapshot_without_hypr_window() {
         let dir = tempfile::tempdir().unwrap();
-        let mut cfg = TskConfig::default();
-        cfg.data_dir = dir.path().to_path_buf();
-        cfg.tasks_base_dir = dir.path().join("tasks");
+        let cfg = TskConfig {
+            data_dir: dir.path().to_path_buf(),
+            tasks_base_dir: dir.path().join("tasks"),
+            ..TskConfig::default()
+        };
         let task = sample_task("tabc1234");
         let registry = crate::registry::Registry::new(None, cfg.clone()).unwrap();
         let mut state = registry.load_state().unwrap();
@@ -580,17 +544,17 @@ mod tests {
 
         let raw = br#"{"op":"windows","windows":[{"id":7,"focused":true,"tabs":[{"url":"https://auto.test","title":"Auto","active":true}]}]}"#;
         ingest_native_message(&cfg, raw).unwrap();
-        let session = read_task_session(&cfg, &task.id).unwrap().unwrap();
-        assert!(!session.pending);
-        assert_eq!(session.windows[0].urls, vec!["https://auto.test"]);
+        assert!(read_task_session(&cfg, &task.id).unwrap().is_none());
     }
 
     #[test]
     fn ingest_does_not_overwrite_pending_snapshot() {
         let dir = tempfile::tempdir().unwrap();
-        let mut cfg = TskConfig::default();
-        cfg.data_dir = dir.path().to_path_buf();
-        cfg.tasks_base_dir = dir.path().join("tasks");
+        let cfg = TskConfig {
+            data_dir: dir.path().to_path_buf(),
+            tasks_base_dir: dir.path().join("tasks"),
+            ..TskConfig::default()
+        };
         let task = sample_task("tpend001");
         let registry = crate::registry::Registry::new(None, cfg.clone()).unwrap();
         let mut state = registry.load_state().unwrap();
@@ -623,9 +587,11 @@ mod tests {
     #[test]
     fn archive_keeps_last_snapshot_when_capture_empty() {
         let dir = tempfile::tempdir().unwrap();
-        let mut cfg = TskConfig::default();
-        cfg.tasks_base_dir = dir.path().to_path_buf();
-        cfg.data_dir = dir.path().to_path_buf();
+        let cfg = TskConfig {
+            tasks_base_dir: dir.path().to_path_buf(),
+            data_dir: dir.path().to_path_buf(),
+            ..TskConfig::default()
+        };
         let task = sample_task("tarch001");
         save_task_session(
             &cfg,

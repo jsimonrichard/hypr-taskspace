@@ -50,6 +50,23 @@ pub struct RepoConfig {
     /// Optional Hyprland monitor name to focus before running hooks.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub on_start_monitor: Option<String>,
+    /// Checkout-local browser settings (`[browser]` in `.tsk/repo.toml`).
+    #[serde(default, skip_serializing_if = "RepoBrowserConfig::is_empty")]
+    pub browser: RepoBrowserConfig,
+}
+
+/// `[browser]` table in `.tsk/repo.toml`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RepoBrowserConfig {
+    /// URLs to open on the first Chromium launch when this task has no saved session.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub default_tabs: Vec<String>,
+}
+
+impl RepoBrowserConfig {
+    fn is_empty(&self) -> bool {
+        self.default_tabs.is_empty()
+    }
 }
 
 impl RepoConfig {
@@ -160,6 +177,8 @@ struct RepoConfigFile {
     on_start: Option<String>,
     #[serde(default)]
     on_start_monitor: Option<String>,
+    #[serde(default)]
+    browser: RepoBrowserConfig,
     #[serde(default, rename = "id")]
     _legacy_id: Option<String>,
     #[serde(default, rename = "path")]
@@ -184,6 +203,7 @@ pub fn load_repo_config(vcs_root: &Path) -> Result<Option<RepoConfig>> {
         on_restore: file.on_restore,
         on_start: file.on_start,
         on_start_monitor: file.on_start_monitor,
+        browser: file.browser,
     };
     Ok(normalize_repo_config(vcs_root, config))
 }
@@ -503,6 +523,9 @@ mod tests {
             on_create: None,
             on_restore: None,
             on_start_monitor: Some("eDP-1".into()),
+            browser: RepoBrowserConfig {
+                default_tabs: vec!["https://github.com/org/app".into()],
+            },
         };
         save_repo_config(&checkout, &config).unwrap();
         let loaded = load_repo_config(&checkout).unwrap().unwrap();
@@ -511,6 +534,30 @@ mod tests {
         assert_eq!(loaded.vcs, Some(VcsKind::Git));
         assert_eq!(loaded.on_start.as_deref(), Some(".tsk/on-start.sh"));
         assert_eq!(loaded.on_start_monitor.as_deref(), Some("eDP-1"));
+        assert_eq!(
+            loaded.browser.default_tabs,
+            vec!["https://github.com/org/app"]
+        );
+    }
+
+    #[test]
+    fn repo_config_loads_browser_default_tabs_table() {
+        let dir = tempfile::tempdir().unwrap();
+        let checkout = dir.path().join("tabs-app");
+        std::fs::create_dir_all(checkout.join(".tsk")).unwrap();
+        std::fs::write(
+            repo_config_path(&checkout),
+            r#"
+[browser]
+default_tabs = ["https://github.com/org/app", "https://docs.example"]
+"#,
+        )
+        .unwrap();
+        let loaded = load_repo_config(&checkout).unwrap().unwrap();
+        assert_eq!(
+            loaded.browser.default_tabs,
+            vec!["https://github.com/org/app", "https://docs.example"]
+        );
     }
 
     #[test]

@@ -49,8 +49,8 @@ pub use binary::{
     resolve_tsk_command, resolve_tsk_spawn_binary, waybar_module_path,
 };
 pub use browser::{
-    default_browser_profile_dir, delegate_to_system_xdg_open, is_http_url, launch_task_browser,
-    open_urls, resolve_system_xdg_open,
+    default_browser_profile_dir, delegate_to_system_xdg_open, initial_launch_urls, is_http_url,
+    launch_task_browser, open_urls, resolve_system_xdg_open, NEW_TAB_URL,
 };
 pub use browser_session::{
     capture_and_save, live_windows_path, read_live_windows, read_task_session, restore_saved,
@@ -98,7 +98,7 @@ pub use repos::{
     is_task_scratch_repo, load_repo_config, load_repos, normalize_repo_path, paths_match,
     register_repo, repo_bookmarks_path, repo_config_path, repo_display_path, repo_id_from_path,
     save_repo_config, task_belongs_to_repo, task_source_repo_path, tasks_for_repo, unregister_repo,
-    RegisteredRepo, RepoConfig, SCRATCH_TASK_LIST_LABEL,
+    RegisteredRepo, RepoBrowserConfig, RepoConfig, SCRATCH_TASK_LIST_LABEL,
 };
 pub use service::{menu_repo_name, MenuTask, TaskService};
 pub use share::{
@@ -128,7 +128,10 @@ pub use trace::{
     analyze_recent_latency, clear_log, enable_for_process, enabled as trace_enabled,
     event as trace_event, format_report, tail_raw, trace_path,
 };
-pub use vcs::{current_branch, detect_vcs_root, repo_label, vcs_kind_at, VcsKind};
+pub use vcs::{
+    current_branch, detect_vcs_root, read_origin_remote_url, remote_to_browse_url, repo_label,
+    vcs_kind_at, VcsKind,
+};
 pub use version::{
     build_version_info, format_version_long, format_version_short, version_info, VersionInfo,
 };
