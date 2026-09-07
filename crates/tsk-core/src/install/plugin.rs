@@ -547,4 +547,51 @@ mod tests {
         assert!(value["entryPoints"].get("overlay").is_none());
         assert_eq!(manifest_for_control_ui(raw, ControlUi::Shell), raw);
     }
+
+    fn overlay_qml() -> &'static str {
+        include_str!("../../../../share/omarchy-plugin/Taskspace.qml")
+    }
+
+    fn overlay_model_js() -> &'static str {
+        include_str!("../../../../share/omarchy-plugin/TaskspaceModel.js")
+    }
+
+    #[test]
+    fn overlay_does_not_detach_user_commands() {
+        assert!(
+            !overlay_qml().contains("execDetached"),
+            "overlay must wait on tsk/omarchy-file-select so failures reach the error dialog"
+        );
+    }
+
+    #[test]
+    fn overlay_action_processes_read_stderr() {
+        let qml = overlay_qml();
+        assert!(qml.contains("id: actionProc"));
+        assert!(qml.contains("actionProc.errText"));
+        assert!(qml.contains("id: folderPickProc"));
+        assert!(qml.contains("folderPickProc.errText"));
+        assert!(qml.contains("id: repoErr"));
+        assert!(qml.contains("id: listErr"));
+    }
+
+    #[test]
+    fn overlay_holds_command_errors_across_open() {
+        let qml = overlay_qml();
+        assert!(qml.contains("holdCommandError"));
+        assert!(qml.contains("hasPendingError()"));
+        assert!(qml.contains("queuePendingError"));
+        assert!(qml.contains("showCommandError"));
+        assert!(qml.contains("runTsk([\"task\", \"restore\""));
+        assert!(qml.contains("runTsk([\"task\", \"switch\""));
+        assert!(qml.contains("runTsk([\"taskspace\", \"default\"]"));
+    }
+
+    #[test]
+    fn overlay_model_titles_restore_and_switch_failures() {
+        let js = overlay_model_js();
+        assert!(js.contains("Could not restore that task"));
+        assert!(js.contains("function isSwitchAction"));
+        assert!(js.contains("function commandFailureTitle"));
+    }
 }

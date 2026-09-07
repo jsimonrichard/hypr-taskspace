@@ -109,3 +109,22 @@ function commandErrorSummary(detail) {
   }
   return ""
 }
+
+function commandFailureTitle(kind) {
+  switch (String(kind || "")) {
+    case "create": return "Could not create that task"
+    case "restore": return "Could not restore that task"
+    case "add-repo": return "Could not register that folder"
+    case "switch": return "Could not switch task"
+    case "default": return "Could not switch to default"
+    case "rename": return "Could not rename that task"
+    case "archive": return "Could not archive that task"
+    case "delete": return "Could not delete that task"
+    case "remove-repo": return "Could not unregister that repo"
+    default: return "Command failed"
+  }
+}
+
+function isSwitchAction(kind) {
+  return kind === "restore" || kind === "switch" || kind === "default"
+}

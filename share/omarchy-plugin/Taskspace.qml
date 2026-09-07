@@ -37,7 +37,9 @@ Item {
   property string pendingError: ""
   property string pendingErrorTitle: ""
   property string pendingErrorDetail: ""
-  property bool pendingReopen: false
+  property string actionKind: ""
+  property bool holdCommandError: false
+  property string repoError: ""
   property string progressLog: ""
   property string progressTaskId: ""
   property bool progressDone: false
@@ -102,7 +104,8 @@ Item {
     root.selectedIndex = 0
     root.cursorActive = true
     root.selectCurrentOnRebuild = root.tab === "tasks"
-    root.applyPendingError()
+    if (root.hasPendingError()) root.applyPendingError()
+    else if (!root.holdCommandError) root.clearCommandError()
     root.disarmPointer()
     root.reloadAll()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
@@ -202,13 +205,17 @@ Item {
   function applyRepos(text, exitCode) {
     if (Number(exitCode) !== 0) {
       root.repos = []
+      root.repoError = Model.commandErrorSummary(Model.commandOutput(text, repoErr.text))
+        || "could not read repos"
       if (root.tab === "repos") root.rebuildDisplay()
       return
     }
     try {
       root.repos = Model.parseRepos(text)
+      root.repoError = ""
     } catch (e) {
       root.repos = []
+      root.repoError = "could not read repos"
     }
     if (root.tab === "repos" || root.screen === "new") root.rebuildDisplay()
   }
@@ -389,20 +396,31 @@ Item {
   }
 
   function clearCommandError() {
+    root.holdCommandError = false
     root.formError = ""
     root.errorTitle = ""
     root.errorDetail = ""
     errorDialog.opened = false
   }
 
-  function showCommandError(title, detail) {
+  function hasPendingError() {
+    return root.pendingError.length > 0 || root.pendingErrorDetail.length > 0
+  }
+
+  function showCommandError(title, detail, summary) {
     const text = String(detail || "").trim()
-    const summary = Model.commandErrorSummary(text) || String(title || "Command failed")
+    const resolved = String(summary || "").trim()
+      || Model.commandErrorSummary(text)
+      || String(title || "Command failed")
+    root.holdCommandError = true
     root.errorTitle = String(title || "Command failed")
-    root.errorDetail = text || summary
-    root.formError = summary
+    root.errorDetail = text || resolved
+    root.formError = resolved
     errorDialog.opened = true
-    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+    Qt.callLater(function() {
+      errorDialog.opened = true
+      keyCatcher.forceActiveFocus()
+    })
   }
 
   function queuePendingError(title, fallback, detail) {
@@ -419,15 +437,12 @@ Item {
     root.pendingErrorTitle = ""
     root.pendingError = ""
     root.pendingErrorDetail = ""
-    if (!summary && !detail) {
-      root.clearCommandError()
-      return
-    }
+    if (!summary && !detail) return
     root.showCommandError(title || summary, detail || summary)
   }
 
   function actionFailureText() {
-    return Model.commandOutput(actionOut.text, actionErr.text)
+    return Model.commandOutput(actionProc.outText, actionProc.errText)
   }
 
   function openConfirm(action, id, label, message) {
@@ -440,13 +455,31 @@ Item {
     confirmDialog.opened = true
   }
 
-  function runTsk(args) {
+  function runTsk(args, kind) {
+    if (actionProc.running) {
+      root.showCommandError("Command already running", "Wait for the current command to finish.")
+      return false
+    }
+    root.actionKind = kind || "command"
+    actionProc.outText = ""
+    actionProc.errText = ""
     actionProc.command = [root.tskCmd].concat(args)
     actionProc.running = true
+    return true
+  }
+
+  function beginActionSwitch(message, icon) {
+    root.switchFromAction = true
+    root.beginSwitchFeedback(message, icon)
+    root.dismiss()
   }
 
   function activateIndex(index) {
     if (index < 0 || index >= displayModel.count) return
+    if (actionProc.running) {
+      root.showCommandError("Command already running", "Wait for the current command to finish.")
+      return
+    }
     const row = displayModel.get(index)
     if (!row) return
     if (root.tab === "archived") {
@@ -468,14 +501,12 @@ Item {
     }
     if (root.tab === "repos") return
     if (row.kind === "default") {
-      root.beginSwitchFeedback("Switching to default…", "󰣇")
-      root.dismiss()
-      Util.execDetached(Util.shellQuote(root.tskCmd) + " taskspace default")
+      root.beginActionSwitch("Switching to default…", "󰣇")
+      root.runTsk(["taskspace", "default"], "default")
       return
     }
-    root.beginSwitchFeedback("Switching to " + row.label + "…", "󱓝")
-    root.dismiss()
-    Util.execDetached(Util.shellQuote(root.tskCmd) + " task switch " + Util.shellQuote(row.taskId))
+    root.beginActionSwitch("Switching to " + row.label + "…", "󱓝")
+    root.runTsk(["task", "switch", row.taskId], "switch")
   }
 
   function submitNew() {
@@ -496,6 +527,10 @@ Item {
       if (!root.formWorktree) args.push("--no-worktree")
     }
     if (root.formContainer) {
+      if (createProc.running) {
+        root.showCommandError("Command already running", "Wait for the current command to finish.")
+        return
+      }
       args.push("--container")
       root.screen = "progress"
       root.progressLog = "Creating “" + name + "”…\n"
@@ -506,8 +541,7 @@ Item {
       createProc.running = true
       return
     }
-    root.runTsk(args)
-    root.pendingClose = true
+    root.runTsk(args, "create")
   }
 
   function submitRename() {
@@ -520,7 +554,7 @@ Item {
       errorDialog.opened = false
       return
     }
-    root.runTsk(["task", "rename", row.taskId, name])
+    root.runTsk(["task", "rename", row.taskId, name], "rename")
     root.showList()
   }
 
@@ -530,7 +564,8 @@ Item {
     root.pendingError = ""
     root.pendingErrorTitle = ""
     root.pendingErrorDetail = ""
-    root.pendingReopen = false
+    folderPickProc.outText = ""
+    folderPickProc.errText = ""
     root.dismiss()
     folderPickProc.running = true
   }
@@ -544,18 +579,21 @@ Item {
   }
 
   function confirmPending() {
+    if (actionProc.running) {
+      confirmDialog.opened = false
+      root.showCommandError("Command already running", "Wait for the current command to finish.")
+      return
+    }
     const action = root.confirmAction
     const id = root.confirmId
     confirmDialog.opened = false
-    if (action === "archive") root.runTsk(["task", "archive", id])
+    if (action === "archive") root.runTsk(["task", "archive", id], "archive")
     else if (action === "restore") {
-      root.switchFromAction = true
-      root.beginSwitchFeedback("Restoring " + root.confirmLabel + "…", "󱓝")
-      root.dismiss()
-      root.runTsk(["task", "restore", id])
+      root.beginActionSwitch("Restoring " + root.confirmLabel + "…", "󱓝")
+      root.runTsk(["task", "restore", id], "restore")
     }
-    else if (action === "delete") root.runTsk(["task", "delete", id])
-    else if (action === "remove-repo") root.runTsk(["repo", "remove", id])
+    else if (action === "delete") root.runTsk(["task", "delete", id], "delete")
+    else if (action === "remove-repo") root.runTsk(["repo", "remove", id], "remove-repo")
   }
 
   function cycleFormFocus(delta) {
@@ -706,8 +744,6 @@ Item {
     return true
   }
 
-  property bool pendingClose: false
-
   ListModel { id: displayModel }
 
   PointerMoveGate {
@@ -736,81 +772,100 @@ Item {
       id: repoOut
       waitForEnd: true
     }
+    stderr: StdioCollector {
+      id: repoErr
+      waitForEnd: true
+    }
     onExited: function(exitCode) { root.applyRepos(repoOut.text, exitCode) }
   }
 
   Process {
     id: actionProc
-    stdout: StdioCollector {
-      id: actionOut
-      waitForEnd: true
+    property string outText: ""
+    property string errText: ""
+    stdout: SplitParser {
+      onRead: function(line) { actionProc.outText += line + "\n" }
     }
-    stderr: StdioCollector {
-      id: actionErr
-      waitForEnd: true
+    stderr: SplitParser {
+      onRead: function(line) { actionProc.errText += line + "\n" }
     }
     onExited: function(exitCode) {
       const detail = root.actionFailureText()
-      if (root.pendingClose) {
-        root.pendingClose = false
-        if (Number(exitCode) === 0) root.dismiss()
-        else {
+      const kind = root.actionKind
+      const failed = Number(exitCode) !== 0
+      root.actionKind = ""
+      if (kind === "create") {
+        if (failed) {
           root.screen = "new"
-          root.showCommandError("Could not create that task", detail)
+          root.showCommandError(Model.commandFailureTitle(kind), detail)
+        } else {
+          root.clearCommandError()
+          root.dismiss()
         }
         return
       }
-      if (root.pendingReopen) {
-        root.pendingReopen = false
-        if (Number(exitCode) !== 0)
+      if (kind === "add-repo") {
+        if (failed)
           root.queuePendingError(
-            "Could not register that folder",
+            Model.commandFailureTitle(kind),
             "Could not register that folder — pick a git or jj checkout",
             detail
           )
+        else
+          root.clearCommandError()
         root.reopenOverlay()
         return
       }
-      if (root.switchFromAction) {
+      if (Model.isSwitchAction(kind) || root.switchFromAction) {
         root.switchFromAction = false
-        if (Number(exitCode) !== 0) {
+        if (failed) {
           root.closeSwitchFeedback(root.switchSerial)
-          root.pendingTab = "archived"
-          root.queuePendingError("Could not restore that task", "Could not restore that task", detail)
+          if (kind === "restore") root.pendingTab = "archived"
+          root.queuePendingError(Model.commandFailureTitle(kind), Model.commandFailureTitle(kind), detail)
           root.reopenOverlay()
           return
         }
+        root.clearCommandError()
         root.closeSwitchFeedback(root.switchSerial)
         return
       }
-      if (Number(exitCode) !== 0) {
-        root.showCommandError("Command failed", detail)
+      if (failed) {
+        root.showCommandError(Model.commandFailureTitle(kind), detail)
         return
       }
+      root.clearCommandError()
       root.reloadAll()
     }
   }
 
   Process {
     id: folderPickProc
+    property string outText: ""
+    property string errText: ""
     command: [
       (root.omarchyPath || "/usr/share/omarchy") + "/bin/omarchy-file-select",
       "--directory",
       "--title",
       "Register repo"
     ]
-    stdout: StdioCollector {
-      id: folderPickOut
-      waitForEnd: true
+    stdout: SplitParser {
+      onRead: function(line) { folderPickProc.outText += line + "\n" }
+    }
+    stderr: SplitParser {
+      onRead: function(line) { folderPickProc.errText += line + "\n" }
     }
     onExited: function(exitCode) {
-      const path = String(folderPickOut.text || "").trim().split("\n")[0]
+      const path = String(folderPickProc.outText || "").trim().split("\n")[0]
+      const detail = Model.commandOutput("", folderPickProc.errText)
+      folderPickProc.outText = ""
+      folderPickProc.errText = ""
       if (Number(exitCode) !== 0 || !path) {
+        if (detail)
+          root.queuePendingError("Could not pick a folder", "Could not pick a folder", detail)
         root.reopenOverlay()
         return
       }
-      root.pendingReopen = true
-      root.runTsk(["repo", "add", path])
+      root.runTsk(["repo", "add", path], "add-repo")
     }
   }
 
@@ -832,9 +887,7 @@ Item {
       root.progressFailed = Number(exitCode) !== 0
       if (root.progressFailed) {
         root.progressLog += "\nFailed.\n"
-        root.errorTitle = "Could not create that task"
-        root.errorDetail = String(root.progressLog || "").trim()
-        root.formError = "Container setup failed"
+        root.showCommandError("Could not create that task", root.progressLog, "Container setup failed")
       } else {
         root.progressLog += "\nDone. Press Enter to close.\n"
       }
@@ -1328,9 +1381,13 @@ Item {
             }
 
             Text {
-              text: root.listError
-                ? root.listError
-                : (root.filterText ? "No matches for “" + root.filterText + "”" : (root.tab === "repos" ? "No repos — Alt+N to add" : "No tasks — Alt+N to create"))
+              text: {
+                if (root.tab === "repos" && root.repoError) return root.repoError
+                if (root.listError) return root.listError
+                if (root.filterText) return "No matches for “" + root.filterText + "”"
+                if (root.tab === "repos") return "No repos — Alt+N to add"
+                return "No tasks — Alt+N to create"
+              }
               color: root.foreground
               opacity: 0.7
               font.family: root.fontFamily
