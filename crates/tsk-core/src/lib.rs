@@ -120,7 +120,8 @@ pub use task_paths::{
     scratch_checkout_path, task_workspace_dir, SCRATCH_DIR_NAME,
 };
 pub use task_repo::{
-    provision_task_checkout, ResolvedTaskRepo, TaskRepoOptions, TaskRepoSetup, TaskRepoSource,
+    provision_task_checkout, ForkFrom, ResolvedTaskRepo, TaskRepoOptions, TaskRepoSetup,
+    TaskRepoSource,
 };
 pub use taskspaces::visible_default_workspace_count;
 pub use terminal::{launch_host_terminal, launch_task_terminal, launch_task_tui};

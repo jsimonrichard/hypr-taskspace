@@ -29,6 +29,19 @@ pub enum TskError {
     },
     #[error("config error: {0}")]
     Config(String),
+    #[error("revision {rev} not found in {path}")]
+    UnknownRevision { rev: String, path: PathBuf },
+    #[error("no git/jj checkout to fork from at {path}")]
+    NoCheckoutToFork { path: PathBuf },
+    #[error("jj workspace or task checkout {name} not found in {path}")]
+    UnknownForkWorkspace { name: String, path: PathBuf },
+    #[error("checkout {checkout} is not part of the source repo {source_root}")]
+    ForkCheckoutNotInRepo {
+        checkout: PathBuf,
+        source_root: PathBuf,
+    },
+    #[error("fork options require a linked git worktree / jj workspace")]
+    ForkRequiresLinkedCheckout,
     #[error("{0}")]
     Other(String),
 }

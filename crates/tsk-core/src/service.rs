@@ -12,10 +12,104 @@ use crate::models::{ContextMode, SessionState, Task, TaskStatus};
 use crate::registry::Registry;
 use crate::repos::{is_scratch_task, task_source_repo_path};
 use crate::state_notify::{self, StateChangeKind};
+use crate::task_ids::TaskLookup;
+use crate::task_repo::{ForkFrom, TaskRepoSetup};
+use crate::vcs::detect_vcs_root;
 use crate::vcs::repo_label;
 use crate::workspace_nav;
 use crate::workspaces::{default_taskspace_workspace_names, task_taskspace_workspace_names};
 use crate::xdg::{ensure_parent, tsk_runtime_dir};
+
+fn resolve_create_fork(
+    state: &SessionState,
+    resolved: &crate::task_repo::ResolvedTaskRepo,
+    cwd: Option<&Path>,
+    repo_options: &crate::task_repo::TaskRepoOptions,
+) -> Result<Option<String>> {
+    if repo_options.fork_from.is_default() {
+        return Ok(None);
+    }
+    let TaskRepoSetup::Linked { source_root, kind } = &resolved.setup else {
+        return Err(TskError::ForkRequiresLinkedCheckout);
+    };
+
+    let current_checkout = match &repo_options.fork_from {
+        ForkFrom::Current { fallback_task_id } => Some(resolve_current_fork_checkout(
+            state,
+            cwd,
+            fallback_task_id.as_deref(),
+        )?),
+        _ => None,
+    };
+    let named_checkout = match &repo_options.fork_from {
+        ForkFrom::Workspace(name) => lookup_same_repo_task_checkout(state, name, source_root)?,
+        _ => None,
+    };
+
+    repo_options.fork_from.resolve_revision(
+        source_root,
+        *kind,
+        current_checkout.as_deref(),
+        named_checkout.as_deref(),
+    )
+}
+
+fn resolve_current_fork_checkout(
+    state: &SessionState,
+    cwd: Option<&Path>,
+    fallback_task_id: Option<&str>,
+) -> Result<std::path::PathBuf> {
+    if let Some(root) = detect_vcs_root(cwd) {
+        return Ok(root);
+    }
+    if let Some(task_id) = fallback_task_id {
+        match crate::task_ids::lookup_task(state, task_id) {
+            TaskLookup::Found(task) => return Ok(task.repo_path.clone()),
+            TaskLookup::AmbiguousPrefix(ids) => {
+                return Err(TskError::Other(format!(
+                    "Ambiguous task prefix '{task_id}': matches {}",
+                    ids.join(", ")
+                )));
+            }
+            TaskLookup::NotFound => {}
+        }
+    }
+    Err(TskError::NoCheckoutToFork {
+        path: cwd
+            .map(Path::to_path_buf)
+            .or_else(|| std::env::current_dir().ok())
+            .unwrap_or_else(|| std::path::PathBuf::from(".")),
+    })
+}
+
+fn lookup_same_repo_task_checkout(
+    state: &SessionState,
+    name: &str,
+    source_root: &Path,
+) -> Result<Option<std::path::PathBuf>> {
+    let task = match crate::task_ids::lookup_task(state, name) {
+        TaskLookup::Found(task) => task,
+        TaskLookup::NotFound => return Ok(None),
+        TaskLookup::AmbiguousPrefix(ids) => {
+            return Err(TskError::Other(format!(
+                "Ambiguous task prefix '{name}': matches {}",
+                ids.join(", ")
+            )));
+        }
+    };
+    let checkout = &task.repo_path;
+    if !checkout.is_dir() {
+        return Ok(None);
+    }
+    let Some(kind) = crate::vcs::vcs_kind_at(checkout) else {
+        return Ok(None);
+    };
+    if crate::vcs::checkout_belongs_to_repo(source_root, checkout, kind)? {
+        Ok(Some(checkout.clone()))
+    } else {
+        Ok(None)
+    }
+}
 
 pub struct TaskService {
     registry: Registry,
@@ -400,7 +494,8 @@ impl TaskService {
             })?;
         }
 
-        crate::task_repo::provision_task_checkout(&resolved, &task_id)?;
+        let revision = resolve_create_fork(&state, &resolved, cwd, &repo_options)?;
+        crate::task_repo::provision_task_checkout(&resolved, &task_id, revision.as_deref())?;
         let branch = crate::vcs::current_branch(&repo_path);
         let source_repo_path = match &resolved.setup {
             crate::task_repo::TaskRepoSetup::Linked { source_root, .. }
@@ -1492,6 +1587,7 @@ mod tests {
                 None,
                 crate::task_repo::TaskRepoOptions {
                     create_worktree: true,
+                    fork_from: crate::task_repo::ForkFrom::Default,
                     container_isolation: true,
                     defer_container_create: true,
                 },
@@ -1520,8 +1616,7 @@ mod tests {
                 None,
                 crate::task_repo::TaskRepoOptions {
                     create_worktree: false,
-                    container_isolation: false,
-                    defer_container_create: false,
+                    ..Default::default()
                 },
             )
             .unwrap();

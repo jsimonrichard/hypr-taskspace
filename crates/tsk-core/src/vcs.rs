@@ -103,11 +103,16 @@ fn jj_mutate(repo: &Path) -> Result<Command> {
 const JJ_WORKSPACE_LIST_TEMPLATE: &str = r#"name ++ "\t" ++ root ++ "\n""#;
 
 /// Create a git worktree or jj workspace under `dest` linked to `source_root`.
+///
+/// `revision` is a git commit-ish or jj revset used as the new checkout's
+/// start-point / `-r` parent. When `None`, git uses the source `HEAD` and jj
+/// uses `trunk()`/`main`.
 pub fn create_linked_checkout(
     source_root: &Path,
     dest: &Path,
     workspace_name: &str,
     kind: VcsKind,
+    revision: Option<&str>,
 ) -> Result<()> {
     if dest.is_dir() {
         return match linked_checkout_kind(dest) {
@@ -133,9 +138,12 @@ pub fn create_linked_checkout(
     }
 
     match kind {
-        VcsKind::Git => create_git_worktree(source_root, dest, workspace_name),
+        VcsKind::Git => create_git_worktree(source_root, dest, workspace_name, revision),
         VcsKind::Jj => {
-            let revision = resolve_jj_default_base(source_root);
+            let revision = match revision.filter(|r| !r.is_empty()) {
+                Some(rev) => Some(rev.to_string()),
+                None => resolve_jj_default_base(source_root),
+            };
             create_jj_workspace(source_root, dest, workspace_name, revision.as_deref())
         }
     }
@@ -176,7 +184,12 @@ pub fn git_branch_for_task(task_id: &str) -> String {
     format!("tsk-{task_id}")
 }
 
-fn create_git_worktree(source_root: &Path, dest: &Path, branch: &str) -> Result<()> {
+fn create_git_worktree(
+    source_root: &Path,
+    dest: &Path,
+    branch: &str,
+    start_point: Option<&str>,
+) -> Result<()> {
     let branch = format!("tsk-{branch}");
     let source = source_root.to_str().ok_or_else(|| {
         TskError::Other(format!(
@@ -188,17 +201,19 @@ fn create_git_worktree(source_root: &Path, dest: &Path, branch: &str) -> Result<
         .to_str()
         .ok_or_else(|| TskError::Other(format!("Invalid checkout path: {}", dest.display())))?;
 
-    let add_new_branch = Command::new("git")
-        .args([
-            "-C",
-            source,
-            "worktree",
-            "add",
-            "-b",
-            branch.as_str(),
-            dest_str,
-        ])
-        .output();
+    let mut add_args = vec![
+        "-C",
+        source,
+        "worktree",
+        "add",
+        "-b",
+        branch.as_str(),
+        dest_str,
+    ];
+    if let Some(rev) = start_point.filter(|r| !r.is_empty()) {
+        add_args.push(rev);
+    }
+    let add_new_branch = Command::new("git").args(&add_args).output();
     match add_new_branch {
         Ok(out) if out.status.success() => return Ok(()),
         Ok(out) => {
@@ -249,6 +264,169 @@ fn resolve_jj_default_base(source_root: &Path) -> Option<String> {
         }
     }
     None
+}
+
+/// Resolve a git commit-ish or jj revset to a commit id in `repo`.
+///
+/// Snapshots a jj working copy so `@` / `workspace@` reflect live files.
+pub fn resolve_revision_id(repo: &Path, kind: VcsKind, rev: &str) -> Result<String> {
+    let rev = rev.trim();
+    if rev.is_empty() {
+        return Err(TskError::UnknownRevision {
+            rev: rev.to_string(),
+            path: repo.to_path_buf(),
+        });
+    }
+    match kind {
+        VcsKind::Git => git_rev_parse(repo, rev),
+        VcsKind::Jj => {
+            let id = jj_template_live(repo, rev, "commit_id")?;
+            if id.is_empty() {
+                return Err(TskError::UnknownRevision {
+                    rev: rev.to_string(),
+                    path: repo.to_path_buf(),
+                });
+            }
+            Ok(id)
+        }
+    }
+}
+
+/// Live working-copy / HEAD commit of `checkout`.
+pub fn current_checkout_revision(checkout: &Path, kind: VcsKind) -> Result<String> {
+    match kind {
+        VcsKind::Git => git_rev_parse(checkout, "HEAD"),
+        VcsKind::Jj => resolve_revision_id(checkout, VcsKind::Jj, "@"),
+    }
+}
+
+/// Whether `checkout` is a workspace/worktree of `source_root`.
+pub fn checkout_belongs_to_repo(
+    source_root: &Path,
+    checkout: &Path,
+    kind: VcsKind,
+) -> Result<bool> {
+    let source = expand(source_root);
+    let checkout = expand(checkout);
+    if !checkout.is_dir() {
+        return Ok(false);
+    }
+    match kind {
+        VcsKind::Git => {
+            let a = git_common_dir(&source)?;
+            let b = git_common_dir(&checkout)?;
+            Ok(same_path(&a, &b))
+        }
+        VcsKind::Jj => {
+            let checkout_canon = std::fs::canonicalize(&checkout).unwrap_or(checkout);
+            Ok(jj_list_workspaces(&source)?.iter().any(|(_, root)| {
+                root.as_ref()
+                    .is_some_and(|path| same_path(path, &checkout_canon))
+            }))
+        }
+    }
+}
+
+/// Working-copy root for a named jj workspace in `source_root`.
+pub fn jj_workspace_checkout(source_root: &Path, workspace_name: &str) -> Result<PathBuf> {
+    let name = workspace_name.trim();
+    if name.is_empty() {
+        return Err(TskError::UnknownForkWorkspace {
+            name: workspace_name.to_string(),
+            path: source_root.to_path_buf(),
+        });
+    }
+    for (ws_name, root) in jj_list_workspaces(source_root)? {
+        if ws_name == name {
+            return root.ok_or_else(|| TskError::UnknownForkWorkspace {
+                name: name.to_string(),
+                path: source_root.to_path_buf(),
+            });
+        }
+    }
+    Err(TskError::UnknownForkWorkspace {
+        name: name.to_string(),
+        path: source_root.to_path_buf(),
+    })
+}
+
+fn same_path(a: &Path, b: &Path) -> bool {
+    let a = std::fs::canonicalize(a).unwrap_or_else(|_| a.to_path_buf());
+    let b = std::fs::canonicalize(b).unwrap_or_else(|_| b.to_path_buf());
+    a == b
+}
+
+fn git_rev_parse(repo: &Path, rev: &str) -> Result<String> {
+    let path = path_str(repo)?;
+    let out = Command::new("git")
+        .args([
+            "-C",
+            path,
+            "rev-parse",
+            "--verify",
+            &format!("{rev}^{{commit}}"),
+        ])
+        .output()
+        .map_err(|e| TskError::Other(format!("failed to run git rev-parse: {e}")))?;
+    if !out.status.success() {
+        return Err(TskError::UnknownRevision {
+            rev: rev.to_string(),
+            path: repo.to_path_buf(),
+        });
+    }
+    let id = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if id.is_empty() {
+        return Err(TskError::UnknownRevision {
+            rev: rev.to_string(),
+            path: repo.to_path_buf(),
+        });
+    }
+    Ok(id)
+}
+
+fn git_common_dir(repo: &Path) -> Result<PathBuf> {
+    let path = path_str(repo)?;
+    let out = Command::new("git")
+        .args(["-C", path, "rev-parse", "--git-common-dir"])
+        .output()
+        .map_err(|e| TskError::Other(format!("failed to run git rev-parse: {e}")))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        return Err(TskError::Other(format!(
+            "git rev-parse --git-common-dir failed in {}: {}",
+            repo.display(),
+            stderr.trim()
+        )));
+    }
+    let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if raw.is_empty() {
+        return Err(TskError::Other(format!(
+            "git rev-parse --git-common-dir returned empty for {}",
+            repo.display()
+        )));
+    }
+    let dir = PathBuf::from(&raw);
+    let absolute = if dir.is_absolute() {
+        dir
+    } else {
+        expand(repo).join(dir)
+    };
+    Ok(std::fs::canonicalize(&absolute).unwrap_or(absolute))
+}
+
+/// Snapshot the working copy, then evaluate a jj template (for live `@`).
+fn jj_template_live(checkout: &Path, revset: &str, template: &str) -> Result<String> {
+    let out = jj_mutate(checkout)?
+        .args(["log", "-r", revset, "-T", template, "--no-graph"])
+        .output()
+        .map_err(|e| TskError::Other(format!("failed to run jj log: {e}")))?;
+    if !out.status.success() {
+        return Err(TskError::UnknownRevision {
+            rev: revset.to_string(),
+            path: checkout.to_path_buf(),
+        });
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
 /// Stop tracking a jj workspace without deleting files (e.g. archive).
@@ -1432,11 +1610,215 @@ mod tests {
             .join("t1")
             .join("workspace")
             .join("main");
-        create_linked_checkout(&source, &dest, "t1", VcsKind::Git).unwrap();
+        create_linked_checkout(&source, &dest, "t1", VcsKind::Git, None).unwrap();
         assert!(dest.is_dir());
         assert!(is_git_worktree(&dest));
         remove_linked_checkout(&dest, Some(&source), Some("t1")).unwrap();
         assert!(!dest.exists());
+    }
+
+    fn git_commit(repo: &Path, message: &str) -> String {
+        let repo_str = repo.to_str().unwrap();
+        for args in [
+            &["config", "user.email", "tsk@test"][..],
+            &["config", "user.name", "tsk"][..],
+        ] {
+            let mut cmd = Command::new("git");
+            cmd.arg("-C").arg(repo_str);
+            cmd.args(args);
+            run_checked(&mut cmd, "git config").unwrap();
+        }
+        run_checked(
+            Command::new("git").args(["-C", repo_str, "add", "-A"]),
+            "git add",
+        )
+        .unwrap();
+        run_checked(
+            Command::new("git").args(["-C", repo_str, "commit", "-m", message, "--allow-empty"]),
+            "git commit",
+        )
+        .unwrap();
+        git_rev_parse(repo, "HEAD").unwrap()
+    }
+
+    #[test]
+    fn git_worktree_from_explicit_revision() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("main");
+        init_scratch_repo(&source).unwrap();
+        let first = git_commit(&source, "first");
+        fs::write(source.join("later.txt"), "on main").unwrap();
+        let later = git_commit(&source, "later");
+        assert_ne!(first, later);
+
+        let dest = dir
+            .path()
+            .join("tasks")
+            .join("told")
+            .join("workspace")
+            .join("main");
+        create_linked_checkout(&source, &dest, "told", VcsKind::Git, Some(&first)).unwrap();
+        assert_eq!(git_rev_parse(&dest, "HEAD").unwrap(), first);
+        assert!(!dest.join("later.txt").exists());
+    }
+
+    #[test]
+    fn git_unknown_revision_errors() {
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("main");
+        init_scratch_repo(&source).unwrap();
+        git_commit(&source, "init");
+        let err = resolve_revision_id(&source, VcsKind::Git, "definitely-missing").unwrap_err();
+        assert!(matches!(err, TskError::UnknownRevision { .. }));
+    }
+
+    fn jj_available() -> bool {
+        Command::new("jj")
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
+    fn init_jj_repo(source: &Path) {
+        fs::create_dir_all(source).unwrap();
+        run_checked(
+            Command::new("jj").args(["git", "init", "--colocate", source.to_str().unwrap()]),
+            "jj git init",
+        )
+        .unwrap_or_else(|_| {
+            run_checked(
+                Command::new("jj").args(["git", "init", source.to_str().unwrap()]),
+                "jj git init",
+            )
+            .unwrap();
+        });
+    }
+
+    #[test]
+    fn jj_workspace_from_explicit_revision_not_trunk() {
+        if !jj_available() {
+            eprintln!("skipping jj_workspace_from_explicit_revision_not_trunk: jj not available");
+            return;
+        }
+
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("main");
+        init_jj_repo(&source);
+        fs::write(source.join("main.txt"), "on main").unwrap();
+        run_checked(
+            Command::new("jj").args(["-R", source.to_str().unwrap(), "describe", "-m", "main tip"]),
+            "jj describe main",
+        )
+        .unwrap();
+        let main_commit = jj_template(&source, "@", "commit_id").unwrap();
+        run_checked(
+            Command::new("jj").args([
+                "-R",
+                source.to_str().unwrap(),
+                "bookmark",
+                "set",
+                "main",
+                "-r",
+                "@",
+            ]),
+            "jj bookmark set main",
+        )
+        .unwrap();
+        run_checked(
+            Command::new("jj").args(["-R", source.to_str().unwrap(), "new"]),
+            "jj new feature",
+        )
+        .unwrap();
+        fs::write(source.join("feature.txt"), "feature work").unwrap();
+        run_checked(
+            Command::new("jj").args([
+                "-R",
+                source.to_str().unwrap(),
+                "describe",
+                "-m",
+                "feature tip",
+            ]),
+            "jj describe feature",
+        )
+        .unwrap();
+        let feature_commit = jj_template_live(&source, "@", "commit_id").unwrap();
+        assert_ne!(main_commit, feature_commit);
+
+        let dest = dir
+            .path()
+            .join("tasks")
+            .join("tfrom")
+            .join("workspace")
+            .join("main");
+        create_linked_checkout(&source, &dest, "tfrom", VcsKind::Jj, Some(&feature_commit))
+            .unwrap();
+        let parent = jj_template(&dest, "@-", "commit_id").unwrap();
+        assert_eq!(parent, feature_commit);
+        assert_ne!(parent, main_commit);
+    }
+
+    #[test]
+    fn jj_from_current_uses_workspace_working_copy() {
+        if !jj_available() {
+            eprintln!("skipping jj_from_current_uses_workspace_working_copy: jj not available");
+            return;
+        }
+
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("main");
+        init_jj_repo(&source);
+        fs::write(source.join("main.txt"), "on main").unwrap();
+        run_checked(
+            Command::new("jj").args(["-R", source.to_str().unwrap(), "describe", "-m", "main tip"]),
+            "jj describe main",
+        )
+        .unwrap();
+        run_checked(
+            Command::new("jj").args([
+                "-R",
+                source.to_str().unwrap(),
+                "bookmark",
+                "set",
+                "main",
+                "-r",
+                "@",
+            ]),
+            "jj bookmark set main",
+        )
+        .unwrap();
+
+        let mid = dir
+            .path()
+            .join("tasks")
+            .join("tmid")
+            .join("workspace")
+            .join("main");
+        create_linked_checkout(&source, &mid, "tmid", VcsKind::Jj, None).unwrap();
+        fs::write(mid.join("side.txt"), "side work").unwrap();
+        run_checked(
+            Command::new("jj").args(["-R", mid.to_str().unwrap(), "describe", "-m", "side tip"]),
+            "jj describe side",
+        )
+        .unwrap();
+        let side = current_checkout_revision(&mid, VcsKind::Jj).unwrap();
+
+        let dest = dir
+            .path()
+            .join("tasks")
+            .join("tcur")
+            .join("workspace")
+            .join("main");
+        let resolved = crate::task_repo::ForkFrom::Current {
+            fallback_task_id: None,
+        }
+        .resolve_revision(&source, VcsKind::Jj, Some(&mid), None)
+        .unwrap()
+        .expect("current revision");
+        assert_eq!(resolved, side);
+
+        create_linked_checkout(&source, &dest, "tcur", VcsKind::Jj, Some(&resolved)).unwrap();
+        assert_eq!(jj_template(&dest, "@-", "commit_id").unwrap(), side);
     }
 
     #[test]
@@ -1461,7 +1843,7 @@ mod tests {
             .join("tabc123")
             .join("workspace")
             .join("main");
-        create_linked_checkout(&source, &dest, "tabc123", VcsKind::Git).unwrap();
+        create_linked_checkout(&source, &dest, "tabc123", VcsKind::Git, None).unwrap();
         fs::write(dest.join("local.txt"), "local only").unwrap();
 
         detach_linked_checkout(&dest, Some(&source), Some("tabc123")).unwrap();
@@ -1532,7 +1914,7 @@ mod tests {
             .join("tjj123")
             .join("workspace")
             .join("main");
-        create_linked_checkout(&source, &dest, "tjj123", VcsKind::Jj).unwrap();
+        create_linked_checkout(&source, &dest, "tjj123", VcsKind::Jj, None).unwrap();
 
         fs::write(dest.join("local.txt"), "jj local only").unwrap();
         run_checked(
@@ -1669,7 +2051,7 @@ mod tests {
             .join("tjjempty")
             .join("workspace")
             .join("main");
-        create_linked_checkout(&source, &dest, "tjjempty", VcsKind::Jj).unwrap();
+        create_linked_checkout(&source, &dest, "tjjempty", VcsKind::Jj, None).unwrap();
 
         // Non-empty described commit, then empty child via jj new.
         fs::write(dest.join("local.txt"), "task file").unwrap();
@@ -1792,14 +2174,6 @@ mod tests {
         assert_ne!(a.base_commit_id, b.base_commit_id);
     }
 
-    fn jj_available() -> bool {
-        Command::new("jj")
-            .arg("--version")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
-    }
-
     #[test]
     fn parse_jj_workspace_list_reads_name_and_root() {
         let parsed = parse_jj_workspace_list(
@@ -1910,7 +2284,7 @@ mod tests {
             .join("tjjlive")
             .join("workspace")
             .join("main");
-        create_linked_checkout(&source, &dest, "tjjlive", VcsKind::Jj).unwrap();
+        create_linked_checkout(&source, &dest, "tjjlive", VcsKind::Jj, None).unwrap();
         fs::write(dest.join("local.txt"), "must survive false-negative relink").unwrap();
 
         let err = relink_forgotten_jj_workspace(&source, &dest, "tjjlive").unwrap_err();

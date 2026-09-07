@@ -498,6 +498,7 @@ fn dispatch(service: Arc<Mutex<TaskService>>, method: &str, params: Value) -> Re
                 create_worktree,
                 container_isolation,
                 defer_container_create,
+                fork_from: crate::task_repo::ForkFrom::from_daemon_params(&params)?,
             };
             let task = svc.create_task(name, switch, repo, cwd.as_deref(), repo_options)?;
             Ok(serde_json::to_value(task).map_err(|e| TskError::Other(e.to_string()))?)

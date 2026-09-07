@@ -788,6 +788,7 @@ impl App {
             create_worktree,
             container_isolation,
             defer_container_create: container_isolation,
+            fork_from: tsk_core::ForkFrom::Default,
         };
         match self.client.create_task(&name, true, repo, repo_options) {
             Ok(task) => {

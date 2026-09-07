@@ -122,6 +122,9 @@ tsk task new my-feature              # git/jj from cwd (or scratch if none)
 tsk task new notes --scratch         # empty workspace under the task home
 tsk task new fix --repo-path /path/to/checkout
 tsk task new main --no-worktree      # use the main checkout (no worktree)
+tsk task new followup --from-current # fork from this checkout's HEAD / jj @
+tsk task new hotfix --from main      # explicit git commit-ish or jj revset
+tsk task new next --from-workspace t231590d8
 tsk task new iso --container         # experimental Distrobox isolation
 tsk task list
 tsk task switch my-feature
@@ -132,6 +135,8 @@ tsk task terminal                    # shell in the task checkout (Distrobox whe
 tsk task editor                      # Cursor/VS Code (Distrobox when isolation is on)
 tsk task browser                     # browser (Distrobox when isolation is on)
 ```
+
+Linked checkouts default to `trunk()`/`main` (jj) or the source `HEAD` (git). `--from-current` uses the checkout you are in (the current task workspace, or a git/jj root tsk can detect). If cwd is not a repo but `TSK_TASK_ID` is set, that task's checkout is used. `--from` is a git commit-ish or jj revset (including `workspace@`). `--from-workspace` names a jj workspace or another tsk task of the same repo.
 
 There is **experimental** support for container isolation with Distrobox: pass `--container` on the CLI or enable **Distrobox isolation** in the new-task form. Terminals, editor, and browser then launch via `distrobox enter`. Image defaults live under `[distrobox]` in `~/.config/tsk/config.toml`.
 

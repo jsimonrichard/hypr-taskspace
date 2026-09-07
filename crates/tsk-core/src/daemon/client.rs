@@ -366,6 +366,7 @@ impl DaemonClient {
             "container_isolation": repo_options.container_isolation,
             "defer_container_create": repo_options.defer_container_create,
         });
+        repo_options.fork_from.write_daemon_params(&mut body);
         if let Value::Object(mut repo_params) = repo.to_daemon_params(cwd.as_deref()) {
             body.as_object_mut().unwrap().append(&mut repo_params);
         }

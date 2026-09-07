@@ -15,7 +15,7 @@ use tsk_core::{
     run_native_host, session_path, stop_daemon, systemctl_is_active, systemd_restart,
     systemd_start, systemd_stop, tail_hypr_log, tail_raw, trace_path, uninstall_hypr,
     uninstall_waybar, unregister_repo, version_info, walker_exec, walker_terminal,
-    walker_watch_launch, workspace_module_key, ControlUi, DaemonClient, DaemonServer,
+    walker_watch_launch, workspace_module_key, ControlUi, DaemonClient, DaemonServer, ForkFrom,
     InstallAllOptions, InstallBinsOptions, InstallChromiumOptions, InstallHyprOptions,
     InstallPluginOptions, InstallProfile, InstallWalkerOptions, InstallWaybarOptions,
     OmarchyInstallOptions, Registry, Result, TaskRepoSource, TaskService, TaskStatus, TskError,
@@ -369,6 +369,15 @@ enum TaskCommands {
             help = "Create a Distrobox container and launch terminals/editors/browsers via distrobox enter"
         )]
         container: bool,
+        /// Git commit-ish or jj revset to use as the new checkout's parent.
+        #[arg(long, value_name = "REV", conflicts_with_all = ["from_current", "from_workspace"])]
+        from: Option<String>,
+        /// Fork from the current checkout's HEAD / working-copy change.
+        #[arg(long, conflicts_with_all = ["from", "from_workspace"])]
+        from_current: bool,
+        /// Fork from this jj workspace or tsk task checkout (same repo).
+        #[arg(long, value_name = "NAME", conflicts_with_all = ["from", "from_current"])]
+        from_workspace: Option<String>,
     },
     List {
         #[arg(long)]
@@ -652,6 +661,9 @@ fn run() -> Result<()> {
                 repo_path,
                 no_worktree,
                 container,
+                from,
+                from_current,
+                from_workspace,
             } => cmd_task_new(
                 &name,
                 !no_switch,
@@ -659,6 +671,9 @@ fn run() -> Result<()> {
                 repo_path.as_deref(),
                 no_worktree,
                 container,
+                from.as_deref(),
+                from_current,
+                from_workspace.as_deref(),
             ),
             TaskCommands::List { json, archived } => cmd_task_list(json, archived),
             TaskCommands::Switch { name_or_id } => cmd_task_switch(&name_or_id),
@@ -1468,11 +1483,21 @@ fn cmd_task_new(
     repo_path: Option<&std::path::Path>,
     no_worktree: bool,
     container: bool,
+    from: Option<&str>,
+    from_current: bool,
+    from_workspace: Option<&str>,
 ) -> Result<()> {
     if scratch && repo_path.is_some() {
         return Err(TskError::Other(
             "Use either --scratch or --repo-path, not both".into(),
         ));
+    }
+    let fork_from = parse_task_fork_from(from, from_current, from_workspace)?;
+    if scratch && !fork_from.is_default() {
+        return Err(TskError::ForkRequiresLinkedCheckout);
+    }
+    if no_worktree && !fork_from.is_default() {
+        return Err(TskError::ForkRequiresLinkedCheckout);
     }
     let repo = match (scratch, repo_path) {
         (true, None) => TaskRepoSource::Scratch,
@@ -1484,6 +1509,7 @@ fn cmd_task_new(
         create_worktree: !no_worktree,
         container_isolation: container,
         defer_container_create: container,
+        fork_from,
     };
     // Defer switch when creating a container so Distrobox progress stays visible
     // (switch closes the task TUI / changes focus mid-create).
@@ -1520,6 +1546,39 @@ fn cmd_task_new(
         }
     }
     Ok(())
+}
+
+fn parse_task_fork_from(
+    from: Option<&str>,
+    from_current: bool,
+    from_workspace: Option<&str>,
+) -> Result<ForkFrom> {
+    match (from, from_current, from_workspace) {
+        (None, false, None) => Ok(ForkFrom::Default),
+        (Some(rev), false, None) => {
+            let rev = rev.trim();
+            if rev.is_empty() {
+                return Err(TskError::Other("--from requires a revision".into()));
+            }
+            Ok(ForkFrom::Revision(rev.to_string()))
+        }
+        (None, true, None) => Ok(ForkFrom::Current {
+            fallback_task_id: std::env::var("TSK_TASK_ID")
+                .ok()
+                .map(|id| id.trim().to_string())
+                .filter(|id| !id.is_empty()),
+        }),
+        (None, false, Some(name)) => {
+            let name = name.trim();
+            if name.is_empty() {
+                return Err(TskError::Other("--from-workspace requires a name".into()));
+            }
+            Ok(ForkFrom::Workspace(name.to_string()))
+        }
+        _ => Err(TskError::Other(
+            "Use only one of --from, --from-current, or --from-workspace".into(),
+        )),
+    }
 }
 
 fn cmd_repo_add(dir: Option<&std::path::Path>) -> Result<()> {

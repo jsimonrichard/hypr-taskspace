@@ -5,7 +5,10 @@ use serde_json::{json, Value};
 use crate::error::{Result, TskError};
 use crate::repos::normalize_repo_path;
 use crate::task_paths::{ensure_scratch_workspace, linked_checkout_path, scratch_checkout_path};
-use crate::vcs::{create_linked_checkout, detect_vcs_root, vcs_kind_at, VcsKind};
+use crate::vcs::{
+    checkout_belongs_to_repo, create_linked_checkout, current_checkout_revision, detect_vcs_root,
+    jj_workspace_checkout, resolve_revision_id, vcs_kind_at, VcsKind,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TaskRepoSource {
@@ -31,7 +34,137 @@ pub enum TaskRepoSetup {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Where a new linked checkout should start from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ForkFrom {
+    /// jj: `trunk()`/`main`. git: source `HEAD`.
+    Default,
+    /// Git commit-ish or jj revset, evaluated in the source repo.
+    Revision(String),
+    /// Live `@` / `HEAD` of the current checkout (`cwd`, else `fallback_task_id`).
+    Current { fallback_task_id: Option<String> },
+    /// Named jj workspace, or a tsk task checkout of the same repo.
+    Workspace(String),
+}
+
+impl ForkFrom {
+    pub fn is_default(&self) -> bool {
+        matches!(self, Self::Default)
+    }
+
+    pub fn from_daemon_params(params: &Value) -> Result<Self> {
+        match params.get("fork_from").and_then(|v| v.as_str()) {
+            None | Some("default") | Some("") => Ok(Self::Default),
+            Some("revision") => {
+                let rev = params
+                    .get("fork_revision")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .ok_or_else(|| TskError::Other("fork_revision required".into()))?;
+                Ok(Self::Revision(rev.to_string()))
+            }
+            Some("current") => {
+                let fallback_task_id = params
+                    .get("current_task_id")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(ToString::to_string);
+                Ok(Self::Current { fallback_task_id })
+            }
+            Some("workspace") => {
+                let name = params
+                    .get("fork_workspace")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .ok_or_else(|| TskError::Other("fork_workspace required".into()))?;
+                Ok(Self::Workspace(name.to_string()))
+            }
+            Some(other) => Err(TskError::Other(format!("unknown fork_from '{other}'"))),
+        }
+    }
+
+    pub fn write_daemon_params(&self, body: &mut Value) {
+        let Some(obj) = body.as_object_mut() else {
+            return;
+        };
+        match self {
+            Self::Default => {
+                obj.insert("fork_from".into(), json!("default"));
+            }
+            Self::Revision(rev) => {
+                obj.insert("fork_from".into(), json!("revision"));
+                obj.insert("fork_revision".into(), json!(rev));
+            }
+            Self::Current { fallback_task_id } => {
+                obj.insert("fork_from".into(), json!("current"));
+                if let Some(id) = fallback_task_id {
+                    obj.insert("current_task_id".into(), json!(id));
+                }
+            }
+            Self::Workspace(name) => {
+                obj.insert("fork_from".into(), json!("workspace"));
+                obj.insert("fork_workspace".into(), json!(name));
+            }
+        }
+    }
+
+    /// Resolve to a commit id to pass to `create_linked_checkout`, or `None` for the VCS default.
+    pub fn resolve_revision(
+        &self,
+        source_root: &Path,
+        kind: VcsKind,
+        current_checkout: Option<&Path>,
+        named_checkout: Option<&Path>,
+    ) -> Result<Option<String>> {
+        match self {
+            Self::Default => Ok(None),
+            Self::Revision(rev) => Ok(Some(resolve_revision_id(source_root, kind, rev)?)),
+            Self::Current { .. } => {
+                let checkout = current_checkout.ok_or_else(|| TskError::NoCheckoutToFork {
+                    path: current_checkout_hint(current_checkout),
+                })?;
+                ensure_fork_checkout_in_repo(source_root, checkout, kind)?;
+                Ok(Some(current_checkout_revision(checkout, kind)?))
+            }
+            Self::Workspace(name) => {
+                let checkout = match named_checkout {
+                    Some(path) => path.to_path_buf(),
+                    None if kind == VcsKind::Jj => jj_workspace_checkout(source_root, name)?,
+                    None => {
+                        return Err(TskError::UnknownForkWorkspace {
+                            name: name.clone(),
+                            path: source_root.to_path_buf(),
+                        });
+                    }
+                };
+                ensure_fork_checkout_in_repo(source_root, &checkout, kind)?;
+                Ok(Some(current_checkout_revision(&checkout, kind)?))
+            }
+        }
+    }
+}
+
+fn current_checkout_hint(current_checkout: Option<&Path>) -> PathBuf {
+    current_checkout
+        .map(Path::to_path_buf)
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+fn ensure_fork_checkout_in_repo(source_root: &Path, checkout: &Path, kind: VcsKind) -> Result<()> {
+    if checkout_belongs_to_repo(source_root, checkout, kind)? {
+        return Ok(());
+    }
+    Err(TskError::ForkCheckoutNotInRepo {
+        checkout: checkout.to_path_buf(),
+        source_root: source_root.to_path_buf(),
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskRepoOptions {
     pub create_worktree: bool,
     /// Create a Distrobox container and launch apps via `distrobox enter`.
@@ -39,6 +172,7 @@ pub struct TaskRepoOptions {
     /// When true with `container_isolation`, skip Distrobox create in `create_task`
     /// so the caller (e.g. TUI) can stream setup progress itself.
     pub defer_container_create: bool,
+    pub fork_from: ForkFrom,
 }
 
 impl Default for TaskRepoOptions {
@@ -47,6 +181,7 @@ impl Default for TaskRepoOptions {
             create_worktree: true,
             container_isolation: false,
             defer_container_create: false,
+            fork_from: ForkFrom::Default,
         }
     }
 }
@@ -181,13 +316,31 @@ impl TaskRepoSource {
 }
 
 /// Create the on-disk checkout for a task (scratch workspace or linked worktree/workspace).
-pub fn provision_task_checkout(resolved: &ResolvedTaskRepo, task_id: &str) -> Result<()> {
+pub fn provision_task_checkout(
+    resolved: &ResolvedTaskRepo,
+    task_id: &str,
+    revision: Option<&str>,
+) -> Result<()> {
     match &resolved.setup {
-        TaskRepoSetup::Scratch => ensure_scratch_workspace(&resolved.checkout_path),
-        TaskRepoSetup::Direct { .. } => Ok(()),
-        TaskRepoSetup::Linked { source_root, kind } => {
-            create_linked_checkout(source_root, &resolved.checkout_path, task_id, *kind)
+        TaskRepoSetup::Scratch => {
+            if revision.is_some() {
+                return Err(TskError::ForkRequiresLinkedCheckout);
+            }
+            ensure_scratch_workspace(&resolved.checkout_path)
         }
+        TaskRepoSetup::Direct { .. } => {
+            if revision.is_some() {
+                return Err(TskError::ForkRequiresLinkedCheckout);
+            }
+            Ok(())
+        }
+        TaskRepoSetup::Linked { source_root, kind } => create_linked_checkout(
+            source_root,
+            &resolved.checkout_path,
+            task_id,
+            *kind,
+            revision,
+        ),
     }
 }
 
@@ -248,8 +401,7 @@ mod tests {
                 Some(&repo),
                 &TaskRepoOptions {
                     create_worktree: false,
-                    container_isolation: false,
-                    defer_container_create: false,
+                    ..Default::default()
                 },
             )
             .unwrap();
@@ -269,13 +421,67 @@ mod tests {
     }
 
     #[test]
+    fn daemon_params_fork_from_roundtrip() {
+        let cases = [
+            ForkFrom::Default,
+            ForkFrom::Revision("abc123".into()),
+            ForkFrom::Current {
+                fallback_task_id: Some("t231590d8".into()),
+            },
+            ForkFrom::Workspace("default".into()),
+        ];
+        for fork in cases {
+            let mut body = json!({});
+            fork.write_daemon_params(&mut body);
+            assert_eq!(ForkFrom::from_daemon_params(&body).unwrap(), fork);
+        }
+    }
+
+    #[test]
+    fn fork_from_default_resolves_to_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("project");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        assert_eq!(
+            ForkFrom::Default
+                .resolve_revision(&repo, VcsKind::Git, None, None)
+                .unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn provision_scratch_rejects_a_revision() {
+        let dir = tempfile::tempdir().unwrap();
+        let task_home = dir.path().join("tasks").join("tabc");
+        let resolved = TaskRepoSource::Scratch
+            .resolve(&task_home, None, &TaskRepoOptions::default())
+            .unwrap();
+        let err = provision_task_checkout(&resolved, "tabc", Some("main")).unwrap_err();
+        assert!(matches!(err, TskError::ForkRequiresLinkedCheckout));
+    }
+
+    #[test]
+    fn fork_from_current_requires_a_checkout() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("project");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        let err = ForkFrom::Current {
+            fallback_task_id: None,
+        }
+        .resolve_revision(&repo, VcsKind::Git, None, None)
+        .unwrap_err();
+        assert!(matches!(err, TskError::NoCheckoutToFork { .. }));
+    }
+
+    #[test]
     fn provision_scratch_workspace_is_empty_dir_without_git() {
         let dir = tempfile::tempdir().unwrap();
         let task_home = dir.path().join("tasks").join("tabc");
         let resolved = TaskRepoSource::Scratch
             .resolve(&task_home, None, &TaskRepoOptions::default())
             .unwrap();
-        provision_task_checkout(&resolved, "tabc").unwrap();
+        provision_task_checkout(&resolved, "tabc", None).unwrap();
         assert!(resolved.checkout_path.is_dir());
         assert!(!resolved.checkout_path.join(".git").exists());
     }
