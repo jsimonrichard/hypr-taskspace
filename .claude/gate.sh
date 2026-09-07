@@ -9,7 +9,8 @@
 # CLAUDE_GATE_VERBOSE=1 is equivalent to -v. Progress goes to stdout when run by
 # hand and to stderr under a hook, where stdout is parsed as JSON.
 #
-# Wiring: .claude/settings.json (Claude Code), .cursor/hooks.json (Cursor).
+# Wiring: .claude/settings.json (Claude Code); Cursor uses the user-global
+# orch hooks (~/.cursor/hooks.json).
 # Works under git and Jujutsu (jj), colocated or not; jj wins when both are
 # present, matching vcs_kind_at() in tsk-core.
 #
@@ -98,7 +99,13 @@ case "$EVENT" in
     printf '%s' "$CMD" | grep -Eq \
       -e '(^|[;&|])[[:space:]]*git([[:space:]]+-[^[:space:]]+)*[[:space:]]+push([[:space:]]|$)' \
       -e '(^|[;&|])[[:space:]]*jj([[:space:]]+-[^[:space:]]+)*[[:space:]]+git([[:space:]]+-[^[:space:]]+)*[[:space:]]+push([[:space:]]|$)' \
-      || exit 0
+      || {
+        # failClosed treats empty stdout as invalid JSON and blocks the command.
+        case "$EVENT" in
+          cursor-shell) printf '%s\n' '{"permission":"allow"}' ;;
+        esac
+        exit 0
+      }
     ;;
 esac
 

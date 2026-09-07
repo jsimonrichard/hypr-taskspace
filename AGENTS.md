@@ -136,8 +136,9 @@ available to you:
 | A `git push` command | `.claude/gate.sh full` | The push is **denied**; the failure is handed to you |
 | End of a turn, with uncommitted changes | `.claude/gate.sh fast` | The failure is handed back for you to fix before finishing |
 
-Wiring lives in `.claude/settings.json` (Claude Code) and `.cursor/hooks.json`
-(Cursor). Run it yourself at any point — don't wait to be blocked:
+Wiring lives in `.claude/settings.json` (Claude Code) and the user-global
+Cursor hooks from `orch agents install --global`. Run it yourself at any
+point — don't wait to be blocked:
 
 ```bash
 .claude/gate.sh fast       # the quick checks
