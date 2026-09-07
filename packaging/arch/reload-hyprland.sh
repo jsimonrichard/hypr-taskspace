@@ -1,6 +1,11 @@
 #!/bin/bash
-# Best-effort hyprctl reload, tskd restart, and Omarchy plugin refresh.
-# Invoked as root from the alpm PostTransaction hook; never fail the install.
+# hyprctl reload, tskd restart, and Omarchy plugin refresh after a tsk
+# package transaction. Invoked as root from the alpm PostTransaction hook.
+#
+# Plugin files are copied even when the shell cannot restart. A locked
+# session (or any other `omarchy restart shell` failure) fails this hook
+# with a warning — the package is already installed, but the running
+# overlay is still the previous QML.
 
 shopt -s nullglob
 
@@ -13,14 +18,17 @@ fi
 
 plugin_src=/usr/share/tsk/omarchy-plugin
 omarchy_path=${OMARCHY_PATH:-/usr/share/omarchy}
+hook_failed=0
+refreshed_uids=" "
 
-# Hyprland sources /usr/share/tsk/hypr directly. omarchy-shell does not — it
-# loads ~/.config/omarchy/plugins/tsk.taskspace, a copy from `tsk install omarchy`.
+# Hyprland sources /usr/share/tsk/hypr directly. omarchy-shell does not —
+# it loads ~/.config/omarchy/plugins/tsk.taskspace, a copy from
+# `tsk install omarchy`.
 refresh_omarchy_plugin() {
-  local user=$1 uid=$2 runtime=$3
-  local home dest overlay tsk_cmd src name group
+  local user=$1 runtime=$2 sig=$3
+  local home dest overlay tsk_cmd src name group out rc
 
-  home=$(getent passwd "$uid" | cut -d: -f6) || return 0
+  home=$(getent passwd "$user" | cut -d: -f6) || return 0
   [[ -n $home ]] || return 0
   dest="$home/.config/omarchy/plugins/tsk.taskspace"
   [[ -d $dest && -d $plugin_src ]] || return 0
@@ -49,11 +57,22 @@ refresh_omarchy_plugin() {
     rm -f "$tmp"
   done
 
-  runuser -u "$user" -- env \
+  out=$(runuser -u "$user" -- env \
+    PATH="/usr/bin:/usr/local/bin" \
     XDG_RUNTIME_DIR="$runtime" \
+    HYPRLAND_INSTANCE_SIGNATURE="$sig" \
     DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime/bus" \
     OMARCHY_PATH="$omarchy_path" \
-    omarchy-shell -q shell rescanPlugins >/dev/null 2>&1 || true
+    omarchy restart shell 2>&1)
+  rc=$?
+  if [[ $rc -ne 0 ]]; then
+    echo "hypr-taskspace: warning: Omarchy shell was not restarted." >&2
+    echo "Plugin files were updated. After unlock, run: omarchy restart shell" >&2
+    if [[ -n $out ]]; then
+      echo "$out" >&2
+    fi
+    return "$rc"
+  fi
 }
 
 for socket in /run/user/*/hypr/*/.socket.sock; do
@@ -78,7 +97,13 @@ for socket in /run/user/*/hypr/*/.socket.sock; do
     DBUS_SESSION_BUS_ADDRESS="unix:path=$runtime/bus" \
     systemctl --user try-restart tskd.service >/dev/null 2>&1 || true
 
-  refresh_omarchy_plugin "$user" "$uid" "$runtime"
+  if [[ $refreshed_uids == *" $uid "* ]]; then
+    continue
+  fi
+  refreshed_uids+="$uid "
+  if ! refresh_omarchy_plugin "$user" "$runtime" "$sig"; then
+    hook_failed=1
+  fi
 done
 
-exit 0
+exit "$hook_failed"

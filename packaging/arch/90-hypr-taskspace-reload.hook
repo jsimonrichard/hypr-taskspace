@@ -3,7 +3,8 @@
 # Replacing /usr/bin/tsk does not restart tskd; the old process keeps the deleted
 # binary and taskspace switches (TUI / SUPER+H) stay on the previous code.
 # omarchy-shell loads tsk.taskspace from ~/.config/omarchy/plugins, not from
-# /usr/share/tsk, so the hook also refreshes that copy and rescanPlugins.
+# /usr/share/tsk, so the hook also refreshes that copy and runs
+# `omarchy restart shell`. A locked session fails the hook with a warning.
 
 [Trigger]
 Operation = Install
@@ -14,7 +15,7 @@ Target = usr/share/tsk/omarchy-plugin/*
 Target = usr/bin/tsk
 
 [Action]
-Description = Reloading Hyprland, tskd, and the Omarchy tsk.taskspace plugin after tsk update...
+Description = Reloading Hyprland, tskd, and restarting the Omarchy shell after tsk update...
 When = PostTransaction
 Depends = hyprland
 Exec = /usr/share/libalpm/scripts/hypr-taskspace-reload-hyprland
