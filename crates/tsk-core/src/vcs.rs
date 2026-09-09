@@ -435,6 +435,10 @@ pub fn detach_jj_workspace(source_root: &Path, workspace_name: &str) -> Result<(
 }
 
 /// Re-link a detached checkout to its source repo (e.g. restore from archive).
+///
+/// VCS kind comes from the source repo when we have one. A jj source must not
+/// fall through to `git worktree add` just because the checkout has a leftover
+/// `.git` file or no `.jj` after `workspace forget`.
 pub fn reattach_linked_checkout(
     checkout: &Path,
     source_root: Option<&Path>,
@@ -443,20 +447,27 @@ pub fn reattach_linked_checkout(
     if let Some(name) = workspace_name {
         recover_relink_backups(checkout, name)?;
     }
-    if !checkout.exists() {
-        return Ok(());
-    }
-    match linked_checkout_kind(checkout) {
+    let source = source_root.map(expand);
+    let kind = source
+        .as_deref()
+        .and_then(vcs_kind_at)
+        .or_else(|| linked_checkout_kind(checkout));
+    match kind {
         Some(VcsKind::Jj) => {
             let name = workspace_name
+                .map(str::trim)
+                .filter(|id| !id.is_empty())
                 .map(str::to_string)
                 .or_else(|| jj_workspace_name_at(checkout).ok())
                 .unwrap_or_default();
             if name.is_empty() {
-                return Ok(());
+                return if checkout.join(".jj").is_dir() {
+                    reconnect_jj_workspace(checkout)
+                } else {
+                    Ok(())
+                };
             }
-            let source = source_root
-                .map(|p| p.to_path_buf())
+            let source = source
                 .or_else(|| jj_repo_root_from_checkout(checkout))
                 .ok_or_else(|| {
                     TskError::Other(format!(
@@ -464,9 +475,20 @@ pub fn reattach_linked_checkout(
                         checkout.display()
                     ))
                 })?;
-            match jj_workspace_registered_at_source(&source, &name) {
-                Ok(true) => reconnect_jj_workspace(checkout),
-                Ok(false) => relink_forgotten_jj_workspace(&source, checkout, &name),
+            reattach_jj_workspace(&source, checkout, &name)
+        }
+        Some(VcsKind::Git) => reattach_git_worktree(source.as_deref(), checkout, workspace_name),
+        None => Ok(()),
+    }
+}
+
+fn reattach_jj_workspace(source: &Path, checkout: &Path, name: &str) -> Result<()> {
+    match jj_workspace_usable_at_checkout(source, checkout, name) {
+        Ok(true) => reconnect_jj_workspace(checkout),
+        Ok(false) => {
+            match jj_workspace_registered_at_source(source, name) {
+                Ok(true) => forget_jj_workspace(source, name)?,
+                Ok(false) => {}
                 Err(err) => {
                     // A failed `jj workspace list` must not be treated as "forgotten":
                     // relink moves the live tree aside, then `workspace add` fails if
@@ -475,33 +497,49 @@ pub fn reattach_linked_checkout(
                         "tsk: could not list jj workspaces for {}; skipping relink: {err}",
                         source.display()
                     );
-                    reconnect_jj_workspace(checkout).or(Err(err))
-                }
-            }
-        }
-        Some(VcsKind::Git) => reattach_git_worktree(source_root, checkout, workspace_name),
-        None => {
-            if let (Some(source), Some(task_id)) = (source_root, workspace_name) {
-                if vcs_kind_at(source) == Some(VcsKind::Jj) {
-                    return match jj_workspace_registered_at_source(source, task_id) {
-                        Ok(true) => reconnect_jj_workspace(checkout),
-                        Ok(false) => relink_forgotten_jj_workspace(source, checkout, task_id),
-                        Err(err) => {
-                            eprintln!(
-                                "tsk: could not list jj workspaces for {}; skipping relink: {err}",
-                                source.display()
-                            );
-                            Err(err)
-                        }
+                    return if checkout.join(".jj").is_dir() {
+                        reconnect_jj_workspace(checkout).or(Err(err))
+                    } else {
+                        Err(err)
                     };
                 }
-                if checkout.exists() && !checkout.join(".jj").is_dir() {
-                    return reattach_git_worktree(Some(source), checkout, Some(task_id));
-                }
             }
-            Ok(())
+            relink_forgotten_jj_workspace(source, checkout, name)
+        }
+        Err(err) => {
+            eprintln!(
+                "tsk: could not list jj workspaces for {}; skipping relink: {err}",
+                source.display()
+            );
+            if checkout.join(".jj").is_dir() {
+                reconnect_jj_workspace(checkout).or(Err(err))
+            } else {
+                Err(err)
+            }
         }
     }
+}
+
+/// Whether `name` is a live jj workspace whose working copy is `checkout`.
+///
+/// A registered name with a missing or other root is a ghost (dest deleted
+/// after `workspace add`, or leftover after a failed relink). An unrecorded
+/// root (pre-0.38) is live only when `checkout` still has `.jj`.
+fn jj_workspace_usable_at_checkout(source: &Path, checkout: &Path, name: &str) -> Result<bool> {
+    if !checkout.join(".jj").is_dir() {
+        return Ok(false);
+    }
+    let checkout_canon = std::fs::canonicalize(checkout).unwrap_or_else(|_| expand(checkout));
+    for (ws_name, root) in jj_list_workspaces(source)? {
+        if ws_name != name {
+            continue;
+        }
+        return Ok(match root {
+            Some(path) => same_path(&path, &checkout_canon),
+            None => true,
+        });
+    }
+    Ok(false)
 }
 
 fn reattach_git_worktree(
@@ -2201,6 +2239,146 @@ mod tests {
         )
         .unwrap();
         assert_eq!(linked_checkout_kind(&checkout), Some(VcsKind::Jj));
+    }
+
+    fn seed_jj_main_bookmark(source: &Path) {
+        run_checked(
+            Command::new("jj").args([
+                "-R",
+                source.to_str().unwrap(),
+                "bookmark",
+                "set",
+                "main",
+                "-r",
+                "@",
+            ]),
+            "jj bookmark set main",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn reattach_jj_source_ignores_leftover_git_worktree_file() {
+        if !jj_available() {
+            eprintln!(
+                "skipping reattach_jj_source_ignores_leftover_git_worktree_file: jj not available"
+            );
+            return;
+        }
+
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("main");
+        init_jj_repo(&source);
+        seed_jj_main_bookmark(&source);
+
+        let dest = dir
+            .path()
+            .join("tasks")
+            .join("tjjgit")
+            .join("workspace")
+            .join("main");
+        create_linked_checkout(&source, &dest, "tjjgit", VcsKind::Jj, None).unwrap();
+        fs::write(dest.join("local.txt"), "jj not git").unwrap();
+
+        detach_linked_checkout(&dest, Some(&source), Some("tjjgit")).unwrap();
+        let jj_dir = dest.join(".jj");
+        if jj_dir.exists() {
+            fs::remove_dir_all(&jj_dir).unwrap();
+        }
+        fs::write(
+            dest.join(".git"),
+            format!("gitdir: {}/.git/worktrees/tjjgit\n", source.display()),
+        )
+        .unwrap();
+        assert_eq!(linked_checkout_kind(&dest), Some(VcsKind::Git));
+        assert_eq!(vcs_kind_at(&source), Some(VcsKind::Jj));
+
+        reattach_linked_checkout(&dest, Some(&source), Some("tjjgit")).unwrap();
+        assert!(
+            dest.join(".jj").is_dir(),
+            "jj source must relink as a workspace, not git worktree add"
+        );
+        assert!(jj_workspace_registered_at_source(&source, "tjjgit").unwrap());
+        assert_eq!(
+            fs::read_to_string(dest.join("local.txt")).unwrap(),
+            "jj not git"
+        );
+    }
+
+    #[test]
+    fn reattach_jj_recovers_missing_checkout_from_relink_backup() {
+        if !jj_available() {
+            eprintln!(
+                "skipping reattach_jj_recovers_missing_checkout_from_relink_backup: jj not available"
+            );
+            return;
+        }
+
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("main");
+        init_jj_repo(&source);
+        seed_jj_main_bookmark(&source);
+
+        let dest = dir
+            .path()
+            .join("tasks")
+            .join("tjjmiss")
+            .join("workspace")
+            .join("main");
+        create_linked_checkout(&source, &dest, "tjjmiss", VcsKind::Jj, None).unwrap();
+        fs::write(dest.join("local.txt"), "from backup").unwrap();
+        detach_linked_checkout(&dest, Some(&source), Some("tjjmiss")).unwrap();
+
+        let backup = dest.parent().unwrap().join(".tjjmiss-relink-tmp");
+        fs::rename(&dest, &backup).unwrap();
+        assert!(!dest.exists());
+
+        reattach_linked_checkout(&dest, Some(&source), Some("tjjmiss")).unwrap();
+        assert!(dest.join(".jj").is_dir());
+        assert!(jj_workspace_registered_at_source(&source, "tjjmiss").unwrap());
+        assert_eq!(
+            fs::read_to_string(dest.join("local.txt")).unwrap(),
+            "from backup"
+        );
+        assert!(!backup.exists());
+    }
+
+    #[test]
+    fn reattach_jj_forgets_ghost_workspace_then_relinks() {
+        if !jj_available() {
+            eprintln!(
+                "skipping reattach_jj_forgets_ghost_workspace_then_relinks: jj not available"
+            );
+            return;
+        }
+
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("main");
+        init_jj_repo(&source);
+        seed_jj_main_bookmark(&source);
+
+        let dest = dir
+            .path()
+            .join("tasks")
+            .join("tjjghost")
+            .join("workspace")
+            .join("main");
+        create_linked_checkout(&source, &dest, "tjjghost", VcsKind::Jj, None).unwrap();
+        fs::write(dest.join("local.txt"), "ghost dest").unwrap();
+
+        let backup = dest.parent().unwrap().join(".tjjghost-relink-tmp");
+        fs::rename(&dest, &backup).unwrap();
+        assert!(jj_workspace_registered_at_source(&source, "tjjghost").unwrap());
+        assert!(!dest.exists());
+
+        reattach_linked_checkout(&dest, Some(&source), Some("tjjghost")).unwrap();
+        assert!(dest.join(".jj").is_dir());
+        assert!(jj_workspace_registered_at_source(&source, "tjjghost").unwrap());
+        assert_eq!(
+            fs::read_to_string(dest.join("local.txt")).unwrap(),
+            "ghost dest"
+        );
+        assert!(!backup.exists());
     }
 
     #[test]
