@@ -1682,6 +1682,125 @@ mod tests {
     }
 
     #[test]
+    fn archive_and_restore_reattaches_git_sibling() {
+        let dir = tempdir().unwrap();
+        let checkout = dir.path().join("checkout");
+        crate::vcs::init_scratch_repo(&checkout).unwrap();
+        run_git_commit(&checkout);
+        let svc = test_service(dir.path());
+        let task = svc
+            .create_task(
+                "My Feature",
+                false,
+                crate::task_repo::TaskRepoSource::Path(checkout),
+                None,
+                crate::task_repo::TaskRepoOptions::default(),
+            )
+            .unwrap();
+        let sibling = svc
+            .add_sibling_checkout("review", None, Some(&task.repo_path), None)
+            .unwrap();
+        std::fs::write(sibling.join("keep.txt"), "from sibling").unwrap();
+
+        let source = task.source_repo_path.as_deref().unwrap();
+        svc.archive_task(&task.id).unwrap();
+        assert!(!sibling.join(".git").exists());
+        assert!(sibling.join("keep.txt").is_file());
+        assert!(!task.repo_path.join(".git").exists());
+        assert!(!git_worktree_listed(source, &sibling));
+
+        svc.restore_task(&task.id).unwrap();
+        assert!(sibling.join(".git").exists());
+        assert!(task.repo_path.join(".git").exists());
+        assert!(git_worktree_listed(source, &sibling));
+        assert_eq!(
+            std::fs::read_to_string(sibling.join("keep.txt")).unwrap(),
+            "from sibling"
+        );
+        assert_eq!(
+            svc.load_state()
+                .unwrap()
+                .tasks
+                .get(&task.id)
+                .unwrap()
+                .status,
+            TaskStatus::Active
+        );
+    }
+
+    #[test]
+    fn archive_and_restore_reattaches_jj_sibling() {
+        if !std::process::Command::new("jj")
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+        {
+            eprintln!("skipping archive_and_restore_reattaches_jj_sibling: jj not available");
+            return;
+        }
+        let dir = tempdir().unwrap();
+        let source = dir.path().join("app");
+        std::fs::create_dir_all(&source).unwrap();
+        let src = source.to_str().unwrap();
+        let init = std::process::Command::new("jj")
+            .args(["git", "init", "--colocate", src])
+            .status()
+            .unwrap();
+        if !init.success() {
+            std::process::Command::new("jj")
+                .args(["git", "init", src])
+                .status()
+                .unwrap();
+        }
+        std::process::Command::new("jj")
+            .args(["-R", src, "describe", "-m", "init"])
+            .status()
+            .unwrap();
+        std::process::Command::new("jj")
+            .args(["-R", src, "bookmark", "set", "main", "-r", "@"])
+            .status()
+            .unwrap();
+        let svc = test_service(dir.path());
+        let task = svc
+            .create_task(
+                "Jj Feature",
+                false,
+                crate::task_repo::TaskRepoSource::Path(source),
+                None,
+                crate::task_repo::TaskRepoOptions::default(),
+            )
+            .unwrap();
+        let sibling = svc
+            .add_sibling_checkout("review", None, Some(&task.repo_path), None)
+            .unwrap();
+        std::fs::write(sibling.join("keep.txt"), "jj sibling").unwrap();
+        std::process::Command::new("jj")
+            .args([
+                "-R",
+                sibling.to_str().unwrap(),
+                "describe",
+                "-m",
+                "sibling work",
+            ])
+            .status()
+            .unwrap();
+
+        let source = task.source_repo_path.as_deref().unwrap();
+        let sibling_name = format!("{}-review", task.id);
+        svc.archive_task(&task.id).unwrap();
+        assert!(sibling.join("keep.txt").is_file());
+        assert!(!jj_workspace_listed(source, &sibling_name));
+        svc.restore_task(&task.id).unwrap();
+        assert!(sibling.join(".jj").is_dir());
+        assert!(jj_workspace_listed(source, &sibling_name));
+        assert_eq!(
+            std::fs::read_to_string(sibling.join("keep.txt")).unwrap(),
+            "jj sibling"
+        );
+    }
+
+    #[test]
     fn add_sibling_checkout_requires_a_task() {
         let dir = tempdir().unwrap();
         let svc = test_service(dir.path());
@@ -1794,5 +1913,39 @@ mod tests {
             .args(["-C", path, "commit", "--allow-empty", "-m", "init"])
             .status()
             .unwrap();
+    }
+
+    fn git_worktree_listed(source: &std::path::Path, checkout: &std::path::Path) -> bool {
+        let out = std::process::Command::new("git")
+            .args(["-C", source.to_str().unwrap(), "worktree", "list"])
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&out.stdout);
+        let canon = std::fs::canonicalize(checkout).unwrap_or_else(|_| checkout.to_path_buf());
+        text.lines().any(|line| {
+            line.split_whitespace().next().is_some_and(|p| {
+                std::path::Path::new(p) == checkout
+                    || std::fs::canonicalize(p).ok().as_ref() == Some(&canon)
+            })
+        })
+    }
+
+    fn jj_workspace_listed(source: &std::path::Path, name: &str) -> bool {
+        let out = std::process::Command::new("jj")
+            .args([
+                "--ignore-working-copy",
+                "--color=never",
+                "-R",
+                source.to_str().unwrap(),
+                "workspace",
+                "list",
+                "-T",
+                r#"name ++ "\t" ++ root ++ "\n""#,
+            ])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .any(|line| line.split('\t').next() == Some(name))
     }
 }

@@ -1,5 +1,11 @@
 # Sibling checkouts (`tsk checkout add`)
 
+**Status (2026-09-10):** CLI create landed. Archive/restore now discovers
+detached git siblings by the leftover `tsk-<id>-<suffix>` branch (a live
+`.git` is gone after detach). TUI is out of scope.
+
+---
+
 ## Goal
 
 Add a concise CLI that creates a second git worktree / jj workspace **inside

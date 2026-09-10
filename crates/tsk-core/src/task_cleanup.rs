@@ -14,7 +14,8 @@ use crate::task_paths::{
 };
 use crate::terminal::{TUI_WINDOW_CLASS, TUI_WINDOW_TITLE};
 use crate::vcs::{
-    detach_linked_checkout, reattach_linked_checkout, remove_linked_checkout, vcs_kind_at,
+    detach_linked_checkout, git_branch_for_task, git_local_branch_exists, reattach_linked_checkout,
+    remove_linked_checkout, vcs_kind_at, VcsKind,
 };
 use crate::workspaces::{is_global_workspace_slot, task_owned_workspace_names};
 
@@ -194,16 +195,31 @@ pub fn owned_task_checkouts(config: &TskConfig, task: &Task) -> Result<Vec<(Path
         if entry.file_name().to_string_lossy().starts_with('.') {
             continue;
         }
-        if vcs_kind_at(&path).is_none() {
-            continue;
-        }
         if out.iter().any(|(existing, _)| paths_match(existing, &path)) {
             continue;
         }
-        let name = workspace_name_for_owned_checkout(&task.id, source, &path)?;
+        let name = match workspace_name_for_owned_checkout(&task.id, source, &path) {
+            Ok(name) => name,
+            Err(TskError::OwnedCheckoutNameMismatch { .. })
+            | Err(TskError::InvalidCheckoutSuffix { .. }) => continue,
+            Err(err) => return Err(err),
+        };
+        // After archive, git siblings have no `.git` but keep `tsk-<name>` on
+        // the source. Discover those by branch, not live VCS, so restore sees them.
+        if !is_owned_checkout_dir(source, &path, &name) {
+            continue;
+        }
         out.push((path, name));
     }
     Ok(out)
+}
+
+fn is_owned_checkout_dir(source: &Path, checkout: &Path, workspace_name: &str) -> bool {
+    if vcs_kind_at(checkout).is_some() {
+        return true;
+    }
+    vcs_kind_at(source) == Some(VcsKind::Git)
+        && git_local_branch_exists(source, &git_branch_for_task(workspace_name))
 }
 
 fn for_each_owned_checkout(
@@ -399,11 +415,103 @@ mod tests {
         assert!(owned
             .iter()
             .any(|(p, n)| p == &sibling && n == "tabc-review"));
+        std::fs::write(sibling.join("keep.txt"), "sibling local").unwrap();
         detach_task_checkout(&config, &task).unwrap();
         assert!(!sibling.join(".git").exists());
-        assert!(sibling.is_dir());
+        assert!(sibling.join("keep.txt").is_file());
         assert!(!primary.join(".git").exists());
-        assert!(primary.is_dir());
+        assert_eq!(git_worktree_listed(&source, &sibling), Some(false));
+        let after_detach = owned_task_checkouts(&config, &task).unwrap();
+        assert!(
+            after_detach
+                .iter()
+                .any(|(p, n)| p == &sibling && n == "tabc-review"),
+            "detached sibling must still be discoverable for restore"
+        );
+        reattach_task_checkout(&config, &task).unwrap();
+        assert!(sibling.join(".git").exists());
+        assert!(primary.join(".git").exists());
+        assert_eq!(git_worktree_listed(&source, &sibling), Some(true));
+        assert_eq!(
+            std::fs::read_to_string(sibling.join("keep.txt")).unwrap(),
+            "sibling local"
+        );
+    }
+
+    #[test]
+    fn owned_task_checkouts_skips_unrelated_workspace_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("app");
+        crate::vcs::init_scratch_repo(&source).unwrap();
+        let source_str = source.to_str().unwrap();
+        for args in [
+            &["config", "user.email", "tsk@test"][..],
+            &["config", "user.name", "tsk"][..],
+            &["commit", "--allow-empty", "-m", "init"][..],
+        ] {
+            let mut cmd = std::process::Command::new("git");
+            cmd.arg("-C").arg(source_str);
+            cmd.args(args);
+            cmd.status().unwrap();
+        }
+        let tasks_base = dir.path().join("tasks");
+        let primary = tasks_base.join("tabc").join("workspace").join("app");
+        crate::vcs::create_linked_checkout(
+            &source,
+            &primary,
+            "tabc",
+            crate::vcs::VcsKind::Git,
+            None,
+        )
+        .unwrap();
+        let leftover = tasks_base.join("tabc").join("workspace").join("app-notes");
+        std::fs::create_dir_all(&leftover).unwrap();
+        std::fs::write(leftover.join("notes.txt"), "not a checkout").unwrap();
+        let now = chrono::Utc::now();
+        let task = Task {
+            id: "tabc".into(),
+            name: "Feature".into(),
+            status: TaskStatus::Active,
+            repo_url: None,
+            repo_path: primary.clone(),
+            source_repo_path: Some(source),
+            branch: None,
+            container_name: "tsk-tabc".into(),
+            container_isolation: false,
+            workspace_count: 10,
+            browser_profile: None,
+            created_at: now,
+            last_active_at: now,
+            listed_at: now,
+            agent_notes_path: None,
+            ports: vec![],
+        };
+        let config = TskConfig {
+            tasks_base_dir: tasks_base,
+            ..TskConfig::default()
+        };
+        let owned = owned_task_checkouts(&config, &task).unwrap();
+        assert!(owned.iter().all(|(p, _)| p != &leftover));
+        assert_eq!(owned.len(), 1);
+        assert_eq!(owned[0].0, primary);
+    }
+
+    fn git_worktree_listed(source: &Path, checkout: &Path) -> Option<bool> {
+        let out = std::process::Command::new("git")
+            .args(["-C", source.to_str()?, "worktree", "list"])
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let text = String::from_utf8_lossy(&out.stdout);
+        let canon = std::fs::canonicalize(checkout).unwrap_or_else(|_| checkout.to_path_buf());
+        Some(text.lines().any(|line| {
+            line.split_whitespace().next().is_some_and(|p| {
+                std::path::Path::new(p) == checkout
+                    || std::fs::canonicalize(p).ok().as_ref() == Some(&canon)
+            })
+        }))
     }
 
     #[test]

@@ -184,6 +184,24 @@ pub fn git_branch_for_task(task_id: &str) -> String {
     format!("tsk-{task_id}")
 }
 
+pub(crate) fn git_local_branch_exists(repo: &Path, branch: &str) -> bool {
+    let Ok(repo) = path_str(repo) else {
+        return false;
+    };
+    Command::new("git")
+        .args([
+            "-C",
+            repo,
+            "show-ref",
+            "--verify",
+            "--quiet",
+            &format!("refs/heads/{branch}"),
+        ])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
 fn create_git_worktree(
     source_root: &Path,
     dest: &Path,
