@@ -1707,7 +1707,10 @@ mod tests {
         assert!(!sibling.join(".git").exists());
         assert!(sibling.join("keep.txt").is_file());
         assert!(!task.repo_path.join(".git").exists());
-        assert!(!git_worktree_listed(source, &sibling));
+        assert!(
+            git_worktree_listed(source, &sibling),
+            "git must still list the detached sibling so restore does not need the folder name"
+        );
 
         svc.restore_task(&task.id).unwrap();
         assert!(sibling.join(".git").exists());

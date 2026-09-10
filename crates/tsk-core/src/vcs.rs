@@ -184,24 +184,6 @@ pub fn git_branch_for_task(task_id: &str) -> String {
     format!("tsk-{task_id}")
 }
 
-pub(crate) fn git_local_branch_exists(repo: &Path, branch: &str) -> bool {
-    let Ok(repo) = path_str(repo) else {
-        return false;
-    };
-    Command::new("git")
-        .args([
-            "-C",
-            repo,
-            "show-ref",
-            "--verify",
-            "--quiet",
-            &format!("refs/heads/{branch}"),
-        ])
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
-
 fn create_git_worktree(
     source_root: &Path,
     dest: &Path,
@@ -633,7 +615,7 @@ pub fn detach_linked_checkout(
                         checkout.display()
                     ))
                 })?;
-            if let Err(err) = save_jj_restore_target_before_forget(checkout) {
+            if let Err(err) = save_jj_restore_target_before_forget(checkout, Some(&name)) {
                 eprintln!(
                     "tsk: failed to save jj restore target for {}: {err}",
                     checkout.display()
@@ -725,7 +707,11 @@ fn remove_git_worktree(checkout: &Path) -> Result<()> {
 }
 
 /// Stop tracking a git worktree without deleting files (archive).
+///
+/// Does not prune: `git worktree list` still reports the path and branch so
+/// restore can rediscover the checkout without trusting folder names.
 fn detach_git_worktree(source_root: &Path, checkout: &Path) -> Result<()> {
+    let _ = source_root;
     let checkout = expand(checkout);
     if is_git_worktree(&checkout) {
         let git_file = checkout.join(".git");
@@ -734,7 +720,7 @@ fn detach_git_worktree(source_root: &Path, checkout: &Path) -> Result<()> {
             source,
         })?;
     }
-    prune_git_worktrees(source_root)
+    Ok(())
 }
 
 fn prune_git_worktrees(source_root: &Path) -> Result<()> {
@@ -757,6 +743,160 @@ fn prune_git_worktrees(source_root: &Path) -> Result<()> {
             stderr.trim()
         )))
     }
+}
+
+/// Linked git worktrees / jj workspaces of `source_root` (path + tsk workspace name).
+///
+/// Git names come from the worktree branch (`tsk-<name>` → `<name>`). The main
+/// checkout of `source_root` itself is omitted.
+pub(crate) fn list_linked_checkouts(source_root: &Path) -> Result<Vec<(PathBuf, String)>> {
+    let source = expand(source_root);
+    match vcs_kind_at(&source) {
+        Some(VcsKind::Git) => list_git_linked_checkouts(&source),
+        Some(VcsKind::Jj) => list_jj_linked_checkouts(&source),
+        None => Err(TskError::NotARepo { path: source }),
+    }
+}
+
+fn list_git_linked_checkouts(source_root: &Path) -> Result<Vec<(PathBuf, String)>> {
+    let source = path_str(source_root)?;
+    let out = Command::new("git")
+        .args(["-C", source, "worktree", "list", "--porcelain"])
+        .output()
+        .map_err(|e| TskError::Other(format!("failed to run git worktree list: {e}")))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        return Err(TskError::Other(format!(
+            "git worktree list failed: {}",
+            stderr.trim()
+        )));
+    }
+    let source_canon = std::fs::canonicalize(source_root).unwrap_or_else(|_| expand(source_root));
+    Ok(
+        parse_git_worktree_porcelain(&String::from_utf8_lossy(&out.stdout))
+            .into_iter()
+            .filter(|(path, _)| {
+                let canon = std::fs::canonicalize(path).unwrap_or_else(|_| path.clone());
+                canon != source_canon
+            })
+            .collect(),
+    )
+}
+
+fn parse_git_worktree_porcelain(stdout: &str) -> Vec<(PathBuf, String)> {
+    let mut out = Vec::new();
+    let mut path: Option<PathBuf> = None;
+    let mut branch: Option<String> = None;
+    let mut flush = |path: &mut Option<PathBuf>, branch: &mut Option<String>| {
+        if let (Some(p), Some(b)) = (path.take(), branch.take()) {
+            if let Some(name) = tsk_name_from_git_branch(&b) {
+                out.push((p, name));
+            }
+        } else {
+            *path = None;
+            *branch = None;
+        }
+    };
+    for line in stdout.lines() {
+        if line.is_empty() {
+            flush(&mut path, &mut branch);
+            continue;
+        }
+        if let Some(p) = line.strip_prefix("worktree ") {
+            flush(&mut path, &mut branch);
+            path = Some(expand(Path::new(p.trim())));
+            continue;
+        }
+        if let Some(b) = line.strip_prefix("branch ") {
+            branch = Some(b.trim().to_string());
+        }
+    }
+    flush(&mut path, &mut branch);
+    out
+}
+
+fn tsk_name_from_git_branch(branch: &str) -> Option<String> {
+    let b = branch.strip_prefix("refs/heads/").unwrap_or(branch);
+    b.strip_prefix("tsk-")
+        .filter(|name| !name.is_empty())
+        .map(ToString::to_string)
+}
+
+fn list_jj_linked_checkouts(source_root: &Path) -> Result<Vec<(PathBuf, String)>> {
+    let source_canon = std::fs::canonicalize(source_root).unwrap_or_else(|_| expand(source_root));
+    Ok(jj_list_workspaces(source_root)?
+        .into_iter()
+        .filter_map(|(name, root)| {
+            let path = root?;
+            let canon = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+            if canon == source_canon {
+                return None;
+            }
+            Some((path, name))
+        })
+        .collect())
+}
+
+/// Forgotten jj working copies under `search_dir` that still point at `source_root`.
+pub(crate) fn list_forgotten_jj_checkouts(
+    source_root: &Path,
+    search_dir: &Path,
+) -> Result<Vec<(PathBuf, String)>> {
+    if vcs_kind_at(source_root) != Some(VcsKind::Jj) || !search_dir.is_dir() {
+        return Ok(Vec::new());
+    }
+    let Some(source_repo) = jj_shared_repo_dir(source_root) else {
+        return Ok(Vec::new());
+    };
+    let registered: Vec<PathBuf> = jj_list_workspaces(source_root)?
+        .into_iter()
+        .filter_map(|(_, root)| root)
+        .collect();
+    let mut out = Vec::new();
+    let entries = std::fs::read_dir(search_dir).map_err(|source| TskError::Read {
+        path: search_dir.to_path_buf(),
+        source,
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|source| TskError::Read {
+            path: search_dir.to_path_buf(),
+            source,
+        })?;
+        let path = entry.path();
+        if !path.is_dir() || !path.join(".jj").is_dir() {
+            continue;
+        }
+        if registered.iter().any(|root| same_path(root, &path)) {
+            continue;
+        }
+        let Some(repo) = jj_shared_repo_dir(&path) else {
+            continue;
+        };
+        if !same_path(&repo, &source_repo) {
+            continue;
+        }
+        let Some(name) = read_jj_restore_target(&path)
+            .and_then(|t| t.workspace_name)
+            .filter(|n| !n.is_empty())
+        else {
+            return Err(TskError::ForgottenJjCheckoutUnnamed { path: path.clone() });
+        };
+        out.push((path, name));
+    }
+    Ok(out)
+}
+
+fn jj_shared_repo_dir(checkout: &Path) -> Option<PathBuf> {
+    let repo = expand(checkout).join(".jj").join("repo");
+    if repo.is_dir() {
+        return std::fs::canonicalize(&repo).ok();
+    }
+    if repo.is_file() {
+        let rel = std::fs::read_to_string(&repo).ok()?;
+        let target = repo.parent()?.join(rel.trim());
+        return std::fs::canonicalize(target).ok();
+    }
+    None
 }
 
 fn git_worktree_listed_at_source(source_root: &Path, checkout: &Path) -> Result<bool> {
@@ -814,6 +954,9 @@ fn relink_detached_git_worktree(source_root: &Path, checkout: &Path, task_id: &s
         })?;
     }
 
+    // Clear the stale (prunable) registration left by archive so `worktree add` can reuse the path.
+    prune_git_worktrees(source_root)?;
+
     if let Err(err) = add_git_worktree_existing_branch(source_root, &checkout, task_id) {
         restore_relink_backup(&checkout, &backup);
         return Err(err);
@@ -870,7 +1013,7 @@ fn relink_forgotten_jj_workspace(source_root: &Path, checkout: &Path, name: &str
     overlay_backup_onto_checkout(&backup, &checkout, ".jj")?;
     let _ = std::fs::remove_dir_all(&backup);
 
-    if let Err(err) = save_jj_restore_target_before_forget(&checkout) {
+    if let Err(err) = save_jj_restore_target_before_forget(&checkout, Some(name)) {
         eprintln!(
             "tsk: failed to refresh jj restore target for {}: {err}",
             checkout.display()
@@ -1160,6 +1303,8 @@ struct JjRestoreTarget {
     edit_change_id: Option<String>,
     /// Commit id for `jj workspace add -r` (prefer `@-` when `@` empty).
     base_commit_id: Option<String>,
+    /// jj workspace name from `jj workspace list` (not the folder name).
+    workspace_name: Option<String>,
 }
 
 fn jj_template(checkout: &Path, revset: &str, template: &str) -> Result<String> {
@@ -1199,7 +1344,10 @@ fn jj_working_copy_change_id(checkout: &Path) -> Result<String> {
 }
 
 /// Snapshot restore metadata from the live working copy (also used to refresh after relink).
-fn save_jj_restore_target_before_forget(checkout: &Path) -> Result<()> {
+fn save_jj_restore_target_before_forget(
+    checkout: &Path,
+    workspace_name: Option<&str>,
+) -> Result<()> {
     let empty = jj_working_copy_is_empty(checkout).unwrap_or(false);
     let edit_change_id = if empty {
         None
@@ -1221,6 +1369,10 @@ fn save_jj_restore_target_before_forget(checkout: &Path) -> Result<()> {
         &JjRestoreTarget {
             edit_change_id,
             base_commit_id,
+            workspace_name: workspace_name
+                .map(str::trim)
+                .filter(|n| !n.is_empty())
+                .map(ToString::to_string),
         },
     )
 }
@@ -1239,6 +1391,9 @@ fn write_jj_restore_target(checkout: &Path, target: &JjRestoreTarget) -> Result<
     }
     if let Some(id) = target.base_commit_id.as_deref() {
         lines.push(format!("base:{id}"));
+    }
+    if let Some(name) = target.workspace_name.as_deref() {
+        lines.push(format!("name:{name}"));
     }
     lines.push(String::new());
     std::fs::write(&path, lines.join("\n")).map_err(|source| TskError::Write { path, source })?;
@@ -1280,6 +1435,11 @@ fn parse_jj_restore_target_contents(contents: &str) -> Option<JjRestoreTarget> {
                 if !id.is_empty() {
                     target.base_commit_id = Some(id.to_string());
                 }
+            } else if let Some(name) = line.strip_prefix("name:") {
+                let name = name.trim();
+                if !name.is_empty() {
+                    target.workspace_name = Some(name.to_string());
+                }
             }
         }
         return Some(target);
@@ -1289,6 +1449,7 @@ fn parse_jj_restore_target_contents(contents: &str) -> Option<JjRestoreTarget> {
     Some(JjRestoreTarget {
         edit_change_id: Some(first.to_string()),
         base_commit_id: None,
+        workspace_name: None,
     })
 }
 
@@ -1905,7 +2066,10 @@ mod tests {
         detach_linked_checkout(&dest, Some(&source), Some("tabc123")).unwrap();
         assert!(!is_git_worktree(&dest));
         assert!(dest.join("local.txt").is_file());
-        assert!(!git_worktree_listed_at_source(&source, &dest).unwrap());
+        assert!(
+            git_worktree_listed_at_source(&source, &dest).unwrap(),
+            "archive must leave the worktree registered so restore can find it"
+        );
 
         reattach_linked_checkout(&dest, Some(&source), Some("tabc123")).unwrap();
         assert!(is_git_worktree(&dest));
@@ -2197,6 +2361,7 @@ mod tests {
             &JjRestoreTarget {
                 edit_change_id: Some("aaa".into()),
                 base_commit_id: Some("base-a".into()),
+                workspace_name: None,
             },
         )
         .unwrap();
@@ -2205,6 +2370,7 @@ mod tests {
             &JjRestoreTarget {
                 edit_change_id: Some("bbb".into()),
                 base_commit_id: Some("base-b".into()),
+                workspace_name: None,
             },
         )
         .unwrap();

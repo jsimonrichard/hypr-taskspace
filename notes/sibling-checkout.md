@@ -1,8 +1,9 @@
 # Sibling checkouts (`tsk checkout add`)
 
-**Status (2026-09-10):** CLI create landed. Archive/restore now discovers
-detached git siblings by the leftover `tsk-<id>-<suffix>` branch (a live
-`.git` is gone after detach). TUI is out of scope.
+**Status (2026-09-10):** CLI create landed. Archive/restore discovers
+checkouts from `git worktree list` / `jj workspace list` (plus leftover
+`.jj` dirs that still point at the source). Folder names are not used.
+TUI is out of scope.
 
 ---
 

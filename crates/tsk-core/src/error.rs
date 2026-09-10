@@ -52,6 +52,8 @@ pub enum TskError {
     NotARepo { path: PathBuf },
     #[error("checkout {path} does not match source repo folder '{label}'")]
     OwnedCheckoutNameMismatch { path: PathBuf, label: String },
+    #[error("forgotten jj checkout {path} has no workspace name in its restore sidecar")]
+    ForgottenJjCheckoutUnnamed { path: PathBuf },
     #[error("{0}")]
     Other(String),
 }
