@@ -83,6 +83,14 @@ impl DaemonServer {
         })
     }
 
+    #[cfg(test)]
+    fn with_service(service: TaskService) -> Self {
+        Self {
+            service: Arc::new(Mutex::new(service)),
+            stop: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
     pub fn run_foreground(self) -> Result<()> {
         let mut server = self;
         loop {
@@ -764,9 +772,19 @@ mod tests {
     use std::os::unix::net::UnixStream;
     use std::time::{Duration, Instant};
 
+    fn test_server() -> (tempfile::TempDir, DaemonServer) {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = crate::config::TskConfig::default();
+        config.data_dir = dir.path().to_path_buf();
+        config.tasks_base_dir = dir.path().join("tasks");
+        config.hyprland_enabled = false;
+        let server = DaemonServer::with_service(TaskService::with_config(config).unwrap());
+        (dir, server)
+    }
+
     #[test]
     fn dispatch_ping() {
-        let server = DaemonServer::new().unwrap();
+        let (_dir, server) = test_server();
         let result = dispatch(server.service.clone(), "ping", json!({})).unwrap();
         assert_eq!(result["pong"], true);
     }
@@ -829,7 +847,7 @@ mod tests {
 
     #[test]
     fn ping_roundtrip_under_10ms() {
-        let server = DaemonServer::new().unwrap();
+        let (_dir, server) = test_server();
         let (mut client, server_stream) = UnixStream::pair().unwrap();
         let service = server.service.clone();
         let start = Instant::now();
