@@ -117,11 +117,13 @@ pub use task_ids::{
 };
 pub use task_paths::{
     is_managed_task_checkout, is_scratch_workspace_path, linked_checkout_path,
-    scratch_checkout_path, task_workspace_dir, SCRATCH_DIR_NAME,
+    scratch_checkout_path, sibling_checkout_path, sibling_workspace_name,
+    task_id_from_managed_path, task_workspace_dir, validate_checkout_suffix,
+    workspace_name_for_owned_checkout, SCRATCH_DIR_NAME,
 };
 pub use task_repo::{
-    provision_task_checkout, ForkFrom, ResolvedTaskRepo, TaskRepoOptions, TaskRepoSetup,
-    TaskRepoSource,
+    add_sibling_checkout, provision_task_checkout, ForkFrom, ResolvedTaskRepo, TaskRepoOptions,
+    TaskRepoSetup, TaskRepoSource,
 };
 pub use taskspaces::visible_default_workspace_count;
 pub use terminal::{launch_host_terminal, launch_task_terminal, launch_task_tui};

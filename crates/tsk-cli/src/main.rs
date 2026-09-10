@@ -74,6 +74,11 @@ enum Commands {
         #[command(subcommand)]
         command: RepoCommands,
     },
+    /// Git worktree / jj workspace under the current task home
+    Checkout {
+        #[command(subcommand)]
+        command: CheckoutCommands,
+    },
     Waybar {
         #[command(subcommand)]
         command: WaybarCommands,
@@ -434,6 +439,18 @@ enum TaskCommands {
 }
 
 #[derive(Subcommand)]
+enum CheckoutCommands {
+    /// Create a sibling git worktree / jj workspace in this task
+    Add {
+        /// Suffix appended to the task id and repo folder (e.g. `review`)
+        suffix: String,
+        /// Git commit-ish or jj revset (default: current checkout HEAD / @)
+        #[arg(long, value_name = "REV")]
+        from: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
 enum RepoCommands {
     /// Register a checkout (writes `.tsk/repo.toml` inside the repo)
     Add {
@@ -696,6 +713,9 @@ fn run() -> Result<()> {
                 host,
                 url,
             } => cmd_task_browser(name_or_id.as_deref(), host, url.as_deref()),
+        },
+        Commands::Checkout { command } => match command {
+            CheckoutCommands::Add { suffix, from } => cmd_checkout_add(&suffix, from.as_deref()),
         },
         Commands::Repo { command } => match command {
             RepoCommands::Add { dir } => cmd_repo_add(dir.as_deref()),
@@ -1473,6 +1493,19 @@ fn cmd_workspace_goto(name: &str) -> Result<()> {
         .workspace_goto(name)?
         .ok_or_else(|| TskError::Other("Workspace not reachable".into()))?;
     println!("{result}");
+    Ok(())
+}
+
+fn cmd_checkout_add(suffix: &str, from: Option<&str>) -> Result<()> {
+    let cwd = std::env::current_dir().ok();
+    let env_task_id = std::env::var("TSK_TASK_ID").ok();
+    let dest = TaskService::with_defaults()?.add_sibling_checkout(
+        suffix,
+        from,
+        cwd.as_deref(),
+        env_task_id.as_deref(),
+    )?;
+    println!("{}", dest.display());
     Ok(())
 }
 

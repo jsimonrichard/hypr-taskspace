@@ -3,8 +3,12 @@ use std::path::{Path, PathBuf};
 use serde_json::{json, Value};
 
 use crate::error::{Result, TskError};
-use crate::repos::normalize_repo_path;
-use crate::task_paths::{ensure_scratch_workspace, linked_checkout_path, scratch_checkout_path};
+use crate::models::Task;
+use crate::repos::{is_scratch_task, normalize_repo_path, task_source_repo_path};
+use crate::task_paths::{
+    ensure_scratch_workspace, linked_checkout_path, scratch_checkout_path, sibling_checkout_path,
+    sibling_workspace_name, validate_checkout_suffix,
+};
 use crate::vcs::{
     checkout_belongs_to_repo, create_linked_checkout, current_checkout_revision, detect_vcs_root,
     jj_workspace_checkout, resolve_revision_id, vcs_kind_at, VcsKind,
@@ -344,6 +348,37 @@ pub fn provision_task_checkout(
     }
 }
 
+/// Create a sibling git worktree / jj workspace under the task home.
+///
+/// `current_checkout` is the live `@` / `HEAD` source when `fork_from` is
+/// [`ForkFrom::Current`]. Dest path is returned for `cd "$(tsk checkout add …)"`.
+pub fn add_sibling_checkout(
+    task: &Task,
+    tasks_base: &Path,
+    suffix: &str,
+    fork_from: &ForkFrom,
+    current_checkout: Option<&Path>,
+) -> Result<PathBuf> {
+    validate_checkout_suffix(suffix)?;
+    if is_scratch_task(task) {
+        return Err(TskError::ScratchHasNoLinkedRepo {
+            id: task.id.clone(),
+        });
+    }
+
+    let source_root = task_source_repo_path(task);
+    let kind = vcs_kind_at(source_root).ok_or_else(|| TskError::NotARepo {
+        path: source_root.to_path_buf(),
+    })?;
+
+    let task_home = tasks_base.join(&task.id);
+    let dest = sibling_checkout_path(&task_home, source_root, suffix);
+    let name = sibling_workspace_name(&task.id, suffix);
+    let revision = fork_from.resolve_revision(source_root, kind, current_checkout, None)?;
+    create_linked_checkout(source_root, &dest, &name, kind, revision.as_deref())?;
+    Ok(dest)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -484,5 +519,225 @@ mod tests {
         provision_task_checkout(&resolved, "tabc", None).unwrap();
         assert!(resolved.checkout_path.is_dir());
         assert!(!resolved.checkout_path.join(".git").exists());
+    }
+
+    fn linked_task(id: &str, repo_path: PathBuf, source: PathBuf) -> Task {
+        let now = chrono::Utc::now();
+        Task {
+            id: id.into(),
+            name: id.into(),
+            status: crate::models::TaskStatus::Active,
+            repo_url: None,
+            repo_path,
+            source_repo_path: Some(source),
+            branch: None,
+            container_name: format!("tsk-{id}"),
+            container_isolation: false,
+            workspace_count: 10,
+            browser_profile: None,
+            created_at: now,
+            last_active_at: now,
+            listed_at: now,
+            agent_notes_path: None,
+            ports: vec![],
+        }
+    }
+
+    fn git_commit(repo: &Path, message: &str) {
+        let repo_str = repo.to_str().unwrap();
+        for args in [
+            &["config", "user.email", "tsk@test"][..],
+            &["config", "user.name", "tsk"][..],
+        ] {
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(repo_str)
+                .args(args)
+                .status()
+                .unwrap();
+        }
+        std::process::Command::new("git")
+            .args(["-C", repo_str, "add", "-A"])
+            .status()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["-C", repo_str, "commit", "--allow-empty", "-m", message])
+            .status()
+            .unwrap();
+    }
+
+    #[test]
+    fn add_sibling_rejects_scratch_and_bad_suffix() {
+        let dir = tempfile::tempdir().unwrap();
+        let tasks_base = dir.path().join("tasks");
+        let home = tasks_base.join("tabc");
+        let scratch = home.join("workspace");
+        std::fs::create_dir_all(&scratch).unwrap();
+        let now = chrono::Utc::now();
+        let task = Task {
+            id: "tabc".into(),
+            name: "notes".into(),
+            status: crate::models::TaskStatus::Active,
+            repo_url: None,
+            repo_path: scratch,
+            source_repo_path: None,
+            branch: None,
+            container_name: "tsk-tabc".into(),
+            container_isolation: false,
+            workspace_count: 10,
+            browser_profile: None,
+            created_at: now,
+            last_active_at: now,
+            listed_at: now,
+            agent_notes_path: None,
+            ports: vec![],
+        };
+        let err = add_sibling_checkout(
+            &task,
+            &tasks_base,
+            "review",
+            &ForkFrom::Current {
+                fallback_task_id: Some("tabc".into()),
+            },
+            None,
+        )
+        .unwrap_err();
+        assert!(matches!(err, TskError::ScratchHasNoLinkedRepo { .. }));
+
+        let source = dir.path().join("app");
+        crate::vcs::init_scratch_repo(&source).unwrap();
+        git_commit(&source, "init");
+        let primary = home.join("workspace").join("app");
+        let linked = linked_task("tabc", primary, source);
+        let err = add_sibling_checkout(
+            &linked,
+            &tasks_base,
+            "re/view",
+            &ForkFrom::Current {
+                fallback_task_id: Some("tabc".into()),
+            },
+            None,
+        )
+        .unwrap_err();
+        assert!(matches!(err, TskError::InvalidCheckoutSuffix { .. }));
+    }
+
+    #[test]
+    fn add_sibling_git_worktree_from_current() {
+        let dir = tempfile::tempdir().unwrap();
+        let tasks_base = dir.path().join("tasks");
+        let source = dir.path().join("app");
+        crate::vcs::init_scratch_repo(&source).unwrap();
+        git_commit(&source, "init");
+        let primary = tasks_base.join("tabc").join("workspace").join("app");
+        crate::vcs::create_linked_checkout(&source, &primary, "tabc", VcsKind::Git, None).unwrap();
+        let task = linked_task("tabc", primary.clone(), source);
+        let dest = add_sibling_checkout(
+            &task,
+            &tasks_base,
+            "review",
+            &ForkFrom::Current {
+                fallback_task_id: Some("tabc".into()),
+            },
+            Some(&primary),
+        )
+        .unwrap();
+        assert_eq!(
+            dest,
+            tasks_base.join("tabc").join("workspace").join("app-review")
+        );
+        assert!(dest.join(".git").exists());
+        assert_eq!(
+            crate::vcs::current_branch(&dest).as_deref(),
+            Some("tsk-tabc-review")
+        );
+        let again = add_sibling_checkout(
+            &task,
+            &tasks_base,
+            "review",
+            &ForkFrom::Current {
+                fallback_task_id: Some("tabc".into()),
+            },
+            Some(&primary),
+        )
+        .unwrap();
+        assert_eq!(again, dest);
+    }
+
+    #[test]
+    fn add_sibling_git_worktree_from_explicit_revision() {
+        let dir = tempfile::tempdir().unwrap();
+        let tasks_base = dir.path().join("tasks");
+        let source = dir.path().join("app");
+        crate::vcs::init_scratch_repo(&source).unwrap();
+        git_commit(&source, "first");
+        let first = crate::vcs::resolve_revision_id(&source, VcsKind::Git, "HEAD").unwrap();
+        std::fs::write(source.join("later.txt"), "later").unwrap();
+        git_commit(&source, "later");
+        let primary = tasks_base.join("tabc").join("workspace").join("app");
+        crate::vcs::create_linked_checkout(&source, &primary, "tabc", VcsKind::Git, None).unwrap();
+        let task = linked_task("tabc", primary, source.clone());
+        let dest = add_sibling_checkout(
+            &task,
+            &tasks_base,
+            "old",
+            &ForkFrom::Revision(first.clone()),
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            crate::vcs::resolve_revision_id(&dest, VcsKind::Git, "HEAD").unwrap(),
+            first
+        );
+        assert!(!dest.join("later.txt").exists());
+    }
+
+    #[test]
+    fn add_sibling_jj_workspace_from_current() {
+        if std::process::Command::new("jj")
+            .arg("--version")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+        {
+            let dir = tempfile::tempdir().unwrap();
+            let tasks_base = dir.path().join("tasks");
+            let source = dir.path().join("app");
+            std::fs::create_dir_all(&source).unwrap();
+            let src = source.to_str().unwrap();
+            let init = std::process::Command::new("jj")
+                .args(["git", "init", "--colocate", src])
+                .status()
+                .unwrap();
+            if !init.success() {
+                std::process::Command::new("jj")
+                    .args(["git", "init", src])
+                    .status()
+                    .unwrap();
+            }
+            std::process::Command::new("jj")
+                .args(["-R", src, "describe", "-m", "init"])
+                .status()
+                .unwrap();
+            let primary = tasks_base.join("tabc").join("workspace").join("app");
+            crate::vcs::create_linked_checkout(&source, &primary, "tabc", VcsKind::Jj, None)
+                .unwrap();
+            let task = linked_task("tabc", primary.clone(), source);
+            let dest = add_sibling_checkout(
+                &task,
+                &tasks_base,
+                "review",
+                &ForkFrom::Current {
+                    fallback_task_id: Some("tabc".into()),
+                },
+                Some(&primary),
+            )
+            .unwrap();
+            assert_eq!(
+                dest,
+                tasks_base.join("tabc").join("workspace").join("app-review")
+            );
+            assert!(dest.join(".jj").is_dir());
+        }
     }
 }

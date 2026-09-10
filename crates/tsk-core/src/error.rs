@@ -42,6 +42,16 @@ pub enum TskError {
     },
     #[error("fork options require a linked git worktree / jj workspace")]
     ForkRequiresLinkedCheckout,
+    #[error("invalid checkout suffix '{suffix}'")]
+    InvalidCheckoutSuffix { suffix: String },
+    #[error("task {id} is a scratch workspace; sibling checkouts require a linked git/jj repo")]
+    ScratchHasNoLinkedRepo { id: String },
+    #[error("no current task (run from a task checkout or switch to a taskspace)")]
+    NoCurrentTask,
+    #[error("not a git or jj repo: {path}")]
+    NotARepo { path: PathBuf },
+    #[error("checkout {path} does not match source repo folder '{label}'")]
+    OwnedCheckoutNameMismatch { path: PathBuf, label: String },
     #[error("{0}")]
     Other(String),
 }

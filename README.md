@@ -126,6 +126,8 @@ tsk task new followup --from-current # fork from this checkout's HEAD / jj @
 tsk task new hotfix --from main      # explicit git commit-ish or jj revset
 tsk task new next --from-workspace t231590d8
 tsk task new iso --container         # experimental Distrobox isolation
+tsk checkout add review              # sibling worktree / jj workspace in this task
+tsk checkout add review --from main  # optional git commit-ish or jj revset
 tsk task list
 tsk task switch my-feature
 tsk task rename my-feature "Auth Fix v2"
@@ -140,7 +142,7 @@ Linked checkouts default to `trunk()`/`main` (jj) or the source `HEAD` (git). `-
 
 There is **experimental** support for container isolation with Distrobox: pass `--container` on the CLI or enable **Distrobox isolation** in the new-task form. Terminals, editor, and browser then launch via `distrobox enter`. Image defaults live under `[distrobox]` in `~/.config/tsk/config.toml`.
 
-Task homes live under `~/tsk-tasks/<id>/`. Linked checkouts are at `~/tsk-tasks/<id>/workspace/<repo-name>` (scratch tasks use the `workspace/` directory itself). Optional checkout settings live in `.tsk/repo.toml`.
+Task homes live under `~/tsk-tasks/<id>/`. Linked checkouts are at `~/tsk-tasks/<id>/workspace/<repo-name>` (scratch tasks use the `workspace/` directory itself). `tsk checkout add <suffix>` creates another git worktree / jj workspace in the same task (`…/workspace/<repo>-<suffix>`, named `<task-id>-<suffix>`), forking from the current checkout unless `--from` is set. Optional checkout settings live in `.tsk/repo.toml`.
 
 On create/restore, tsk runs `.tsk/on-start.sh` (opens the editor via `tsk task editor` by default). See **[docs/cursor.md](docs/cursor.md)**.
 

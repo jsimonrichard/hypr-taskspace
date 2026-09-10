@@ -82,6 +82,37 @@ fn resolve_current_fork_checkout(
     })
 }
 
+fn resolve_checkout_task(
+    state: &SessionState,
+    tasks_base: &Path,
+    cwd: Option<&Path>,
+    env_task_id: Option<&str>,
+) -> Result<Task> {
+    if let Some(cwd) = cwd {
+        if let Some(id) = crate::task_paths::task_id_from_managed_path(cwd, tasks_base) {
+            return lookup_checkout_task(state, &id);
+        }
+    }
+    if let Some(id) = env_task_id.map(str::trim).filter(|s| !s.is_empty()) {
+        return lookup_checkout_task(state, id);
+    }
+    match state.current_task_id.as_deref() {
+        Some(id) => lookup_checkout_task(state, id),
+        None => Err(TskError::NoCurrentTask),
+    }
+}
+
+fn lookup_checkout_task(state: &SessionState, id: &str) -> Result<Task> {
+    match crate::task_ids::lookup_task(state, id) {
+        TaskLookup::Found(task) => Ok(task.clone()),
+        TaskLookup::NotFound => Err(TskError::Other(format!("Unknown task: {id}"))),
+        TaskLookup::AmbiguousPrefix(ids) => Err(TskError::Other(format!(
+            "Ambiguous task prefix '{id}': matches {}",
+            ids.join(", ")
+        ))),
+    }
+}
+
 fn lookup_same_repo_task_checkout(
     state: &SessionState,
     name: &str,
@@ -972,6 +1003,42 @@ impl TaskService {
         Ok(task)
     }
 
+    /// Sibling git worktree / jj workspace under the current task home.
+    ///
+    /// Task resolution: cwd under `<tasks_base>/<id>/workspace/` first, then
+    /// `env_task_id` (`TSK_TASK_ID`), then the session's current task.
+    /// Default fork is the live checkout (`@` / `HEAD`); `from` overrides.
+    pub fn add_sibling_checkout(
+        &self,
+        suffix: &str,
+        from: Option<&str>,
+        cwd: Option<&Path>,
+        env_task_id: Option<&str>,
+    ) -> Result<std::path::PathBuf> {
+        let state = self.load_state()?;
+        let task = resolve_checkout_task(&state, &self.config.tasks_base_dir, cwd, env_task_id)?;
+        let fork = match from.map(str::trim).filter(|s| !s.is_empty()) {
+            Some(rev) => crate::task_repo::ForkFrom::Revision(rev.to_string()),
+            None => crate::task_repo::ForkFrom::Current {
+                fallback_task_id: Some(task.id.clone()),
+            },
+        };
+        let current = detect_vcs_root(cwd).or_else(|| {
+            if crate::vcs::vcs_kind_at(&task.repo_path).is_some() {
+                Some(task.repo_path.clone())
+            } else {
+                None
+            }
+        });
+        crate::task_repo::add_sibling_checkout(
+            &task,
+            &self.config.tasks_base_dir,
+            suffix,
+            &fork,
+            current.as_deref(),
+        )
+    }
+
     pub fn resolve_task(&self, name_or_id: &str) -> Result<Task> {
         let state = self.load_state()?;
         match self.registry.lookup_task(&state, name_or_id) {
@@ -1579,6 +1646,49 @@ mod tests {
             crate::vcs::detect_vcs_root(Some(&expected_repo)).as_deref(),
             Some(expected_repo.as_path())
         );
+    }
+
+    #[test]
+    fn add_sibling_checkout_from_task_cwd() {
+        let dir = tempdir().unwrap();
+        let checkout = dir.path().join("checkout");
+        crate::vcs::init_scratch_repo(&checkout).unwrap();
+        run_git_commit(&checkout);
+        let svc = test_service(dir.path());
+        let task = svc
+            .create_task(
+                "My Feature",
+                false,
+                crate::task_repo::TaskRepoSource::Path(checkout),
+                None,
+                crate::task_repo::TaskRepoOptions::default(),
+            )
+            .unwrap();
+        let dest = svc
+            .add_sibling_checkout("review", None, Some(&task.repo_path), None)
+            .unwrap();
+        assert_eq!(
+            dest,
+            dir.path()
+                .join("tasks")
+                .join(&task.id)
+                .join("workspace")
+                .join("checkout-review")
+        );
+        assert!(dest.join(".git").exists());
+        crate::task_cleanup::detach_task_checkout(&svc.config, &task).unwrap();
+        assert!(!dest.join(".git").exists());
+        assert!(dest.is_dir());
+    }
+
+    #[test]
+    fn add_sibling_checkout_requires_a_task() {
+        let dir = tempdir().unwrap();
+        let svc = test_service(dir.path());
+        let err = svc
+            .add_sibling_checkout("review", None, None, None)
+            .unwrap_err();
+        assert!(matches!(err, TskError::NoCurrentTask));
     }
 
     #[test]

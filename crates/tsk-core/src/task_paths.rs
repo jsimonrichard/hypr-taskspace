@@ -29,6 +29,79 @@ pub fn linked_checkout_path(task_home: &Path, source_root: &Path) -> PathBuf {
     task_workspace_dir(task_home).join(repo_label(source_root))
 }
 
+/// Sibling dest: `<task-home>/workspace/<repo-label>-<suffix>`.
+pub fn sibling_checkout_path(task_home: &Path, source_root: &Path, suffix: &str) -> PathBuf {
+    task_workspace_dir(task_home).join(format!("{}-{suffix}", repo_label(source_root)))
+}
+
+/// jj workspace / git worktree name: `<task-id>-<suffix>`.
+pub fn sibling_workspace_name(task_id: &str, suffix: &str) -> String {
+    format!("{task_id}-{suffix}")
+}
+
+/// Suffix for `tsk checkout add`: start with ASCII alphanumeric, then `[A-Za-z0-9_-]*`.
+pub fn validate_checkout_suffix(suffix: &str) -> crate::error::Result<()> {
+    let valid = suffix
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphanumeric())
+        && suffix
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    if valid {
+        Ok(())
+    } else {
+        Err(crate::error::TskError::InvalidCheckoutSuffix {
+            suffix: suffix.to_string(),
+        })
+    }
+}
+
+/// If `path` is under `<tasks_base>/<id>/workspace/…`, return that task id.
+pub fn task_id_from_managed_path(path: &Path, tasks_base: &Path) -> Option<String> {
+    let path = expand(path);
+    let base = expand(tasks_base);
+    let rel = path.strip_prefix(&base).ok()?;
+    let mut comps = rel.components();
+    let id = comps.next()?.as_os_str().to_str()?.to_string();
+    let workspace = comps.next()?;
+    if workspace.as_os_str() != "workspace" {
+        return None;
+    }
+    Some(id)
+}
+
+/// jj/git name for a managed checkout under the task home.
+///
+/// Primary folder (`<repo-label>`) is `task_id`. A sibling
+/// (`<repo-label>-<suffix>`) is `{task_id}-{suffix}`.
+pub fn workspace_name_for_owned_checkout(
+    task_id: &str,
+    source_root: &Path,
+    checkout: &Path,
+) -> crate::error::Result<String> {
+    let label = repo_label(source_root);
+    let folder = checkout
+        .file_name()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| crate::error::TskError::OwnedCheckoutNameMismatch {
+            path: checkout.to_path_buf(),
+            label: label.clone(),
+        })?;
+    if folder == label {
+        return Ok(task_id.to_string());
+    }
+    let prefix = format!("{label}-");
+    if let Some(suffix) = folder.strip_prefix(&prefix) {
+        validate_checkout_suffix(suffix)?;
+        return Ok(sibling_workspace_name(task_id, suffix));
+    }
+    Err(crate::error::TskError::OwnedCheckoutNameMismatch {
+        path: checkout.to_path_buf(),
+        label,
+    })
+}
+
 /// True when `path` is a scratch task workspace (`<tasks_base>/<id>/workspace` or legacy `.../scratch`).
 pub fn is_scratch_workspace_path(path: &Path, tasks_base_dir: &Path) -> bool {
     let path = expand(path);
@@ -80,6 +153,73 @@ mod tests {
         assert_eq!(
             linked_checkout_path(&home, &source),
             PathBuf::from("/tmp/tsk-tasks/t1/workspace/my-app")
+        );
+    }
+
+    #[test]
+    fn sibling_checkout_appends_suffix_to_repo_and_task_id() {
+        let home = PathBuf::from("/tmp/tsk-tasks/t74c8e14d");
+        let source = PathBuf::from("/home/user/hypr-taskspace");
+        assert_eq!(
+            sibling_checkout_path(&home, &source, "review"),
+            PathBuf::from("/tmp/tsk-tasks/t74c8e14d/workspace/hypr-taskspace-review")
+        );
+        assert_eq!(
+            sibling_workspace_name("t74c8e14d", "review"),
+            "t74c8e14d-review"
+        );
+        assert_eq!(
+            workspace_name_for_owned_checkout(
+                "t74c8e14d",
+                &source,
+                &PathBuf::from("/tmp/tsk-tasks/t74c8e14d/workspace/hypr-taskspace")
+            )
+            .unwrap(),
+            "t74c8e14d"
+        );
+        assert_eq!(
+            workspace_name_for_owned_checkout(
+                "t74c8e14d",
+                &source,
+                &PathBuf::from("/tmp/tsk-tasks/t74c8e14d/workspace/hypr-taskspace-review")
+            )
+            .unwrap(),
+            "t74c8e14d-review"
+        );
+    }
+
+    #[test]
+    fn checkout_suffix_rejects_empty_and_path_chars() {
+        assert!(validate_checkout_suffix("review").is_ok());
+        assert!(validate_checkout_suffix("r").is_ok());
+        assert!(validate_checkout_suffix("pr_2").is_ok());
+        assert!(validate_checkout_suffix("").is_err());
+        assert!(validate_checkout_suffix("-review").is_err());
+        assert!(validate_checkout_suffix("re/view").is_err());
+        assert!(validate_checkout_suffix("t74c8e14d@").is_err());
+    }
+
+    #[test]
+    fn task_id_from_managed_path_reads_workspace_child() {
+        let base = PathBuf::from("/tmp/tsk-tasks");
+        assert_eq!(
+            task_id_from_managed_path(
+                &base
+                    .join("t74c8e14d")
+                    .join("workspace")
+                    .join("hypr-taskspace"),
+                &base
+            )
+            .as_deref(),
+            Some("t74c8e14d")
+        );
+        assert_eq!(
+            task_id_from_managed_path(&base.join("t74c8e14d").join(".tsk"), &base),
+            None
+        );
+        assert_eq!(
+            task_id_from_managed_path(&PathBuf::from("/home/user/hypr-taskspace"), &base),
+            None
         );
     }
 

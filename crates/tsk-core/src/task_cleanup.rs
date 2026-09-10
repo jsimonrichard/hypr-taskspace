@@ -8,11 +8,13 @@ use crate::distrobox;
 use crate::error::{Result, TskError};
 use crate::hyprland::{self, HyprWindow};
 use crate::models::{SessionState, Task};
-use crate::task_paths::is_managed_task_checkout;
+use crate::repos::{is_scratch_task, paths_match, task_source_repo_path};
+use crate::task_paths::{
+    is_managed_task_checkout, task_workspace_dir, workspace_name_for_owned_checkout,
+};
 use crate::terminal::{TUI_WINDOW_CLASS, TUI_WINDOW_TITLE};
 use crate::vcs::{
-    detach_linked_checkout, jj_workspace_name_for_task, reattach_linked_checkout,
-    remove_linked_checkout,
+    detach_linked_checkout, reattach_linked_checkout, remove_linked_checkout, vcs_kind_at,
 };
 use crate::workspaces::{is_global_workspace_slot, task_owned_workspace_names};
 
@@ -151,31 +153,87 @@ pub fn run_archive_teardown(config: &TskConfig, task: &Task) -> Result<()> {
     Ok(())
 }
 
-pub fn detach_task_checkout(config: &TskConfig, task: &Task) -> Result<()> {
-    if !is_managed_task_checkout(&task.repo_path, &config.tasks_base_dir, &task.id) {
-        return Ok(());
+/// Git/jj roots under the task workspace dir, with the jj/git name for each.
+pub fn owned_task_checkouts(config: &TskConfig, task: &Task) -> Result<Vec<(PathBuf, String)>> {
+    let task_home = task_data_dir(config, task.id.as_str());
+    let ws = task_workspace_dir(&task_home);
+    let mut out = Vec::new();
+
+    if is_scratch_task(task) {
+        if is_managed_task_checkout(&task.repo_path, &config.tasks_base_dir, &task.id) {
+            out.push((task.repo_path.clone(), task.id.clone()));
+        }
+        return Ok(out);
     }
+
+    let source = task_source_repo_path(task);
+    if is_managed_task_checkout(&task.repo_path, &config.tasks_base_dir, &task.id) {
+        out.push((
+            task.repo_path.clone(),
+            workspace_name_for_owned_checkout(&task.id, source, &task.repo_path)?,
+        ));
+    }
+
+    if !ws.is_dir() {
+        return Ok(out);
+    }
+
+    let entries = std::fs::read_dir(&ws).map_err(|source| TskError::Read {
+        path: ws.clone(),
+        source,
+    })?;
+    for entry in entries {
+        let entry = entry.map_err(|source| TskError::Read {
+            path: ws.clone(),
+            source,
+        })?;
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        if entry.file_name().to_string_lossy().starts_with('.') {
+            continue;
+        }
+        if vcs_kind_at(&path).is_none() {
+            continue;
+        }
+        if out.iter().any(|(existing, _)| paths_match(existing, &path)) {
+            continue;
+        }
+        let name = workspace_name_for_owned_checkout(&task.id, source, &path)?;
+        out.push((path, name));
+    }
+    Ok(out)
+}
+
+fn for_each_owned_checkout(
+    config: &TskConfig,
+    task: &Task,
+    mut op: impl FnMut(&Path, Option<&Path>, &str) -> Result<()>,
+) -> Result<()> {
     let source = task.source_repo_path.as_deref();
-    let name = jj_workspace_name_for_task(&task.id);
-    detach_linked_checkout(&task.repo_path, source, Some(&name))
+    for (checkout, name) in owned_task_checkouts(config, task)? {
+        op(&checkout, source, &name)?;
+    }
+    Ok(())
+}
+
+pub fn detach_task_checkout(config: &TskConfig, task: &Task) -> Result<()> {
+    for_each_owned_checkout(config, task, |checkout, source, name| {
+        detach_linked_checkout(checkout, source, Some(name))
+    })
 }
 
 pub fn reattach_task_checkout(config: &TskConfig, task: &Task) -> Result<()> {
-    if !is_managed_task_checkout(&task.repo_path, &config.tasks_base_dir, &task.id) {
-        return Ok(());
-    }
-    let source = task.source_repo_path.as_deref();
-    let name = jj_workspace_name_for_task(&task.id);
-    reattach_linked_checkout(&task.repo_path, source, Some(&name))
+    for_each_owned_checkout(config, task, |checkout, source, name| {
+        reattach_linked_checkout(checkout, source, Some(name))
+    })
 }
 
 pub fn remove_task_checkout(config: &TskConfig, task: &Task) -> Result<()> {
-    if !is_managed_task_checkout(&task.repo_path, &config.tasks_base_dir, &task.id) {
-        return Ok(());
-    }
-    let source = task.source_repo_path.as_deref();
-    let name = jj_workspace_name_for_task(&task.id);
-    remove_linked_checkout(&task.repo_path, source, Some(&name))
+    for_each_owned_checkout(config, task, |checkout, source, name| {
+        remove_linked_checkout(checkout, source, Some(name))
+    })
 }
 
 pub fn remove_task_data_dir(config: &TskConfig, task: &Task) -> Result<()> {
@@ -276,6 +334,76 @@ mod tests {
             pid: Some(1),
         };
         assert!(!client_belongs_to_task(&tui, &config, &task));
+    }
+
+    #[test]
+    fn owned_task_checkouts_includes_sibling() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("app");
+        crate::vcs::init_scratch_repo(&source).unwrap();
+        let source_str = source.to_str().unwrap();
+        for args in [
+            &["config", "user.email", "tsk@test"][..],
+            &["config", "user.name", "tsk"][..],
+            &["commit", "--allow-empty", "-m", "init"][..],
+        ] {
+            let mut cmd = std::process::Command::new("git");
+            cmd.arg("-C").arg(source_str);
+            cmd.args(args);
+            cmd.status().unwrap();
+        }
+        let tasks_base = dir.path().join("tasks");
+        let primary = tasks_base.join("tabc").join("workspace").join("app");
+        let sibling = tasks_base.join("tabc").join("workspace").join("app-review");
+        crate::vcs::create_linked_checkout(
+            &source,
+            &primary,
+            "tabc",
+            crate::vcs::VcsKind::Git,
+            None,
+        )
+        .unwrap();
+        crate::vcs::create_linked_checkout(
+            &source,
+            &sibling,
+            "tabc-review",
+            crate::vcs::VcsKind::Git,
+            None,
+        )
+        .unwrap();
+        let now = chrono::Utc::now();
+        let task = Task {
+            id: "tabc".into(),
+            name: "Feature".into(),
+            status: TaskStatus::Active,
+            repo_url: None,
+            repo_path: primary.clone(),
+            source_repo_path: Some(source.clone()),
+            branch: None,
+            container_name: "tsk-tabc".into(),
+            container_isolation: false,
+            workspace_count: 10,
+            browser_profile: None,
+            created_at: now,
+            last_active_at: now,
+            listed_at: now,
+            agent_notes_path: None,
+            ports: vec![],
+        };
+        let config = TskConfig {
+            tasks_base_dir: tasks_base,
+            ..TskConfig::default()
+        };
+        let owned = owned_task_checkouts(&config, &task).unwrap();
+        assert!(owned.iter().any(|(p, n)| p == &primary && n == "tabc"));
+        assert!(owned
+            .iter()
+            .any(|(p, n)| p == &sibling && n == "tabc-review"));
+        detach_task_checkout(&config, &task).unwrap();
+        assert!(!sibling.join(".git").exists());
+        assert!(sibling.is_dir());
+        assert!(!primary.join(".git").exists());
+        assert!(primary.is_dir());
     }
 
     #[test]
