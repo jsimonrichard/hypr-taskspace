@@ -564,34 +564,12 @@ pub fn switch_workspace(name: &str) {
     });
 }
 
-/// Switch to a workspace on the **focused** monitor (moves it between monitors).
-pub fn switch_workspace_on_focused_monitor(name: &str) {
-    switch_workspace_on_current_monitor(name);
-}
-
-/// Within-taskspace navigation: if the workspace is already visible on another
-/// monitor, focus that monitor; otherwise bring the workspace to the focused one.
+/// User navigation (SUPER+N / next / prev). One Hyprland `workspace` dispatch —
+/// no `list_monitors` snapshot. Hyprland focuses the other monitor when that
+/// workspace is already visible there. Do not pre-query: overlapping keybind
+/// processes used to dispatch later from a stale layout.
 pub fn switch_workspace_for_navigation(name: &str) {
-    hypr_log::scoped(
-        format!("switch_workspace_for_navigation {name}"),
-        || match navigation_strategy(name) {
-            NavigationStrategy::FocusExistingMonitor => {
-                hypr_log::note(format!(
-                    "workspace {name} visible on another monitor — focusing it"
-                ));
-                switch_workspace(name);
-            }
-            NavigationStrategy::OnFocusedMonitor => {
-                switch_workspace_on_current_monitor(name);
-            }
-            NavigationStrategy::MoveToFocusedMonitor => {
-                hypr_log::note(format!(
-                    "workspace {name} not visible — moving to focused monitor"
-                ));
-                switch_workspace_on_focused_monitor(name);
-            }
-        },
-    );
+    switch_workspace(name);
 }
 
 /// Move the active window to a workspace by **name** (Omarchy SUPER+SHIFT+number).
@@ -619,28 +597,6 @@ pub fn move_window_to_workspace_silent(address: &str, name: &str) {
             ]);
         },
     );
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum NavigationStrategy {
-    FocusExistingMonitor,
-    OnFocusedMonitor,
-    MoveToFocusedMonitor,
-}
-
-fn navigation_strategy(name: &str) -> NavigationStrategy {
-    decide_navigation_strategy(&list_monitors().unwrap_or_default(), name)
-}
-
-fn decide_navigation_strategy(monitors: &[Monitor], name: &str) -> NavigationStrategy {
-    let Some(holder) = monitors.iter().find(|m| m.workspace_name == name) else {
-        return NavigationStrategy::MoveToFocusedMonitor;
-    };
-    if holder.focused {
-        NavigationStrategy::OnFocusedMonitor
-    } else {
-        NavigationStrategy::FocusExistingMonitor
-    }
 }
 
 pub fn close_window(address: &str) {
@@ -851,69 +807,6 @@ mod tests {
         );
         let meta = std::fs::metadata(&path).unwrap();
         assert!(meta.file_type().is_socket());
-    }
-
-    #[test]
-    fn navigation_strategy_when_visible_on_other_monitor() {
-        let monitors = vec![
-            Monitor {
-                name: "eDP-1".into(),
-                workspace_name: "1".into(),
-                focused: true,
-                x: 0,
-                y: 0,
-            },
-            Monitor {
-                name: "DP-2".into(),
-                workspace_name: "3".into(),
-                focused: false,
-                x: 1920,
-                y: 0,
-            },
-        ];
-        assert_eq!(
-            decide_navigation_strategy(&monitors, "3"),
-            NavigationStrategy::FocusExistingMonitor
-        );
-    }
-
-    #[test]
-    fn navigation_strategy_when_not_visible_moves_to_focused() {
-        let monitors = vec![
-            Monitor {
-                name: "eDP-1".into(),
-                workspace_name: "1".into(),
-                focused: false,
-                x: 0,
-                y: 0,
-            },
-            Monitor {
-                name: "DP-2".into(),
-                workspace_name: "2".into(),
-                focused: true,
-                x: 1920,
-                y: 0,
-            },
-        ];
-        assert_eq!(
-            decide_navigation_strategy(&monitors, "3"),
-            NavigationStrategy::MoveToFocusedMonitor
-        );
-    }
-
-    #[test]
-    fn navigation_strategy_when_on_focused_monitor() {
-        let monitors = vec![Monitor {
-            name: "eDP-1".into(),
-            workspace_name: "3".into(),
-            focused: true,
-            x: 0,
-            y: 0,
-        }];
-        assert_eq!(
-            decide_navigation_strategy(&monitors, "3"),
-            NavigationStrategy::OnFocusedMonitor
-        );
     }
 }
 
