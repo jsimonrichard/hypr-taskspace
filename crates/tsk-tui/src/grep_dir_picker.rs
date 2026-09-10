@@ -365,11 +365,10 @@ mod tests {
     #[test]
     fn match_score_prefers_exact_then_prefix() {
         assert!(
-            match_score("local", "local").unwrap()
-                < match_score("hypr-taskspace", "local").unwrap()
+            match_score("local", "local").unwrap() < match_score("localhost", "local").unwrap()
         );
         assert!(
-            match_score("hypr-taskspace", "local").unwrap()
+            match_score("localhost", "local").unwrap()
                 < match_score("my-local-app", "local").unwrap()
         );
     }

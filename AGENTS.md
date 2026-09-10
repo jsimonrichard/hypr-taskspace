@@ -168,9 +168,7 @@ of 44 clippy lints (measured 2026-09-05), so `-D warnings` would block every
 push. Plain clippy still fails on real compile errors. Tighten it once the
 backlog is cleared. There is no CI here, so this gate is the only one.
 
-**Known-failing baseline (2026-09-05):** `cargo test --workspace` fails on
-`tsk-tui grep_dir_picker::tests::match_score_prefers_exact_then_prefix` —
-`match_score("local", "local")` returns `None`, so the test's `.unwrap()`
-panics at `crates/tsk-tui/src/grep_dir_picker.rs:369`. Until that is fixed the
-`full` gate blocks every push here. This is inherited, not something you broke;
-fix the test or the function rather than reaching for `CLAUDE_GATE_SKIP`.
+**Known-failing baseline (reconciled 2026-09-10):** none. The 2026-09-05
+`tsk-tui` `match_score_prefers_exact_then_prefix` panic was a bad fixture
+(`"hypr-taskspace"` does not contain `"local"`), not a scorer bug. The
+`full` gate should pass. Do not reach for `CLAUDE_GATE_SKIP`.
