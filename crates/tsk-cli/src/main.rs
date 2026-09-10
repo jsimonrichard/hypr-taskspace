@@ -32,15 +32,21 @@ struct Cli {
     command: Option<Commands>,
 }
 
+/// Visible 1- or 2-letter aliases: a unique first letter is the alias; when
+/// several commands share a letter, the one used most often gets the single
+/// letter and the others get two.
 #[derive(Subcommand)]
 enum Commands {
+    #[command(visible_alias = "s")]
     Status,
+    #[command(visible_alias = "do")]
     Doctor {
         /// Print passing checks as well as failures.
         #[arg(short, long)]
         verbose: bool,
     },
     /// List or restore window placement
+    #[command(visible_alias = "wi")]
     Windows {
         #[arg(long, help = "Filter list by task id (with `list` or bare `windows`)")]
         task: Option<String>,
@@ -48,68 +54,81 @@ enum Commands {
         command: Option<WindowsCommands>,
     },
     /// Desktop, launcher, and browser integrations
+    #[command(visible_alias = "i")]
     Install {
         #[command(subcommand)]
         command: ProdInstallCommands,
     },
     /// Development / e2e integration (separate install tree under ~/.local/share/tsk-dev)
+    #[command(visible_alias = "de")]
     Dev {
         #[command(subcommand)]
         command: DevCommands,
     },
     /// Show integration status for the active config profile
+    #[command(visible_alias = "in")]
     Integration {
         #[command(subcommand)]
         command: IntegrationCommands,
     },
-    #[command(subcommand)]
+    #[command(subcommand, visible_alias = "ts")]
     Taskspace(TaskspaceCommands),
-    #[command(subcommand)]
+    #[command(subcommand, visible_alias = "w")]
     Workspace(WorkspaceCommands),
+    #[command(visible_alias = "t")]
     Task {
         #[command(subcommand)]
         command: TaskCommands,
     },
+    #[command(visible_alias = "r")]
     Repo {
         #[command(subcommand)]
         command: RepoCommands,
     },
     /// Git worktree / jj workspace under the current task home
+    #[command(visible_alias = "c")]
     Checkout {
         #[command(subcommand)]
         command: CheckoutCommands,
     },
+    #[command(visible_alias = "wb")]
     Waybar {
         #[command(subcommand)]
         command: WaybarCommands,
     },
     /// Bar snapshot for omarchy-shell (and other consumers)
+    #[command(visible_alias = "b")]
     Bar {
         #[command(subcommand)]
         command: BarCommands,
     },
     /// Launch an app in the current taskspace (Omarchy menu / keybind prefix)
+    #[command(visible_alias = "l")]
     Launch {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    #[command(visible_alias = "db")]
     Debug {
         #[command(subcommand)]
         command: DebugCommands,
     },
-    #[command(subcommand)]
+    #[command(subcommand, visible_alias = "d")]
     Daemon(DaemonCommands),
     /// Walker / Elephant launch integration (used as Elephant launch_prefix)
+    #[command(visible_alias = "wk")]
     Walker {
         #[command(subcommand)]
         command: WalkerCommands,
     },
     /// Clear session navigation memory (workspace layout per monitor)
+    #[command(visible_alias = "re")]
     Reset {
         #[command(subcommand)]
         command: ResetCommands,
     },
     /// Open http(s) links in the current taskspace browser (xdg-open wrapper entry point)
+    #[command(visible_alias = "o")]
     Open {
         #[arg(value_name = "URL", required = true)]
         urls: Vec<String>,
@@ -122,6 +141,7 @@ enum Commands {
         task: Option<String>,
     },
     /// Chromium helper (session snapshot / restore / native host)
+    #[command(visible_alias = "ch")]
     Chromium {
         #[command(subcommand)]
         command: ChromiumCommands,
@@ -134,10 +154,13 @@ enum Commands {
 #[derive(Subcommand)]
 enum ChromiumCommands {
     /// Show live extension snapshot and saved task session
+    #[command(visible_alias = "s")]
     Status,
     /// Write the current task's Chromium tabs to `.tsk/browser-session.json`
+    #[command(visible_alias = "sn")]
     Snapshot,
     /// Reopen saved Chromium windows now (normally happens on first launch)
+    #[command(visible_alias = "r")]
     Restore {
         #[arg(value_name = "NAME_OR_ID")]
         name_or_id: Option<String>,
@@ -150,17 +173,20 @@ enum ChromiumCommands {
 #[derive(Subcommand)]
 enum ResetCommands {
     /// Clear last-workspace and per-monitor layout memory in state.db
+    #[command(visible_alias = "l")]
     Layout,
 }
 
 #[derive(Subcommand)]
 enum WindowsCommands {
     /// List open windows and their task association
+    #[command(visible_alias = "l")]
     List {
         #[arg(long)]
         task: Option<String>,
     },
     /// Move all windows back to their home workspaces
+    #[command(visible_alias = "r")]
     Restore {
         #[arg(long, help = "Show planned moves without changing Hyprland")]
         dry_run: bool,
@@ -170,6 +196,7 @@ enum WindowsCommands {
 #[derive(Subcommand)]
 enum ProdInstallCommands {
     /// Install every detected integration (Omarchy, Chromium, Walker)
+    #[command(visible_alias = "a")]
     All {
         #[arg(long)]
         dry_run: bool,
@@ -184,6 +211,7 @@ enum ProdInstallCommands {
         tui: bool,
     },
     /// Omarchy Hyprland, bar plugin, and task manager UI
+    #[command(visible_alias = "o")]
     Omarchy {
         #[arg(long)]
         dry_run: bool,
@@ -196,6 +224,7 @@ enum ProdInstallCommands {
         tui: bool,
     },
     /// Walker / Elephant launch_prefix integration (prod)
+    #[command(visible_alias = "w")]
     Walker {
         #[arg(long)]
         dry_run: bool,
@@ -203,6 +232,7 @@ enum ProdInstallCommands {
         quiet: bool,
     },
     /// Chromium helper extension + native messaging host
+    #[command(visible_alias = "c")]
     Chromium {
         #[arg(long)]
         dry_run: bool,
@@ -214,11 +244,13 @@ enum ProdInstallCommands {
 #[derive(Subcommand)]
 enum WalkerCommands {
     /// Launch an application with taskspace env (Elephant `launch_prefix` target)
+    #[command(visible_alias = "e")]
     Exec {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
     /// Open task terminal or run a command in one (Elephant `terminal_cmd` target)
+    #[command(visible_alias = "t")]
     Terminal {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
@@ -235,6 +267,7 @@ enum WalkerCommands {
 
 #[derive(Subcommand)]
 enum DevCommands {
+    #[command(visible_alias = "i")]
     Install {
         #[command(subcommand)]
         command: Option<DevInstallCommands>,
@@ -243,16 +276,19 @@ enum DevCommands {
         #[arg(long)]
         workspace: Option<std::path::PathBuf>,
     },
+    #[command(visible_alias = "u")]
     Uninstall {
         #[command(subcommand)]
         command: DevUninstallCommands,
     },
+    #[command(visible_alias = "s")]
     Status,
 }
 
 #[derive(Subcommand)]
 enum DevInstallCommands {
     /// Install share templates + Waybar module only (no Hypr/Waybar config edits)
+    #[command(visible_alias = "s")]
     Share {
         #[arg(long)]
         dry_run: bool,
@@ -263,6 +299,7 @@ enum DevInstallCommands {
         prod: bool,
     },
     /// Install binaries + Hyprland + Waybar integration (no systemd)
+    #[command(visible_alias = "a")]
     All {
         #[arg(long)]
         dry_run: bool,
@@ -271,6 +308,7 @@ enum DevInstallCommands {
         #[arg(long)]
         workspace: Option<std::path::PathBuf>,
     },
+    #[command(visible_alias = "h")]
     Hypr {
         #[arg(long)]
         dry_run: bool,
@@ -279,6 +317,7 @@ enum DevInstallCommands {
         #[arg(long)]
         workspace: Option<std::path::PathBuf>,
     },
+    #[command(visible_alias = "w")]
     Waybar {
         #[arg(long)]
         dry_run: bool,
@@ -291,68 +330,81 @@ enum DevInstallCommands {
 
 #[derive(Subcommand)]
 enum DevUninstallCommands {
+    #[command(visible_alias = "a")]
     All,
+    #[command(visible_alias = "h")]
     Hypr {
         #[arg(long)]
         keep_files: bool,
     },
+    #[command(visible_alias = "w")]
     Waybar,
 }
 
 #[derive(Subcommand)]
 enum IntegrationCommands {
+    #[command(visible_alias = "s")]
     Status,
 }
 
 #[derive(Subcommand)]
 enum TaskspaceCommands {
+    #[command(visible_alias = "d")]
     Default,
+    #[command(visible_alias = "c")]
     Current,
 }
 
 #[derive(Subcommand)]
 enum WorkspaceCommands {
+    #[command(visible_alias = "g")]
     Go {
         #[arg(value_parser = clap::value_parser!(i32).range(1..=10))]
         index: i32,
     },
     /// Persist the active slot after a direct hyprctl switch (used by `workspace switch`).
+    #[command(visible_alias = "r")]
     Remember {
         #[arg(value_parser = clap::value_parser!(i32).range(1..=10))]
         index: i32,
     },
     /// Hyprland switch then async state sync (keybind hot path).
+    #[command(visible_alias = "s")]
     Switch {
         #[arg(value_parser = clap::value_parser!(i32).range(1..=10))]
         index: i32,
     },
     /// Adaptive Hyprland switch only (keybind hot path; use with `remember`).
+    #[command(visible_alias = "d")]
     Dispatch {
         #[arg(value_parser = clap::value_parser!(i32).range(1..=10))]
         index: i32,
     },
     /// Move the active window to a taskspace-scoped workspace (keybind hot path).
+    #[command(visible_alias = "m")]
     MoveDispatch {
         #[arg(value_parser = clap::value_parser!(i32).range(1..=10))]
         index: i32,
     },
+    #[command(visible_alias = "n")]
     Next {
         /// Stop at the last workspace instead of wrapping to the first.
         #[arg(long)]
         no_wrap: bool,
     },
+    #[command(visible_alias = "p")]
     Prev {
         /// Stop at the first workspace instead of wrapping to the last.
         #[arg(long)]
         no_wrap: bool,
     },
-    Goto {
-        name: String,
-    },
+    #[command(visible_alias = "gt")]
+    Goto { name: String },
 }
 
 #[derive(Subcommand)]
 enum TaskCommands {
+    #[command(visible_alias = "n")]
     New {
         name: String,
         #[arg(long, help = "Do not switch into the new task after creating it")]
@@ -384,37 +436,39 @@ enum TaskCommands {
         #[arg(long, value_name = "NAME", conflicts_with_all = ["from", "from_current"])]
         from_workspace: Option<String>,
     },
+    #[command(visible_alias = "l")]
     List {
         #[arg(long)]
         json: bool,
         #[arg(long, help = "Include archived tasks")]
         archived: bool,
     },
-    Switch {
-        name_or_id: String,
-    },
+    #[command(visible_alias = "s")]
+    Switch { name_or_id: String },
+    #[command(visible_alias = "c")]
     Current,
-    Archive {
-        name_or_id: String,
-    },
-    Restore {
-        name_or_id: String,
-    },
+    #[command(visible_alias = "a")]
+    Archive { name_or_id: String },
+    #[command(visible_alias = "r")]
+    Restore { name_or_id: String },
+    #[command(visible_alias = "rn")]
     Rename {
         name_or_id: String,
         new_name: String,
     },
-    Delete {
-        name_or_id: String,
-    },
+    #[command(visible_alias = "d")]
+    Delete { name_or_id: String },
     /// Open the task manager TUI in a terminal window (alias for tui-launch)
+    #[command(visible_alias = "m")]
     Menu,
     /// Interactive task manager (ratatui)
+    #[command(visible_alias = "t")]
     Tui,
     /// Open the task manager TUI in a terminal window (used by SUPER+Tab)
-    #[command(name = "tui-launch")]
+    #[command(name = "tui-launch", visible_alias = "tl")]
     TuiLaunch,
     /// Open a terminal in the current context (task checkout or ~)
+    #[command(visible_alias = "te")]
     Terminal {
         #[arg(value_name = "NAME_OR_ID")]
         name_or_id: Option<String>,
@@ -422,11 +476,13 @@ enum TaskCommands {
         host: bool,
     },
     /// Open Cursor/VS Code for the current (or named) task
+    #[command(visible_alias = "e")]
     Editor {
         #[arg(value_name = "NAME_OR_ID")]
         name_or_id: Option<String>,
     },
     /// Open or focus the Chromium browser for the current taskspace
+    #[command(visible_alias = "b")]
     Browser {
         #[arg(value_name = "NAME_OR_ID")]
         name_or_id: Option<String>,
@@ -441,6 +497,7 @@ enum TaskCommands {
 #[derive(Subcommand)]
 enum CheckoutCommands {
     /// Create a sibling git worktree / jj workspace in this task
+    #[command(visible_alias = "a")]
     Add {
         /// Suffix appended to the task id and repo folder (e.g. `review`)
         suffix: String,
@@ -453,18 +510,22 @@ enum CheckoutCommands {
 #[derive(Subcommand)]
 enum RepoCommands {
     /// Register a checkout (writes `.tsk/repo.toml` inside the repo)
+    #[command(visible_alias = "a")]
     Add {
         #[arg(value_name = "DIR")]
         dir: Option<std::path::PathBuf>,
     },
     /// List registered repos
+    #[command(visible_alias = "l")]
     List {
         #[arg(long)]
         json: bool,
     },
     /// Remove a repo from tsk bookmarks (does not modify the checkout)
+    #[command(visible_alias = "rm")]
     Remove { id_or_path: String },
     /// Show the git/jj repo root for a directory (default: cwd)
+    #[command(visible_alias = "r")]
     Root {
         #[arg(value_name = "DIR")]
         dir: Option<std::path::PathBuf>,
@@ -473,7 +534,9 @@ enum RepoCommands {
 
 #[derive(Subcommand)]
 enum WaybarCommands {
+    #[command(visible_alias = "s")]
     Status,
+    #[command(visible_alias = "m")]
     Module {
         #[arg(value_parser = ["task", "workspace"])]
         name: String,
@@ -485,6 +548,7 @@ enum WaybarCommands {
 #[derive(Subcommand)]
 enum BarCommands {
     /// Print taskspace / workspace snapshot as JSON
+    #[command(visible_alias = "s")]
     Status {
         #[arg(long)]
         json: bool,
@@ -494,14 +558,16 @@ enum BarCommands {
 #[derive(Subcommand)]
 enum DebugCommands {
     /// Trace log utilities (`TSK_TRACE=1`; `tsk debug trace workspace N` uses the keybind path)
+    #[command(visible_alias = "t")]
     Trace {
         #[command(subcommand)]
         command: DebugTraceCommands,
     },
     /// Diagnose Hyprland socket2 event socket (Waybar live updates)
-    #[command(name = "hyprland-socket")]
+    #[command(name = "hyprland-socket", visible_alias = "hs")]
     HyprlandSocket,
     /// Hyprctl command log (enabled by default; set TSK_HYPR_LOG=0 to disable)
+    #[command(visible_alias = "h")]
     Hypr {
         #[command(subcommand)]
         command: DebugHyprCommands,
@@ -510,47 +576,60 @@ enum DebugCommands {
 
 #[derive(Subcommand)]
 enum DebugHyprCommands {
-    #[command(subcommand, name = "log")]
+    #[command(subcommand, name = "log", visible_alias = "l")]
     Log(DebugHyprLogCommands),
 }
 
 #[derive(Subcommand)]
 enum DebugHyprLogCommands {
     /// Print the last N hyprctl log lines (default 80)
+    #[command(visible_alias = "s")]
     Show {
         #[arg(long, default_value_t = 80)]
         last: usize,
     },
+    #[command(visible_alias = "c")]
     Clear,
+    #[command(visible_alias = "p")]
     Path,
 }
 
 #[derive(Subcommand)]
 enum DaemonCommands {
     /// Start the daemon in the background
+    #[command(visible_alias = "st")]
     Start,
     /// Run the daemon in the foreground (used by start)
+    #[command(visible_alias = "ru")]
     Run,
     /// Stop the running daemon
+    #[command(visible_alias = "so")]
     Stop,
     /// Stop then start the daemon
+    #[command(visible_alias = "r")]
     Restart,
     /// Check whether the daemon is reachable
+    #[command(visible_alias = "s")]
     Status,
 }
 
 #[derive(Subcommand)]
 enum DebugTraceCommands {
     /// Print the last N trace lines (default 40)
+    #[command(visible_alias = "s")]
     Show {
         #[arg(long, default_value_t = 40)]
         last: usize,
     },
     /// Analyze the most recent workspace switch
+    #[command(visible_alias = "a")]
     Analyze,
+    #[command(visible_alias = "c")]
     Clear,
+    #[command(visible_alias = "p")]
     Path,
     /// Run `workspace switch` with tracing and print a latency timeline
+    #[command(visible_alias = "w")]
     Workspace {
         #[arg(value_parser = clap::value_parser!(i32).range(1..=10))]
         index: i32,
@@ -2321,4 +2400,88 @@ fn cmd_daemon_status() -> Result<()> {
         println!("stopped (CLI will use direct mode)");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod alias_tests {
+    use super::*;
+    use clap::{Command, CommandFactory};
+
+    fn assert_short_aliases(cmd: &Command) {
+        let mut seen_one = std::collections::HashSet::new();
+        let mut seen = std::collections::HashSet::new();
+        for sub in cmd.get_subcommands() {
+            if sub.is_hide_set() || sub.get_name() == "help" {
+                continue;
+            }
+            let aliases: Vec<_> = sub.get_visible_aliases().map(str::to_string).collect();
+            assert_eq!(
+                aliases.len(),
+                1,
+                "`{}` under `{}` should have exactly one visible alias, got {aliases:?}",
+                sub.get_name(),
+                cmd.get_name()
+            );
+            let alias = &aliases[0];
+            assert!(
+                (1..=2).contains(&alias.len()),
+                "`{}` alias `{alias}` must be 1 or 2 letters",
+                sub.get_name()
+            );
+            assert!(
+                alias.chars().all(|c| c.is_ascii_lowercase()),
+                "`{}` alias `{alias}` must be lowercase ascii letters",
+                sub.get_name()
+            );
+            assert!(
+                seen.insert(alias.clone()),
+                "duplicate alias `{alias}` under `{}`",
+                cmd.get_name()
+            );
+            if alias.len() == 1 {
+                let ch = alias.chars().next().expect("1-letter alias");
+                assert!(
+                    seen_one.insert(ch),
+                    "two 1-letter aliases for '{ch}' under `{}`",
+                    cmd.get_name()
+                );
+            }
+            assert_short_aliases(sub);
+        }
+    }
+
+    #[test]
+    fn every_visible_subcommand_has_a_short_alias() {
+        let mut cmd = Cli::command();
+        cmd.build();
+        assert_short_aliases(&cmd);
+    }
+
+    #[test]
+    fn daily_aliases_parse() {
+        let parsed = Cli::try_parse_from(["tsk", "t", "s", "my-feature"]).unwrap();
+        assert!(matches!(
+            parsed.command,
+            Some(Commands::Task {
+                command: TaskCommands::Switch { .. }
+            })
+        ));
+        let parsed = Cli::try_parse_from(["tsk", "w", "s", "3"]).unwrap();
+        assert!(matches!(
+            parsed.command,
+            Some(Commands::Workspace(WorkspaceCommands::Switch { index: 3 }))
+        ));
+        let parsed = Cli::try_parse_from(["tsk", "d", "s"]).unwrap();
+        assert!(matches!(
+            parsed.command,
+            Some(Commands::Daemon(DaemonCommands::Status))
+        ));
+        let parsed = Cli::try_parse_from(["tsk", "r", "l"]).unwrap();
+        assert!(matches!(
+            parsed.command,
+            Some(Commands::Repo {
+                command: RepoCommands::List { .. }
+            })
+        ));
+    }
 }

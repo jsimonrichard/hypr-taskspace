@@ -115,7 +115,7 @@ Creating, switching, and archiving tasks requires `tskd` to be running (`systemc
 
 ### CLI
 
-Most task operations are also available from the CLI:
+Most task operations are also available from the CLI. Short aliases are listed in `tsk --help` (for example `tsk t s` is `tsk task switch`):
 
 ```bash
 tsk task new my-feature              # git/jj from cwd (or scratch if none)
