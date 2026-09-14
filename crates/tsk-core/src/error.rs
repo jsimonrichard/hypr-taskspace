@@ -12,6 +12,8 @@ pub enum TskError {
     Hyprctl(String),
     #[error("database error: {0}")]
     Database(#[from] rusqlite::Error),
+    #[error("session database {path} has no schema — start tsk daemon")]
+    SchemaMissing { path: PathBuf },
     #[error("failed to read {path}: {source}")]
     Read {
         path: PathBuf,

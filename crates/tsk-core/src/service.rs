@@ -191,6 +191,7 @@ impl TaskService {
     }
 
     pub fn initialize(&self) -> Result<()> {
+        self.registry.ensure_schema()?;
         let mut state = self.load_state()?;
         state.default_workspace_count = self.config.default_workspace_count;
         state.global_workspace_slots = self.config.global_workspace_slots.clone();
@@ -1148,6 +1149,7 @@ mod tests {
         config.hyprland_enabled = false;
         let db = dir.join("state.db");
         let registry = Registry::new(Some(db), config.clone()).unwrap();
+        registry.ensure_schema().unwrap();
         TaskService { registry, config }
     }
 

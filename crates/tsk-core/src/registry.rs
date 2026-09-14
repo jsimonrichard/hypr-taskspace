@@ -69,17 +69,30 @@ impl Registry {
                 source,
             })?;
         }
-        let registry = Self { db_path, config };
-        registry.init_db()?;
-        Ok(registry)
+        Ok(Self { db_path, config })
     }
 
     pub fn with_defaults() -> Result<Self> {
         Self::new(None, crate::config::load_config()?)
     }
 
+    /// Create tables and apply migrations. Daemon start and tests only.
+    pub fn ensure_schema(&self) -> Result<()> {
+        self.init_db()
+    }
+
     fn connect(&self) -> Result<Connection> {
         Connection::open(&self.db_path).map_err(TskError::from)
+    }
+
+    fn schema_error(&self, source: rusqlite::Error) -> TskError {
+        if source.to_string().contains("no such table") {
+            TskError::SchemaMissing {
+                path: self.db_path.clone(),
+            }
+        } else {
+            TskError::Database(source)
+        }
     }
 
     fn init_db(&self) -> Result<()> {
@@ -153,18 +166,20 @@ impl Registry {
 
     pub fn load_state(&self) -> Result<SessionState> {
         let conn = self.connect()?;
-        let session = conn.query_row(
-            "SELECT context_mode, current_task_id, last_desktop, COALESCE(last_monitor_workspace, '{}') FROM session WHERE id = 1",
-            [],
-            |row| {
-                Ok(SessionRow {
-                    context_mode: row.get(0)?,
-                    current_task_id: row.get(1)?,
-                    last_desktop: row.get(2)?,
-                    last_monitor_workspace: row.get(3)?,
-                })
-            },
-        )?;
+        let session = conn
+            .query_row(
+                "SELECT context_mode, current_task_id, last_desktop, COALESCE(last_monitor_workspace, '{}') FROM session WHERE id = 1",
+                [],
+                |row| {
+                    Ok(SessionRow {
+                        context_mode: row.get(0)?,
+                        current_task_id: row.get(1)?,
+                        last_desktop: row.get(2)?,
+                        last_monitor_workspace: row.get(3)?,
+                    })
+                },
+            )
+            .map_err(|source| self.schema_error(source))?;
 
         let mut tasks = HashMap::new();
         let mut stmt = conn.prepare("SELECT * FROM tasks")?;
@@ -409,6 +424,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let db = dir.path().join("state.db");
         let registry = Registry::new(Some(db), TskConfig::default()).unwrap();
+        registry.ensure_schema().unwrap();
         let state = registry.load_state().unwrap();
         assert_eq!(state.context_mode, ContextMode::Default);
         registry.save_state(&state).unwrap();
@@ -468,9 +484,22 @@ mod tests {
             .unwrap();
         }
         let registry = Registry::new(Some(db), TskConfig::default()).unwrap();
+        registry.ensure_schema().unwrap();
         let state = registry.load_state().unwrap();
         let task = state.tasks.get("t1").expect("migrated task");
         assert_eq!(task.created_at.to_rfc3339(), "2020-01-01T00:00:00+00:00");
         assert_eq!(task.listed_at, task.created_at);
+    }
+
+    #[test]
+    fn load_state_without_schema_is_schema_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("state.db");
+        let registry = Registry::new(Some(db.clone()), TskConfig::default()).unwrap();
+        let err = registry.load_state().unwrap_err();
+        match err {
+            TskError::SchemaMissing { path } => assert_eq!(path, db),
+            other => panic!("expected SchemaMissing, got {other}"),
+        }
     }
 }

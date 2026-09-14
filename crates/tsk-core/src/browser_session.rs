@@ -536,6 +536,7 @@ mod tests {
         };
         let task = sample_task("tabc1234");
         let registry = crate::registry::Registry::new(None, cfg.clone()).unwrap();
+        registry.ensure_schema().unwrap();
         let mut state = registry.load_state().unwrap();
         state.context_mode = ContextMode::Task;
         state.current_task_id = Some(task.id.clone());
@@ -557,6 +558,7 @@ mod tests {
         };
         let task = sample_task("tpend001");
         let registry = crate::registry::Registry::new(None, cfg.clone()).unwrap();
+        registry.ensure_schema().unwrap();
         let mut state = registry.load_state().unwrap();
         state.context_mode = ContextMode::Task;
         state.current_task_id = Some(task.id.clone());
