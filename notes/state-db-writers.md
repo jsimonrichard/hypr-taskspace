@@ -18,6 +18,37 @@ for DDL now; make writes incremental later. WAL + `busy_timeout` can wait if
 readers still collide with a writer — they are not a substitute for fewer
 writers.
 
+## Embedded engines (if we outgrow SQLite WAL)
+
+Recorded 2026-09-14. Concurrent **reads** are not a reason to leave SQLite.
+[WAL mode](https://www.sqlite.org/wal.html) already allows many reader processes
+plus one writer, with snapshot isolation. Our `database is locked` was writers
+colliding (`init_db` + `save_state`) at `busy_timeout` 0, not missing readers.
+Section 2 is still the first concurrency step.
+
+Almost every established embedded store is still **one writer**. What changes is
+whether readers block that writer.
+
+| Engine | Concurrent reads | Multi-process | Notes |
+|--------|------------------|---------------|--------|
+| **SQLite WAL** (stay) | Yes, snapshot | Yes (same host; not network FS) | SQL, `rusqlite`, one file. Default rollback journal *does* block readers during a write. |
+| **LMDB** (`heed`) | Yes, MVCC mmap | Yes — designed for it | Battle-tested KV (OpenLDAP et al.). No SQL; set map size; one writer. |
+| **RocksDB** (`rust-rocksdb`) | Yes, snapshots | Possible, heavier | LSM, Meta-maintained. Directory of files, C++/cross-compile cost. Built for TB write load, not a 50KB session. |
+| **redb** | Yes, MVCC (threads) | Experimental feature | Pure Rust, LMDB-inspired. Less established than SQLite/LMDB. |
+| **DuckDB** | Yes (analytics) | Process-local | Wrong shape: OLAP engine, not a session registry. |
+
+Not candidates: Limbo/libSQL (same SQLite writer model), sled (maintenance
+stalled). Berkeley DB is concurrent and old; nobody new should pick it over
+SQLite or LMDB.
+
+If we ever switch, LMDB is the only “established embedded” that is *more*
+multi-process-native than SQLite WAL. We would give up SQL, `tsk`’s existing
+migrations, and `sqlite3` debugging for a KV we have to schema ourselves. Do
+that only if WAL + incremental `save_state` still cannot keep bar/CLI reads
+off the writer. A daemon-owned write socket (readers never open the file for
+write) is the application-level version of the same idea and does not need a
+new engine.
+
 ## Principles
 
 - Fail closed: a missing schema is `TskError::SchemaMissing { path }`, not an
