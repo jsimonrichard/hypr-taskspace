@@ -58,6 +58,7 @@ pub fn install_bins(cfg: &TskConfig, options: &InstallBinsOptions) -> Result<Vec
         should_deploy_user_share(cfg, system_share, options.omarchy_integration);
     let share_src = resolve_share_templates(options.workspace_root.as_deref(), profile)?;
     let tsk_cmd = resolve_tsk_command(cfg);
+    let mut actions = crate::install::ensure_session_schema(cfg, options.dry_run)?;
 
     if options.dry_run {
         let mut lines = vec![
@@ -117,7 +118,8 @@ pub fn install_bins(cfg: &TskConfig, options: &InstallBinsOptions) -> Result<Vec
                 }
             }
         }
-        return Ok(lines.into_iter().filter(|s| !s.is_empty()).collect());
+        actions.extend(lines.into_iter().filter(|s| !s.is_empty()));
+        return Ok(actions);
     }
 
     if !Path::new(&tsk_cmd).is_file() {
@@ -148,7 +150,7 @@ pub fn install_bins(cfg: &TskConfig, options: &InstallBinsOptions) -> Result<Vec
     remove_legacy_global_xdg_open_wrapper()?;
     let shadow_actions = crate::binary::remove_packaged_path_shadows()?;
 
-    let mut actions = vec![
+    actions.extend(vec![
         if deploy_user_share {
             format!(
                 "deployed share data to {}",
@@ -168,7 +170,7 @@ pub fn install_bins(cfg: &TskConfig, options: &InstallBinsOptions) -> Result<Vec
             task_bin_dir(cfg).display()
         ),
         format!("runtime data in {}", cfg.data_dir.display()),
-    ];
+    ]);
     actions.extend(editor_actions);
     actions.extend(shadow_actions);
     if !options.skip_reload {

@@ -32,7 +32,7 @@ pub fn install_detected(
         ));
     }
 
-    let mut actions = Vec::new();
+    let mut actions = crate::install::ensure_session_schema(cfg, options.dry_run)?;
     if detected.omarchy {
         actions.push("detected Omarchy".into());
         let omarchy = install_omarchy_prod(
@@ -121,5 +121,8 @@ mod tests {
         assert!(actions
             .iter()
             .any(|a| a.contains("would install TSK Chromium extension")));
+        assert!(actions
+            .iter()
+            .any(|a| a.contains("would ensure session schema")));
     }
 }

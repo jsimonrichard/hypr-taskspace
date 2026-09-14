@@ -23,12 +23,12 @@ writers.
 - Fail closed: a missing schema is `TskError::SchemaMissing { path }`, not an
   implicit `CREATE TABLE` on a bar poll or SUPER+N.
 - One constructor opens the file; `ensure_schema` is a required, explicit call
-  at process start for the process that owns migrations (daemon). Tests call
-  the same method. Hosts do not branch on “which CLI command” — they either
-  migrate or they do not.
+  for schema owners (daemon start, `tsk install`, tests). `tsk doctor` checks
+  the same columns without writing. Hosts do not branch on “which integration”
+  — every install entry that sets up the machine calls the same helper.
 - `save_state` rewriting every table is a separate concern (section 3).
 
-## 1. Schema only on daemon start (this change)
+## 1. Schema only on daemon start (landed)
 
 `Registry::new` no longer runs `init_db`. `Registry::ensure_schema` is the only
 DDL entry. `TaskService::initialize` (daemon-only today) calls it first.
@@ -36,6 +36,16 @@ DDL entry. `TaskService::initialize` (daemon-only today) calls it first.
 
 Bar status, chromium-host, workspace remember, and other CLI `with_defaults`
 paths become open + read/write without `CREATE TABLE IF NOT EXISTS`.
+
+## 1b. Install and doctor (this change)
+
+`install::ensure_session_schema` is the install-side owner. Every user-facing
+install entry (`install_detected`, `install_bins`, walker, chromium) calls that
+helper. Same `Registry::ensure_schema` — not a second migration. Dry-run
+reports the path and does not open the DB.
+
+`Registry::check_schema` is read-only: missing file or missing required columns
+is `SchemaMissing`. `tsk doctor` reports it. Doctor must not create `state.db`.
 
 ## 2. Later: WAL + busy_timeout
 
@@ -61,10 +71,15 @@ Tier 5.
 2. A fresh temp DB cannot `load_state` until `ensure_schema`.
 3. Daemon `initialize` still creates/migrates the prod DB.
 4. Existing registry/service tests pass.
+5. User-facing install entries call `ensure_session_schema` (skipped on
+   dry-run).
+6. `check_schema` fails closed on a missing file without creating one.
+7. `tsk doctor` includes a session-schema check.
 
 ## Reuse survey
 
-Extending `crates/tsk-core/src/registry.rs` (`init_db` / `migrate_schema`) and
-the existing daemon-only `TaskService::initialize`. Not a second migration
-path. Tests already go through `Registry::new` on a temp file — they call
-`ensure_schema` instead of implicit init.
+Extending `Registry::ensure_schema` / `init_db` / `migrate_schema`. Install
+calls the same method via `install::ensure_session_schema` from the public
+install entries — not a per-integration migration.
+Doctor uses `Registry::check_schema` (read-only), not a second column list
+scattered in QML or the CLI.

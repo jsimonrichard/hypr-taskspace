@@ -55,6 +55,42 @@ CREATE TABLE IF NOT EXISTS repos (
 );
 "#;
 
+/// Columns `migrate_schema` and `load_state`/`save_state` require after init.
+/// `check_schema` uses this list so doctor and install agree with migrate.
+const REQUIRED_COLUMNS: &[(&str, &[&str])] = &[
+    (
+        "session",
+        &[
+            "id",
+            "context_mode",
+            "current_task_id",
+            "last_desktop",
+            "default_desktop_count",
+            "last_monitor_workspace",
+        ],
+    ),
+    (
+        "tasks",
+        &[
+            "id",
+            "name",
+            "status",
+            "repo_path",
+            "container_name",
+            "created_at",
+            "last_active_at",
+            "source_repo_path",
+            "container_isolation",
+            "listed_at",
+        ],
+    ),
+    (
+        "windows",
+        &["hypr_address", "workspace_name", "home_workspace_name"],
+    ),
+    ("repos", &["id", "path"]),
+];
+
 pub struct Registry {
     db_path: PathBuf,
     config: TskConfig,
@@ -76,9 +112,35 @@ impl Registry {
         Self::new(None, crate::config::load_config()?)
     }
 
-    /// Create tables and apply migrations. Daemon start and tests only.
+    /// Create tables and apply migrations. Daemon start, `tsk install`, and tests.
     pub fn ensure_schema(&self) -> Result<()> {
         self.init_db()
+    }
+
+    /// Read-only: required tables and columns exist. Does not create the file.
+    pub fn check_schema(&self) -> Result<()> {
+        if !self.db_path.is_file() {
+            return Err(TskError::SchemaMissing {
+                path: self.db_path.clone(),
+            });
+        }
+        let conn = self.connect()?;
+        for (table, required) in REQUIRED_COLUMNS {
+            let existing = table_columns(&conn, table)?;
+            if existing.is_empty() {
+                return Err(TskError::SchemaMissing {
+                    path: self.db_path.clone(),
+                });
+            }
+            for col in *required {
+                if !existing.iter().any(|c| c == col) {
+                    return Err(TskError::SchemaMissing {
+                        path: self.db_path.clone(),
+                    });
+                }
+            }
+        }
+        Ok(())
     }
 
     fn connect(&self) -> Result<Connection> {
@@ -497,6 +559,52 @@ mod tests {
         let db = dir.path().join("state.db");
         let registry = Registry::new(Some(db.clone()), TskConfig::default()).unwrap();
         let err = registry.load_state().unwrap_err();
+        match err {
+            TskError::SchemaMissing { path } => assert_eq!(path, db),
+            other => panic!("expected SchemaMissing, got {other}"),
+        }
+    }
+
+    #[test]
+    fn check_schema_without_file_is_schema_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("state.db");
+        let registry = Registry::new(Some(db.clone()), TskConfig::default()).unwrap();
+        let err = registry.check_schema().unwrap_err();
+        match err {
+            TskError::SchemaMissing { path } => assert_eq!(path, db),
+            other => panic!("expected SchemaMissing, got {other}"),
+        }
+        assert!(!db.is_file(), "check_schema must not create the database");
+    }
+
+    #[test]
+    fn check_schema_passes_after_ensure() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("state.db");
+        let registry = Registry::new(Some(db), TskConfig::default()).unwrap();
+        registry.ensure_schema().unwrap();
+        registry.check_schema().unwrap();
+    }
+
+    #[test]
+    fn check_schema_fails_when_required_column_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("state.db");
+        {
+            let conn = Connection::open(&db).unwrap();
+            conn.execute_batch(
+                r#"
+                CREATE TABLE session (id INTEGER PRIMARY KEY);
+                CREATE TABLE tasks (id TEXT PRIMARY KEY);
+                CREATE TABLE windows (hypr_address TEXT PRIMARY KEY);
+                CREATE TABLE repos (id TEXT PRIMARY KEY, path TEXT NOT NULL UNIQUE);
+                "#,
+            )
+            .unwrap();
+        }
+        let registry = Registry::new(Some(db.clone()), TskConfig::default()).unwrap();
+        let err = registry.check_schema().unwrap_err();
         match err {
             TskError::SchemaMissing { path } => assert_eq!(path, db),
             other => panic!("expected SchemaMissing, got {other}"),

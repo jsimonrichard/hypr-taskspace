@@ -124,8 +124,10 @@ pub fn install_chromium(cfg: &TskConfig, options: &InstallChromiumOptions) -> Re
     let crx_path = work_dir.join("extension.crx");
     let host_dest = work_dir.join("tsk-chromium-host");
 
+    let mut actions = crate::install::ensure_session_schema(cfg, options.dry_run)?;
+
     if options.dry_run {
-        return Ok(vec![
+        actions.extend([
             format!(
                 "would install TSK Chromium extension into {}",
                 user_data.display()
@@ -142,6 +144,7 @@ pub fn install_chromium(cfg: &TskConfig, options: &InstallChromiumOptions) -> Re
                 host_dest.display()
             ),
         ]);
+        return Ok(actions);
     }
 
     if !share_ext.join("manifest.json").is_file() {
@@ -226,11 +229,11 @@ pub fn install_chromium(cfg: &TskConfig, options: &InstallChromiumOptions) -> Re
     };
     manifest::save_manifest(&metadata_dir, &manifest)?;
 
-    let mut actions = vec![
+    actions.extend([
         format!("installed Chromium extension {extension_id} v{version}"),
         format!("  {}", json_path.display()),
         format!("  {}", host_json_path.display()),
-    ];
+    ]);
     if version != chrome_release_version() {
         actions.push(
             "  (from-source revision — reinstall after extension edits; no manifest bump needed)"

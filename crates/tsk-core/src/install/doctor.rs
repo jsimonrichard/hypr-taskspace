@@ -15,6 +15,7 @@ use crate::install::{
     install_waybar_status, manifest,
 };
 use crate::is_daemon_running;
+use crate::registry::Registry;
 use crate::share::{effective_share_dir, uses_packaged_share};
 
 #[derive(Debug, Clone)]
@@ -120,6 +121,8 @@ pub fn run_doctor_checks(cfg: &TskConfig) -> Result<Vec<DoctorCheck>> {
         passed: true,
         detail: cfg.data_dir.display().to_string(),
     });
+
+    checks.push(session_schema_check(cfg));
 
     if uses_packaged_share(cfg) {
         let bindings_ok = if quattro {
@@ -347,6 +350,32 @@ pub fn run_doctor_checks(cfg: &TskConfig) -> Result<Vec<DoctorCheck>> {
     }
 
     Ok(checks)
+}
+
+fn session_schema_check(cfg: &TskConfig) -> DoctorCheck {
+    let path = cfg.state_db_path();
+    if !path.is_file() {
+        return DoctorCheck {
+            label: "Session database schema".into(),
+            passed: false,
+            detail: format!(
+                "{} missing — start tsk daemon or run `tsk install`",
+                path.display()
+            ),
+        };
+    }
+    match Registry::new(Some(path.clone()), cfg.clone()).and_then(|r| r.check_schema()) {
+        Ok(()) => DoctorCheck {
+            label: "Session database schema".into(),
+            passed: true,
+            detail: path.display().to_string(),
+        },
+        Err(err) => DoctorCheck {
+            label: "Session database schema".into(),
+            passed: false,
+            detail: err.to_string(),
+        },
+    }
 }
 
 fn editor_external_browser_check(opener: &Path) -> Option<DoctorCheck> {
@@ -769,5 +798,16 @@ bindd
             format_doctor_report(&checks, true),
             "[ok] a: detail\n[FAIL] b: detail"
         );
+    }
+
+    #[test]
+    fn session_schema_check_fails_closed_without_creating_db() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = TskConfig::default();
+        cfg.data_dir = dir.path().to_path_buf();
+        let report = session_schema_check(&cfg);
+        assert!(!report.passed);
+        assert!(report.detail.contains("missing"));
+        assert!(!cfg.state_db_path().is_file());
     }
 }

@@ -68,13 +68,16 @@ pub fn install_walker(cfg: &TskConfig, options: &InstallWalkerOptions) -> Result
     let launch_prefix = walker_launch_prefix(&tsk_cmd);
     let terminal_cmd = walker_terminal_cmd(&tsk_cmd);
 
+    let mut actions = crate::install::ensure_session_schema(cfg, options.dry_run)?;
+
     if options.dry_run {
-        return Ok(vec![
+        actions.extend([
             format!("would patch {} ({MANAGED_MARKER})", path.display()),
             format!("  launch_prefix = \"{launch_prefix}\""),
             format!("  terminal_cmd = \"{terminal_cmd}\""),
             "would restart elephant.service (if active)".into(),
         ]);
+        return Ok(actions);
     }
 
     if !path.is_file() {
@@ -102,11 +105,11 @@ pub fn install_walker(cfg: &TskConfig, options: &InstallWalkerOptions) -> Result
         source,
     })?;
 
-    let mut actions = vec![
+    actions.extend([
         format!("patched {}", path.display()),
         format!("  launch_prefix = \"{launch_prefix}\""),
         format!("  terminal_cmd = \"{terminal_cmd}\""),
-    ];
+    ]);
 
     restart_elephant_if_active(&mut actions, options.quiet)?;
 
