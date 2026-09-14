@@ -42,7 +42,7 @@ impl TaskStatus {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Task {
     pub id: String,
     pub name: String,
@@ -99,7 +99,7 @@ impl Task {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WindowRecord {
     pub hypr_address: String,
     pub task_id: Option<String>,

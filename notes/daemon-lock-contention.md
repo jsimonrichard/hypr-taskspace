@@ -28,10 +28,17 @@ The Hyprland window event listener also grabs the same lock on every `openwindow
 
 ## Architectural constraint
 
-`TaskService` uses a **load entire state → mutate → save entire state** pattern. `Registry::save_state` rewrites the full `tasks` and `windows` tables (delete-all + reinsert), not row-level updates. That means:
+`TaskService` uses a **load entire state → mutate → save entire state** pattern.
 
-- A global `RwLock` with concurrent readers is **unsafe** unless writes are wrapped in a SQLite transaction (or the save path is redesigned).
-- Per-task locks are awkward because `current_task_id`, taskspace context, window registry, and navigation memory are global cross-cutting state.
+> 2026-09-14: `Registry::save_state` is one transaction: session UPDATE, then
+> per-row upsert/delete for tasks and windows. It no longer delete-all +
+> reinsert. WAL + `busy_timeout` are still later (`notes/state-db-writers.md`).
+
+Writes are now one SQLite transaction, so a reader that opens a separate
+connection will not see a half-deleted `tasks`/`windows` snapshot. Concurrent
+in-process readers of the in-memory `TaskService` still serialize on the
+daemon mutex. Per-task locks stay awkward because `current_task_id`,
+taskspace context, window registry, and navigation memory are global.
 
 See `crates/tsk-core/src/registry.rs` (`save_state`).
 

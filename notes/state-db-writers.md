@@ -83,18 +83,21 @@ is `SchemaMissing`. `tsk doctor` reports it. Doctor must not create `state.db`.
 If a reader still hits a writer, wait instead of `SQLITE_BUSY` at timeout 0.
 Does not require Limbo.
 
-## 3. Later: incremental persist
+## 3. Incremental persist (this change)
 
-Replace wholesale `DELETE FROM tasks/windows` + reinsert with per-row updates
-(or a single transaction around a narrower write). Needed before concurrent
-reads of a half-rewritten snapshot are safe. See `notes/daemon-lock-contention.md`
-Tier 5.
+`save_state` runs in one SQLite transaction: update the session row, upsert
+tasks/windows that differ from the current rows, delete keys that left the
+snapshot. Readers never see an empty `tasks`/`windows` table mid-save.
+
+Still one `SessionState` snapshot from the service — not per-field SQL APIs
+(that is the rest of Tier 5). WAL + `busy_timeout` stay section 2.
 
 ## Out of scope
 
 - Adopting Limbo/Turso/libSQL
 - Bar `workspacev2` polling (separate)
-- Changing `save_state` in this changeset
+- WAL / `busy_timeout` (section 2)
+- Per-operation SQL instead of load → mutate → save
 
 ## Success criteria
 
@@ -106,11 +109,15 @@ Tier 5.
    dry-run).
 6. `check_schema` fails closed on a missing file without creating one.
 7. `tsk doctor` includes a session-schema check.
+8. `save_state` does not `DELETE FROM tasks/windows` then reinsert the table.
+9. Removing one task or window leaves the others; a missing session row fails
+   closed.
 
 ## Reuse survey
 
-Extending `Registry::ensure_schema` / `init_db` / `migrate_schema`. Install
-calls the same method via `install::ensure_session_schema` from the public
-install entries — not a per-integration migration.
-Doctor uses `Registry::check_schema` (read-only), not a second column list
-scattered in QML or the CLI.
+§1–1b: `Registry::ensure_schema` / `init_db` / `migrate_schema` and
+`install::ensure_session_schema`.
+
+§3: same `Registry::save_state` and the existing `upsert_task` helper.
+`load_state` and the diff read share `load_tasks` / `load_windows`. Not a
+second persist API on `TaskService`.
