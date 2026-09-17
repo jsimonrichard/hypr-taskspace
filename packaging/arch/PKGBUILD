@@ -1,6 +1,6 @@
 # Maintainer: J. Simon Richard <jsimonrichard@gmail.com>
 pkgname=hypr-taskspace
-pkgver=0.1.1
+pkgver=0.2.0
 pkgrel=1
 pkgdesc="Task-centric Hyprland control plane with Omarchy and Waybar integration"
 arch=('x86_64' 'aarch64')
