@@ -437,7 +437,7 @@ fn push_omarchy_shell_checks(checks: &mut Vec<DoctorCheck>, cfg: &TskConfig) {
             .to_string(),
     });
     checks.push(DoctorCheck {
-        label: "Cloned menu uses tsk launch".into(),
+        label: "Cloned omarchy.menu (apps + tsk launch)".into(),
         passed: crate::install::plugin::menu_launch_patched(),
         detail: crate::install::plugin::cloned_menu_dir()
             .join("Menu.qml")

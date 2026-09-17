@@ -50,14 +50,14 @@ This:
 
 - Copies `share/hypr/omarchy.lua` into the share tree and appends a marked `dofile` block to `~/.config/hypr/bindings.lua` (does **not** edit `hyprland.conf`)
 - Copies `share/omarchy-plugin/` to `~/.config/omarchy/plugins/tsk.taskspace/` (bar-widget; overlay unless `--tui`), enables it, and disables `omarchy.workspaces`
-- Clones `omarchy.menu` if needed and patches app launch to `tsk launch <id>.desktop` (keeps OSD via `beginLaunchFeedback`)
+- Clones `omarchy.menu` if needed, refreshes `Menu.qml` from the packaged plugin, lists apps via `DesktopEntries` when the host leaves `shell.appLibrary` null, and patches app launch to `tsk launch <id>.desktop`
 - Rebinds browser keys off `omarchy-launch-browser` onto `tsk launch chromium.desktop`
 
 Share assets must already be installed (pacman or `scripts/install-user-share.sh`).
 
 Dry-run: `tsk install omarchy --dry-run` (add `--tui` to preview the TUI control-UI layout)
 
-Omarchy menu updates may require re-running `tsk install omarchy` to re-apply the clone patch. Uninstall restores `appLibrary.launch(...)` rather than deleting a clone you may have edited.
+Omarchy menu updates may require re-running `tsk install omarchy` to refresh the clone from packaged `omarchy.menu` and re-apply the apps + launch patches. Uninstall restores stock `mergeAppRows` / `appLibrary.launch(...)` rather than deleting a clone you may have edited.
 
 ## Chromium helper extension
 

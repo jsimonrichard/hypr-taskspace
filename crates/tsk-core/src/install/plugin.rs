@@ -16,8 +16,107 @@ use crate::xdg::{ensure_parent, expand};
 pub const PLUGIN_ID: &str = "tsk.taskspace";
 pub const WORKSPACES_ID: &str = "omarchy.workspaces";
 pub const TSK_MANAGED_LAUNCH: &str = "tsk-managed-launch";
+pub const TSK_MANAGED_APPS: &str = "tsk-managed-apps";
 
 const STOCK_LAUNCH: &str = "if (root.appLibrary) root.appLibrary.launch(appId, label)";
+const STOCK_ICON_SOURCE: &str =
+    "source: row.isApp && root.appLibrary ? root.appLibrary.iconSource(row.appIcon) : \"\"";
+const PATCHED_ICON_SOURCE: &str = "source: row.isApp\n                  ? (root.appLibrary && typeof root.appLibrary.iconSource === \"function\"\n                    ? root.appLibrary.iconSource(row.appIcon)\n                    : Quickshell.iconPath(String(row.appIcon || \"\"), true))\n                  : \"\"";
+
+const STOCK_MERGE_APP_ROWS: &str = r#"  function mergeAppRows() {
+    if (!root.appLibrary) return
+
+    var rows = root.appLibrary.sortedEntries("")
+    var appRows = []
+    for (var j = 0; j < rows.length; j++) {
+      var entry = rows[j].entry
+      var appId = String(entry.id || "")
+      if (!appId) continue
+      var subtext = root.appLibrary.entrySubtext(entry)
+      var aliases = subtext ? [subtext] : []
+      try {
+        if (entry.keywords && typeof entry.keywords.join === "function") aliases = aliases.concat(entry.keywords)
+      } catch (e) { }
+      appRows.push({
+        id: "apps." + appId,
+        parent: "apps",
+        kind: "app",
+        icon: "",
+        appIcon: String(entry.icon || ""),
+        appId: appId,
+        label: root.appLibrary.entryName(entry),
+        title: "",
+        target: "",
+        description: subtext,
+        action: "",
+        provider: "",
+        aliases: aliases,
+        when: "",
+        checked: "",
+        order: 0
+      })
+    }
+
+    var merged = MenuModel.mergeAppRows(root.items, root.itemOrder, appRows)
+    root.items = merged.items
+    root.itemOrder = merged.itemOrder
+    if (root.opened) root.rebuildDisplay()
+  }"#;
+
+const PATCHED_MERGE_APP_ROWS: &str = r#"  function mergeAppRows() {
+    // tsk-managed-apps
+    // Cloned menus currently get a null plugin shell, so shell.appLibrary is
+    // missing. DesktopEntries is the same Quickshell singleton AppLibrary uses.
+    var rows = []
+    if (root.appLibrary && typeof root.appLibrary.sortedEntries === "function") {
+      rows = root.appLibrary.sortedEntries("")
+    } else {
+      var values = (DesktopEntries.applications && DesktopEntries.applications.values) || []
+      for (var di = 0; di < values.length; di++) {
+        var desktop = values[di]
+        if (!desktop || desktop.noDisplay) continue
+        rows.push({ entry: desktop })
+      }
+    }
+    var appRows = []
+    for (var j = 0; j < rows.length; j++) {
+      var entry = rows[j].entry
+      var appId = String(entry.id || "")
+      if (!appId) continue
+      var subtext = (root.appLibrary && typeof root.appLibrary.entrySubtext === "function")
+        ? root.appLibrary.entrySubtext(entry)
+        : String((entry && entry.genericName) || "")
+      var aliases = subtext ? [subtext] : []
+      try {
+        if (entry.keywords && typeof entry.keywords.join === "function") aliases = aliases.concat(entry.keywords)
+      } catch (e) { }
+      appRows.push({
+        id: "apps." + appId,
+        parent: "apps",
+        kind: "app",
+        icon: "",
+        appIcon: String(entry.icon || ""),
+        appId: appId,
+        label: (root.appLibrary && typeof root.appLibrary.entryName === "function")
+          ? root.appLibrary.entryName(entry)
+          : String((entry && entry.name) || appId),
+        title: "",
+        target: "",
+        description: subtext,
+        action: "",
+        provider: "",
+        aliases: aliases,
+        when: "",
+        checked: "",
+        order: 0
+      })
+    }
+
+    var merged = MenuModel.mergeAppRows(root.items, root.itemOrder, appRows)
+    root.items = merged.items
+    root.itemOrder = merged.itemOrder
+    if (root.opened) root.rebuildDisplay()
+  }"#;
 const OVERLAY_FILES: &[&str] = &["Taskspace.qml", "TaskspaceModel.js"];
 
 /// Which Omarchy control surface SUPER+Tab and the bar task label open.
@@ -294,12 +393,12 @@ pub fn install_menu_launch_prefix(
     if options.dry_run {
         if clone.is_dir() {
             return Ok(vec![format!(
-                "would patch {} launch prefix",
+                "would refresh {} from omarchy.menu and patch apps + launch",
                 clone.display()
             )]);
         }
         return Ok(vec![format!(
-            "would clone omarchy.menu → {} and patch launch prefix",
+            "would clone omarchy.menu → {} and patch apps + launch",
             clone.display()
         )]);
     }
@@ -314,25 +413,50 @@ pub fn install_menu_launch_prefix(
         actions.push(format!("menu clone missing {}", qml.display()));
         return Ok(actions);
     }
+    if let Some(stock) = omarchy_menu_source_qml() {
+        fs::copy(&stock, &qml).map_err(|source| TskError::Write {
+            path: qml.clone(),
+            source,
+        })?;
+        actions.push(format!(
+            "refreshed {} from {}",
+            qml.display(),
+            stock.display()
+        ));
+    }
     let content = fs::read_to_string(&qml).map_err(|source| TskError::Read {
         path: qml.clone(),
         source,
     })?;
-    let (patched, changed) = patch_menu_launch(&content, &tsk_cmd);
-    if changed {
+    let (with_apps, apps_changed) = patch_menu_apps(&content);
+    let (patched, launch_changed) = patch_menu_launch(&with_apps, &tsk_cmd);
+    if apps_changed || launch_changed {
         fs::write(&qml, patched).map_err(|source| TskError::Write {
             path: qml.clone(),
             source,
         })?;
-        actions.push(format!("patched {} ({TSK_MANAGED_LAUNCH})", qml.display()));
+        if apps_changed {
+            actions.push(format!("patched {} ({TSK_MANAGED_APPS})", qml.display()));
+        }
+        if launch_changed {
+            actions.push(format!("patched {} ({TSK_MANAGED_LAUNCH})", qml.display()));
+        }
         let _ = run_logged(&["omarchy-shell", "shell", "rescanPlugins"]);
-    } else if content.contains(TSK_MANAGED_LAUNCH) {
-        actions.push(format!("{} already uses tsk launch", qml.display()));
-    } else {
+    } else if content.contains(TSK_MANAGED_LAUNCH) && content.contains(TSK_MANAGED_APPS) {
         actions.push(format!(
-            "could not find app launch line in {}",
+            "{} already uses tsk launch and DesktopEntries fallback",
             qml.display()
         ));
+    } else {
+        if !content.contains(TSK_MANAGED_APPS) {
+            actions.push(format!("could not find mergeAppRows in {}", qml.display()));
+        }
+        if !content.contains(TSK_MANAGED_LAUNCH) {
+            actions.push(format!(
+                "could not find app launch line in {}",
+                qml.display()
+            ));
+        }
     }
     Ok(actions)
 }
@@ -346,8 +470,9 @@ pub fn restore_menu_launch_prefix() -> Result<Vec<String>> {
         path: qml.clone(),
         source,
     })?;
-    let (restored, changed) = unpatch_menu_launch(&content);
-    if !changed {
+    let (without_launch, launch_changed) = unpatch_menu_launch(&content);
+    let (restored, apps_changed) = unpatch_menu_apps(&without_launch);
+    if !launch_changed && !apps_changed {
         return Ok(Vec::new());
     }
     fs::write(&qml, restored).map_err(|source| TskError::Write {
@@ -355,7 +480,7 @@ pub fn restore_menu_launch_prefix() -> Result<Vec<String>> {
         source,
     })?;
     Ok(vec![format!(
-        "restored appLibrary.launch in {}",
+        "restored stock omarchy.menu launch and apps list in {}",
         qml.display()
     )])
 }
@@ -374,18 +499,19 @@ pub fn patch_menu_launch(qml: &str, tsk_cmd: &str) -> (String, bool) {
 }
 
 pub fn unpatch_menu_launch(qml: &str) -> (String, bool) {
-    let Some(start) = qml.find(&format!("// {TSK_MANAGED_LAUNCH}")) else {
+    let marker = format!("// {TSK_MANAGED_LAUNCH}");
+    let Some(start) = qml.find(&marker) else {
         return (qml.to_string(), false);
     };
     let rest = &qml[start..];
     let Some(exec_rel) = rest.find("Util.execDetached(") else {
         return (qml.to_string(), false);
     };
-    let after = &rest[exec_rel..];
-    let Some(close_rel) = after.find(')') else {
+    let after_name = &rest[exec_rel + "Util.execDetached".len()..];
+    let Some(close_rel) = matching_paren(after_name) else {
         return (qml.to_string(), false);
     };
-    let end = start + exec_rel + close_rel + 1;
+    let end = start + exec_rel + "Util.execDetached".len() + close_rel + 1;
     let mut out = String::new();
     out.push_str(&qml[..start]);
     out.push_str(STOCK_LAUNCH);
@@ -393,11 +519,70 @@ pub fn unpatch_menu_launch(qml: &str) -> (String, bool) {
     (out, true)
 }
 
+fn matching_paren(s: &str) -> Option<usize> {
+    let mut depth = 0;
+    for (i, c) in s.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 fn patched_launch_block(tsk_cmd: &str) -> String {
     format!(
-        "// {TSK_MANAGED_LAUNCH}\n      if (root.appLibrary) root.appLibrary.beginLaunchFeedback(label)\n      Util.execDetached({} + \" launch \" + Util.shellQuote(appId + \".desktop\"))",
+        "// {TSK_MANAGED_LAUNCH}\n      if (root.appLibrary && typeof root.appLibrary.beginLaunchFeedback === \"function\")\n        root.appLibrary.beginLaunchFeedback(label)\n      Util.execDetached({} + \" launch \" + Util.shellQuote(appId + \".desktop\"))",
         js_string(tsk_cmd)
     )
+}
+
+pub fn patch_menu_apps(qml: &str) -> (String, bool) {
+    if qml.contains(TSK_MANAGED_APPS) {
+        return (qml.to_string(), false);
+    }
+    if !qml.contains(STOCK_MERGE_APP_ROWS) {
+        return (qml.to_string(), false);
+    }
+    let mut next = qml.replacen(STOCK_MERGE_APP_ROWS, PATCHED_MERGE_APP_ROWS, 1);
+    if next.contains(STOCK_ICON_SOURCE) {
+        next = next.replacen(STOCK_ICON_SOURCE, PATCHED_ICON_SOURCE, 1);
+    }
+    (next, true)
+}
+
+pub fn unpatch_menu_apps(qml: &str) -> (String, bool) {
+    if !qml.contains(TSK_MANAGED_APPS) {
+        return (qml.to_string(), false);
+    }
+    if !qml.contains(PATCHED_MERGE_APP_ROWS) {
+        return (qml.to_string(), false);
+    }
+    let mut next = qml.replacen(PATCHED_MERGE_APP_ROWS, STOCK_MERGE_APP_ROWS, 1);
+    if next.contains(PATCHED_ICON_SOURCE) {
+        next = next.replacen(PATCHED_ICON_SOURCE, STOCK_ICON_SOURCE, 1);
+    }
+    (next, true)
+}
+
+fn omarchy_path() -> PathBuf {
+    env::var("OMARCHY_PATH")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .filter(|p| p.is_dir())
+        .unwrap_or_else(|| PathBuf::from("/usr/share/omarchy"))
+}
+
+fn omarchy_menu_source_qml() -> Option<PathBuf> {
+    let path = omarchy_path().join("shell/plugins/menu/Menu.qml");
+    path.is_file().then_some(path)
 }
 
 fn js_string(s: &str) -> String {
@@ -438,7 +623,7 @@ pub fn menu_launch_patched() -> bool {
     qml.is_file()
         && fs::read_to_string(qml)
             .ok()
-            .is_some_and(|c| c.contains(TSK_MANAGED_LAUNCH))
+            .is_some_and(|c| c.contains(TSK_MANAGED_LAUNCH) && c.contains(TSK_MANAGED_APPS))
 }
 
 fn layout_contains_id(path: &Path, id: &str) -> bool {
@@ -505,7 +690,7 @@ mod tests {
         let (out, changed) = patch_menu_launch(STOCK, "/usr/bin/tsk");
         assert!(changed);
         assert!(out.contains(TSK_MANAGED_LAUNCH));
-        assert!(out.contains("beginLaunchFeedback"));
+        assert!(out.contains("typeof root.appLibrary.beginLaunchFeedback"));
         assert!(out.contains("/usr/bin/tsk"));
         assert!(out.contains("launch "));
         assert!(!out.contains(STOCK_LAUNCH));
@@ -524,8 +709,51 @@ mod tests {
         let (patched, _) = patch_menu_launch(STOCK, "/usr/bin/tsk");
         let (restored, changed) = unpatch_menu_launch(&patched);
         assert!(changed);
+        assert_eq!(restored, STOCK);
         assert!(restored.contains(STOCK_LAUNCH));
         assert!(!restored.contains(TSK_MANAGED_LAUNCH));
+    }
+
+    #[test]
+    fn patch_menu_apps_uses_desktop_entries_fallback() {
+        let stock = format!("{STOCK_MERGE_APP_ROWS}\n                {STOCK_ICON_SOURCE}\n");
+        let (out, changed) = patch_menu_apps(&stock);
+        assert!(changed);
+        assert!(out.contains(TSK_MANAGED_APPS));
+        assert!(out.contains("DesktopEntries.applications"));
+        assert!(out.contains("Quickshell.iconPath"));
+        assert!(!out.contains("if (!root.appLibrary) return"));
+        let (twice, changed) = patch_menu_apps(&out);
+        assert!(!changed);
+        assert_eq!(out, twice);
+    }
+
+    #[test]
+    fn unpatch_menu_apps_restores_stock() {
+        let stock = format!("{STOCK_MERGE_APP_ROWS}\n                {STOCK_ICON_SOURCE}\n");
+        let (patched, _) = patch_menu_apps(&stock);
+        let (restored, changed) = unpatch_menu_apps(&patched);
+        assert!(changed);
+        assert_eq!(restored, stock);
+        assert!(!restored.contains(TSK_MANAGED_APPS));
+    }
+
+    #[test]
+    fn patch_applies_to_packaged_omarchy_menu() {
+        let Some(path) = omarchy_menu_source_qml() else {
+            return;
+        };
+        let stock = fs::read_to_string(path).expect("read packaged omarchy Menu.qml");
+        let (apps, apps_changed) = patch_menu_apps(&stock);
+        assert!(
+            apps_changed,
+            "packaged omarchy Menu.qml mergeAppRows no longer matches STOCK_MERGE_APP_ROWS"
+        );
+        let (launch, launch_changed) = patch_menu_launch(&apps, "/usr/bin/tsk");
+        assert!(launch_changed);
+        let (unlaunch, _) = unpatch_menu_launch(&launch);
+        let (restored, _) = unpatch_menu_apps(&unlaunch);
+        assert_eq!(restored, stock);
     }
 
     #[test]

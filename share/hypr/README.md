@@ -30,7 +30,7 @@ o.bind("SUPER + TAB", "Task manager", "/usr/bin/tsk task tui-launch")
 
 It does **not** edit `hyprland.conf`. After edits: `hyprctl reload` then `hyprctl configerrors`.
 
-`omarchy.lua` unbinds Omarchy workspace digits, SUPER+Tab, SUPER+Return, mouse scroll, and browser keys, then binds tsk commands. Browser keys call `tsk launch chromium.desktop` (never `omarchy-launch-browser`). **SUPER+Space** Apps go through a cloned `omarchy.menu` whose launch prefix is also `tsk launch`. Menu updates may require re-applying that patch.
+`omarchy.lua` unbinds Omarchy workspace digits, SUPER+Tab, SUPER+Return, mouse scroll, and browser keys, then binds tsk commands. Browser keys call `tsk launch chromium.desktop` (never `omarchy-launch-browser`). **SUPER+Space** Apps go through a cloned `omarchy.menu` that lists `DesktopEntries` when the host `appLibrary` is missing and launches via `tsk launch`. Menu updates may require re-running `tsk install omarchy`.
 
 The bar is the `tsk.taskspace` plugin. **SUPER+Tab** and the task label run `tsk task tui-launch`, which opens the overlay after `tsk install omarchy` or the floating TUI after `tsk install omarchy --tui`. Waybar CFFI remains available for non-Omarchy Hyprland.
 
