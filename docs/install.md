@@ -57,7 +57,7 @@ Share assets must already be installed (pacman or `scripts/install-user-share.sh
 
 Dry-run: `tsk install omarchy --dry-run` (add `--tui` to preview the TUI control-UI layout)
 
-Omarchy menu updates may require re-running `tsk install omarchy` to refresh the clone from packaged `omarchy.menu` and re-apply the apps + launch patches. Uninstall restores stock `mergeAppRows` / `appLibrary.launch(...)` rather than deleting a clone you may have edited.
+Omarchy menu updates require re-running `tsk install omarchy` to refresh the clone from packaged `omarchy.menu`, re-apply the apps + launch patches, and `omarchy restart shell`. `rescanPlugins` is not enough: the cloned menu is keepLoaded, so a file write leaves the running instance on the previous QML. Uninstall restores stock `mergeAppRows` / `appLibrary.launch(...)` rather than deleting a clone you may have edited. The pacman hook does not run `tsk install omarchy`.
 
 ## Chromium helper extension
 
