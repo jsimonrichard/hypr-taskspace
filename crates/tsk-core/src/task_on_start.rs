@@ -264,9 +264,9 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn with_hooks_enabled<F: FnOnce()>(f: F) {
+        let _env = crate::test_env::lock(&["TSK_ENABLE_ON_START"]);
         std::env::set_var("TSK_ENABLE_ON_START", "1");
         f();
-        std::env::remove_var("TSK_ENABLE_ON_START");
     }
 
     fn test_state(global_slots: Vec<u32>) -> SessionState {

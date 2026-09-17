@@ -132,17 +132,10 @@ fn remove_stale_daemon_runtime(socket: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, MutexGuard};
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    fn env_lock() -> MutexGuard<'static, ()> {
-        ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
-    }
 
     #[test]
     fn session_marker_roundtrip() {
-        let _lock = env_lock();
+        let _env = crate::test_env::lock(&["HOME"]);
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path();
         let share = home.join(".local/share/tsk");
@@ -164,7 +157,7 @@ mod tests {
 
     #[test]
     fn reconcile_keeps_session_without_reachable_daemons() {
-        let _lock = env_lock();
+        let _env = crate::test_env::lock(&["HOME"]);
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path();
         let share = home.join(".local/share/tsk");
@@ -184,7 +177,7 @@ mod tests {
 
     #[test]
     fn migrates_legacy_marker_from_tsk_dev_share() {
-        let _lock = env_lock();
+        let _env = crate::test_env::lock(&["HOME"]);
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path();
         let prod_share = home.join(".local/share/tsk");

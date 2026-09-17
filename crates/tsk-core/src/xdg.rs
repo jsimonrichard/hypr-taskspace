@@ -137,29 +137,27 @@ mod tests {
         if !Path::new(&expected).is_dir() {
             return;
         }
-        let saved = env::var_os("XDG_RUNTIME_DIR");
+        let _env = crate::test_env::lock(&["XDG_RUNTIME_DIR"]);
         env::remove_var("XDG_RUNTIME_DIR");
         normalize_desktop_env();
         assert_eq!(
             env::var_os("XDG_RUNTIME_DIR").as_deref(),
             Some(expected.as_ref())
         );
-        match saved {
-            Some(v) => env::set_var("XDG_RUNTIME_DIR", v),
-            None => env::remove_var("XDG_RUNTIME_DIR"),
-        }
     }
 
     #[test]
     fn tsk_config_path_ignores_tsk_config_env_without_active_session() {
-        crate::dev_session::stop_dev_session().ok();
-        std::env::set_var("TSK_CONFIG", "/home/u/.config/tsk-dev/config.toml");
+        let _env = crate::test_env::lock(&["HOME", "XDG_DATA_HOME", "TSK_CONFIG"]);
+        let dir = tempfile::tempdir().unwrap();
+        env::set_var("HOME", dir.path());
+        env::remove_var("XDG_DATA_HOME");
+        env::set_var("TSK_CONFIG", "/home/u/.config/tsk-dev/config.toml");
         let path = tsk_config_path();
         assert!(
             !path.to_string_lossy().contains("tsk-dev"),
             "expected prod config path, got {}",
             path.display()
         );
-        std::env::remove_var("TSK_CONFIG");
     }
 }

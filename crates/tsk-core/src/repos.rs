@@ -471,14 +471,12 @@ mod tests {
     use super::*;
 
     fn with_temp_db<F: FnOnce()>(f: F) {
+        let _env = crate::test_env::lock(&["HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME"]);
         let dir = tempfile::tempdir().unwrap();
         std::env::set_var("HOME", dir.path());
         std::env::set_var("XDG_DATA_HOME", dir.path().join("share"));
         std::env::set_var("XDG_CONFIG_HOME", dir.path().join("config"));
         f();
-        std::env::remove_var("HOME");
-        std::env::remove_var("XDG_DATA_HOME");
-        std::env::remove_var("XDG_CONFIG_HOME");
     }
 
     #[test]

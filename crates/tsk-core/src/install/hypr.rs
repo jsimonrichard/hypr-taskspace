@@ -846,6 +846,7 @@ mod tests {
 
     #[test]
     fn dev_uninstall_restores_pre_dev_hyprland_conf_from_backup() {
+        let _env = crate::test_env::lock(&["HOME"]);
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path();
         let prod_share = home.join(".local/share/tsk");
@@ -902,6 +903,5 @@ mod tests {
         uninstall_hypr(&cfg, true).unwrap();
         let body = fs::read_to_string(&config_path).unwrap();
         assert_eq!(body, pre_dev);
-        std::env::remove_var("HOME");
     }
 }

@@ -114,13 +114,18 @@ mod tests {
 
     #[test]
     fn is_dev_config_ignores_tsk_config_env_for_prod_cfg() {
+        let _env = crate::test_env::lock(&["HOME", "XDG_DATA_HOME", "TSK_CONFIG"]);
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        std::env::set_var("HOME", home);
+        std::env::remove_var("XDG_DATA_HOME");
         let mut cfg = TskConfig::default();
         cfg.container_prefix = "tsk".into();
         cfg.daemon_socket = "~/.local/share/tsk/daemon.sock".into();
-        cfg.install_hypr_share_dir = crate::xdg::expand("~/.local/share/tsk");
+        cfg.data_dir = home.join(".local/share/tsk");
+        cfg.install_hypr_share_dir = home.join(".local/share/tsk");
         std::env::set_var("TSK_CONFIG", "/home/u/.config/tsk-dev/config.toml");
         assert!(!is_dev_config(&cfg));
-        std::env::remove_var("TSK_CONFIG");
     }
 
     #[test]

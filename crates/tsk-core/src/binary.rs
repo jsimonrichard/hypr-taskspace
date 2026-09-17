@@ -335,17 +335,10 @@ pub fn waybar_module_beside_binary(tsk_bin: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, MutexGuard};
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    fn env_lock() -> MutexGuard<'static, ()> {
-        ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
-    }
 
     #[test]
     fn resolve_tsk_command_uses_prod_path_when_session_active() {
-        let _lock = env_lock();
+        let _env = crate::test_env::lock(&["HOME"]);
         let mut cfg = TskConfig::default();
         cfg.install_hypr_share_dir = crate::install::profile::dev_share_dir();
         cfg.container_prefix = "tsk-dev".into();
@@ -392,13 +385,13 @@ mod tests {
 
     #[test]
     fn resolve_tsk_spawn_binary_ignores_non_tsk_current_exe() {
-        let _lock = env_lock();
-        crate::dev_session::stop_dev_session().ok();
+        let _env = crate::test_env::lock(&["HOME", "PATH", "TSK"]);
         let dir = tempfile::tempdir().unwrap();
+        std::env::set_var("HOME", dir.path());
+        crate::dev_session::stop_dev_session().ok();
         let tsk = dir.path().join("tsk");
         fs::write(&tsk, b"").unwrap();
 
-        let old_path = std::env::var_os("PATH");
         std::env::set_var("PATH", dir.path());
         std::env::remove_var("TSK");
 
@@ -406,12 +399,6 @@ mod tests {
         assert!(!is_tsk_cli_executable(&std::env::current_exe().unwrap()));
         let resolved = resolve_tsk_spawn_binary(&TskConfig::default());
         assert_eq!(resolved, tsk);
-
-        if let Some(p) = old_path {
-            std::env::set_var("PATH", p);
-        } else {
-            std::env::remove_var("PATH");
-        }
     }
 
     #[test]
