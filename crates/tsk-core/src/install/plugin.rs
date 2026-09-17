@@ -324,7 +324,7 @@ pub fn uninstall_omarchy_plugin() -> Result<Vec<String>> {
         "left",
     ]);
     actions.extend(restore_menu_launch_prefix()?);
-    let _ = run_logged(&["omarchy-shell", "shell", "rescanPlugins"]);
+    restart_omarchy_shell_for_menu(&mut actions);
     Ok(actions)
 }
 
@@ -392,15 +392,21 @@ pub fn install_menu_launch_prefix(
     let clone = cloned_menu_dir();
     if options.dry_run {
         if clone.is_dir() {
-            return Ok(vec![format!(
-                "would refresh {} from omarchy.menu and patch apps + launch",
-                clone.display()
-            )]);
+            return Ok(vec![
+                format!(
+                    "would refresh {} from omarchy.menu and patch apps + launch",
+                    clone.display()
+                ),
+                "would restart omarchy-shell to load the menu clone".into(),
+            ]);
         }
-        return Ok(vec![format!(
-            "would clone omarchy.menu → {} and patch apps + launch",
-            clone.display()
-        )]);
+        return Ok(vec![
+            format!(
+                "would clone omarchy.menu → {} and patch apps + launch",
+                clone.display()
+            ),
+            "would restart omarchy-shell to load the menu clone".into(),
+        ]);
     }
 
     let mut actions = Vec::new();
@@ -441,12 +447,16 @@ pub fn install_menu_launch_prefix(
         if launch_changed {
             actions.push(format!("patched {} ({TSK_MANAGED_LAUNCH})", qml.display()));
         }
-        let _ = run_logged(&["omarchy-shell", "shell", "rescanPlugins"]);
+        restart_omarchy_shell_for_menu(&mut actions);
     } else if content.contains(TSK_MANAGED_LAUNCH) && content.contains(TSK_MANAGED_APPS) {
         actions.push(format!(
             "{} already uses tsk launch and DesktopEntries fallback",
             qml.display()
         ));
+        // keepLoaded omarchy.menu ignores rescanPlugins / inotify reload; a
+        // second `tsk install all` used to no-op here while the running shell
+        // still had the pre-patch Menu.qml.
+        restart_omarchy_shell_for_menu(&mut actions);
     } else {
         if !content.contains(TSK_MANAGED_APPS) {
             actions.push(format!("could not find mergeAppRows in {}", qml.display()));
@@ -651,6 +661,18 @@ fn left_layout_contains_id(path: &Path, id: &str) -> bool {
                     || item.as_str() == Some(id)
             })
         })
+}
+
+/// `omarchy-shell shell rescanPlugins` does not reload keepLoaded plugins
+/// (cloned `omarchy.menu`). `omarchy restart shell` is the upstream command
+/// that tears the process down and loads Menu.qml from disk.
+fn restart_omarchy_shell_for_menu(actions: &mut Vec<String>) {
+    match run_logged(&["omarchy", "restart", "shell"]) {
+        Ok(_) => actions.push("restarted omarchy-shell to load the menu clone".into()),
+        Err(err) => actions.push(format!(
+            "omarchy restart shell: {err} — SUPER+Space Apps will stay empty until the shell restarts"
+        )),
+    }
 }
 
 fn run_logged(args: &[&str]) -> Result<()> {
