@@ -81,7 +81,7 @@ pub fn client_belongs_to_task(client: &HyprWindow, config: &TskConfig, task: &Ta
 }
 
 pub fn clients_for_task(config: &TskConfig, task: &Task) -> Result<Vec<HyprWindow>> {
-    if !hyprland::available() {
+    if !config.hyprland_enabled || !hyprland::available() {
         return Ok(Vec::new());
     }
     Ok(hyprland::get_clients()?
@@ -319,6 +319,16 @@ mod tests {
             pid: Some(1),
         };
         assert!(!client_belongs_to_task(&tui, &config, &task));
+    }
+
+    #[test]
+    fn clients_for_task_skips_hyprland_when_disabled() {
+        let config = TskConfig {
+            hyprland_enabled: false,
+            ..sample_config()
+        };
+        let clients = clients_for_task(&config, &sample_task()).unwrap();
+        assert!(clients.is_empty());
     }
 
     #[test]

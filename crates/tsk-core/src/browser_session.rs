@@ -592,6 +592,7 @@ mod tests {
         let cfg = TskConfig {
             tasks_base_dir: dir.path().to_path_buf(),
             data_dir: dir.path().to_path_buf(),
+            hyprland_enabled: false,
             ..TskConfig::default()
         };
         let task = sample_task("tarch001");
