@@ -58,6 +58,10 @@ pub enum TskError {
     OwnedCheckoutNameMismatch { path: PathBuf, label: String },
     #[error("forgotten jj checkout {path} has no workspace name in its restore sidecar")]
     ForgottenJjCheckoutUnnamed { path: PathBuf },
+    #[error("handoff not found at {path}")]
+    HandoffNotFound { path: PathBuf },
+    #[error("invalid handoff at {path}: {reason}")]
+    InvalidHandoff { path: PathBuf, reason: String },
     #[error("{0}")]
     Other(String),
 }

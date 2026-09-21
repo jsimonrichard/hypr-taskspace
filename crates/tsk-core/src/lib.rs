@@ -11,6 +11,7 @@ pub mod daemon;
 pub mod dev_session;
 pub mod distrobox;
 pub mod error;
+pub mod handoff;
 pub mod host;
 pub mod hypr_log;
 pub mod hyprland;
@@ -75,6 +76,10 @@ pub use dev_session::{
 };
 pub use distrobox::create_container_with_progress;
 pub use error::{Result, TskError};
+pub use handoff::{
+    handoff_path, handoff_template, sample_handoff_markdown, Handoff, HandoffMeta,
+    OPTIONAL_HEADINGS, REQUIRED_HEADINGS,
+};
 pub use hypr_log::{clear_log as clear_hypr_log, hypr_log_path, tail_raw as tail_hypr_log};
 pub use hyprland_events::{
     diagnose_socket2, is_full_refresh_event, is_monitor_focus_event, is_monitor_topology_event,
