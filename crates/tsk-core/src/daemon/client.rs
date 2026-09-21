@@ -356,6 +356,7 @@ impl DaemonClient {
         switch: bool,
         repo: crate::task_repo::TaskRepoSource,
         repo_options: crate::task_repo::TaskRepoOptions,
+        handoff_markdown: Option<&str>,
     ) -> Result<Task> {
         ensure_daemon()?;
         let cwd = std::env::current_dir().ok();
@@ -367,11 +368,48 @@ impl DaemonClient {
             "defer_container_create": repo_options.defer_container_create,
         });
         repo_options.fork_from.write_daemon_params(&mut body);
+        if let Some(md) = handoff_markdown {
+            body.as_object_mut()
+                .unwrap()
+                .insert("handoff".into(), json!(md));
+        }
         if let Value::Object(mut repo_params) = repo.to_daemon_params(cwd.as_deref()) {
             body.as_object_mut().unwrap().append(&mut repo_params);
         }
         let v = daemon_request_with_timeout("create_task", body, CREATE_TASK_TIMEOUT)?;
         serde_json::from_value(v).map_err(|e| TskError::Other(e.to_string()))
+    }
+
+    pub fn instruct_task(&self, task_id: &str, markdown: &str) -> Result<std::path::PathBuf> {
+        ensure_daemon()?;
+        let v = daemon_request(
+            "instruct_task",
+            json!({ "task_id": task_id, "handoff": markdown }),
+        )?;
+        let path = v
+            .get("path")
+            .and_then(|p| p.as_str())
+            .ok_or_else(|| TskError::Other("instruct_task missing path".into()))?;
+        Ok(std::path::PathBuf::from(path))
+    }
+
+    pub fn handoff_status(&self, task_id: &str) -> Result<(std::path::PathBuf, bool)> {
+        ensure_daemon()?;
+        let v = daemon_request("handoff_status", json!({ "task_id": task_id }))?;
+        let path = v
+            .get("path")
+            .and_then(|p| p.as_str())
+            .ok_or_else(|| TskError::Other("handoff_status missing path".into()))?;
+        let exists = v
+            .get("exists")
+            .and_then(|e| e.as_bool())
+            .unwrap_or(false);
+        Ok((std::path::PathBuf::from(path), exists))
+    }
+
+    pub fn validate_handoff(&self, task_id: &str) -> Result<()> {
+        ensure_daemon()?;
+        daemon_request("validate_handoff", json!({ "task_id": task_id })).map(|_| ())
     }
 
     pub fn switch_task(&self, task_id: &str) -> Result<Task> {

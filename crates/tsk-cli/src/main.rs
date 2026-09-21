@@ -435,6 +435,9 @@ enum TaskCommands {
         /// Fork from this jj workspace or tsk task checkout (same repo).
         #[arg(long, value_name = "NAME", conflicts_with_all = ["from", "from_current"])]
         from_workspace: Option<String>,
+        /// Write a HANDOFF.md from this file (`-` = stdin) after create.
+        #[arg(long, value_name = "FILE")]
+        handoff: Option<String>,
     },
     #[command(visible_alias = "l")]
     List {
@@ -458,6 +461,21 @@ enum TaskCommands {
     },
     #[command(visible_alias = "d")]
     Delete { name_or_id: String },
+    /// Print the HANDOFF path (and whether it exists), or validate it.
+    Handoff {
+        #[arg(value_name = "NAME_OR_ID")]
+        name_or_id: Option<String>,
+        #[arg(long, help = "Validate an existing HANDOFF.md")]
+        validate: bool,
+    },
+    /// Write or replace workspace/HANDOFF.md for a task.
+    Instruct {
+        #[arg(value_name = "NAME_OR_ID")]
+        name_or_id: Option<String>,
+        /// Markdown file to write (`-` or omitted = stdin).
+        #[arg(long, value_name = "FILE")]
+        from: Option<String>,
+    },
     /// Open the task manager TUI in a terminal window (alias for tui-launch)
     #[command(visible_alias = "m")]
     Menu,
@@ -760,6 +778,7 @@ fn run() -> Result<()> {
                 from,
                 from_current,
                 from_workspace,
+                handoff,
             } => cmd_task_new(
                 &name,
                 !no_switch,
@@ -770,6 +789,7 @@ fn run() -> Result<()> {
                 from.as_deref(),
                 from_current,
                 from_workspace.as_deref(),
+                handoff.as_deref(),
             ),
             TaskCommands::List { json, archived } => cmd_task_list(json, archived),
             TaskCommands::Switch { name_or_id } => cmd_task_switch(&name_or_id),
@@ -781,6 +801,13 @@ fn run() -> Result<()> {
                 new_name,
             } => cmd_task_rename(&name_or_id, &new_name),
             TaskCommands::Delete { name_or_id } => cmd_task_delete(&name_or_id),
+            TaskCommands::Handoff {
+                name_or_id,
+                validate,
+            } => cmd_task_handoff(name_or_id.as_deref(), validate),
+            TaskCommands::Instruct { name_or_id, from } => {
+                cmd_task_instruct(name_or_id.as_deref(), from.as_deref())
+            },
             TaskCommands::Menu | TaskCommands::TuiLaunch => cmd_task_tui_launch(),
             TaskCommands::Tui => cmd_task_tui(),
             TaskCommands::Terminal { name_or_id, host } => {
@@ -1598,6 +1625,7 @@ fn cmd_task_new(
     from: Option<&str>,
     from_current: bool,
     from_workspace: Option<&str>,
+    handoff: Option<&str>,
 ) -> Result<()> {
     if scratch && repo_path.is_some() {
         return Err(TskError::Other(
@@ -1611,6 +1639,10 @@ fn cmd_task_new(
     if no_worktree && !fork_from.is_default() {
         return Err(TskError::ForkRequiresLinkedCheckout);
     }
+    let handoff_markdown = match handoff {
+        Some(path) => Some(read_handoff_input(Some(path))?),
+        None => None,
+    };
     let repo = match (scratch, repo_path) {
         (true, None) => TaskRepoSource::Scratch,
         (false, Some(path)) => TaskRepoSource::Path(path.to_path_buf()),
@@ -1625,7 +1657,13 @@ fn cmd_task_new(
     };
     // Defer switch when creating a container so Distrobox progress stays visible
     // (switch closes the task TUI / changes focus mid-create).
-    let task = client()?.create_task(name, switch && !container, repo, repo_options)?;
+    let task = client()?.create_task(
+        name,
+        switch && !container,
+        repo,
+        repo_options,
+        handoff_markdown.as_deref(),
+    )?;
     println!(
         "Created task {} → workspaces {}-1..{}-{}",
         task.id, task.id, task.id, task.workspace_count
@@ -1635,6 +1673,11 @@ fn cmd_task_new(
         repo_label(&task.repo_path),
         task.repo_path.display()
     );
+    if handoff_markdown.is_some() {
+        let cfg = load_config()?;
+        let path = tsk_core::handoff_path(&tsk_core::task_data_dir(&cfg, &task.id));
+        println!("Handoff: {}", path.display());
+    }
     if container {
         let cfg = load_config()?;
         let task_home = tsk_core::task_data_dir(&cfg, &task.id);
@@ -1657,6 +1700,52 @@ fn cmd_task_new(
             println!("Task home: {}", home.display());
         }
     }
+    Ok(())
+}
+
+fn read_handoff_input(from: Option<&str>) -> Result<String> {
+    match from {
+        None | Some("-") => {
+            use std::io::Read;
+            let mut buf = String::new();
+            std::io::stdin()
+                .read_to_string(&mut buf)
+                .map_err(|source| TskError::Read {
+                    path: std::path::PathBuf::from("<stdin>"),
+                    source,
+                })?;
+            Ok(buf)
+        }
+        Some(path) => {
+            let path = std::path::PathBuf::from(path);
+            std::fs::read_to_string(&path).map_err(|source| TskError::Read { path, source })
+        }
+    }
+}
+
+fn cmd_task_handoff(name_or_id: Option<&str>, validate: bool) -> Result<()> {
+    let task = resolve_current_or_named_task(name_or_id)?;
+    let client = client()?;
+    if validate {
+        client.validate_handoff(&task.id)?;
+        let (path, _) = client.handoff_status(&task.id)?;
+        println!("valid: {}", path.display());
+        return Ok(());
+    }
+    let (path, exists) = client.handoff_status(&task.id)?;
+    if exists {
+        println!("{}", path.display());
+    } else {
+        println!("{} (missing)", path.display());
+    }
+    Ok(())
+}
+
+fn cmd_task_instruct(name_or_id: Option<&str>, from: Option<&str>) -> Result<()> {
+    let task = resolve_current_or_named_task(name_or_id)?;
+    let markdown = read_handoff_input(from)?;
+    let path = client()?.instruct_task(&task.id, &markdown)?;
+    println!("Wrote {}", path.display());
     Ok(())
 }
 

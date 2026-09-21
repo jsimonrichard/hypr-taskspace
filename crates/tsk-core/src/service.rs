@@ -54,6 +54,32 @@ fn resolve_create_fork(
     )
 }
 
+fn write_task_handoff(
+    task: &Task,
+    tasks_base_dir: &Path,
+    markdown: &str,
+) -> Result<std::path::PathBuf> {
+    let path = crate::handoff::handoff_path(&tasks_base_dir.join(&task.id));
+    crate::handoff::Handoff::validate_at(markdown, &path)?;
+    let parsed = crate::handoff::Handoff::parse(markdown)?;
+    let meta = crate::handoff::HandoffMeta {
+        task_id: task.id.clone(),
+        task_name: task.name.clone(),
+        created: Utc::now().to_rfc3339(),
+        repo: task.repo_path.to_string_lossy().into_owned(),
+        source_repo: task
+            .source_repo_path
+            .as_ref()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        parent_plan: parsed.meta.parent_plan.clone(),
+        concern_index: parsed.meta.concern_index.clone(),
+    };
+    let handoff = parsed.with_meta(meta);
+    handoff.write(&path)?;
+    Ok(path)
+}
+
 fn resolve_current_fork_checkout(
     state: &SessionState,
     cwd: Option<&Path>,
@@ -488,6 +514,7 @@ impl TaskService {
         repo: crate::task_repo::TaskRepoSource,
         cwd: Option<&Path>,
         repo_options: crate::task_repo::TaskRepoOptions,
+        handoff_markdown: Option<&str>,
     ) -> Result<Task> {
         let mut state = self.load_state()?;
         let active_count = state
@@ -556,6 +583,10 @@ impl TaskService {
             ports: vec![],
         };
 
+        if let Some(markdown) = handoff_markdown {
+            write_task_handoff(&task, &self.config.tasks_base_dir, markdown)?;
+        }
+
         if repo_options.container_isolation {
             let image = self.config.distrobox_image.trim();
             if image.is_empty() {
@@ -616,6 +647,38 @@ impl TaskService {
             }
             Ok(task)
         }
+    }
+
+    /// Validate markdown, stamp meta, and write `<task-home>/workspace/HANDOFF.md`.
+    pub fn instruct_task(&self, task_id: &str, markdown: &str) -> Result<std::path::PathBuf> {
+        let state = self.load_state()?;
+        let task = state
+            .tasks
+            .get(task_id)
+            .cloned()
+            .ok_or_else(|| TskError::Other(format!("Unknown task: {task_id}")))?;
+        write_task_handoff(&task, &self.config.tasks_base_dir, markdown)
+    }
+
+    /// Canonical HANDOFF path and whether the file exists.
+    pub fn handoff_status(&self, task_id: &str) -> Result<(std::path::PathBuf, bool)> {
+        let state = self.load_state()?;
+        let _task = state
+            .tasks
+            .get(task_id)
+            .ok_or_else(|| TskError::Other(format!("Unknown task: {task_id}")))?;
+        let path = crate::handoff::handoff_path(&self.config.tasks_base_dir.join(task_id));
+        let exists = path.is_file();
+        Ok((path, exists))
+    }
+
+    /// Read and validate an existing HANDOFF.md.
+    pub fn validate_handoff(&self, task_id: &str) -> Result<crate::handoff::Handoff> {
+        let (path, exists) = self.handoff_status(task_id)?;
+        if !exists {
+            return Err(TskError::HandoffNotFound { path });
+        }
+        crate::handoff::Handoff::read(&path)
     }
 
     /// Run the create hook after deferred Distrobox setup finishes.
@@ -1164,6 +1227,7 @@ mod tests {
                 crate::task_repo::TaskRepoSource::Scratch,
                 None,
                 crate::task_repo::TaskRepoOptions::default(),
+                None,
             )
             .unwrap();
         assert!(task.id.starts_with('t'));
@@ -1187,6 +1251,52 @@ mod tests {
     }
 
     #[test]
+    fn create_task_with_handoff_writes_workspace_file() {
+        let dir = tempdir().unwrap();
+        let svc = test_service(dir.path());
+        let task = svc
+            .create_task(
+                "with-handoff",
+                false,
+                crate::task_repo::TaskRepoSource::Scratch,
+                None,
+                crate::task_repo::TaskRepoOptions::default(),
+                Some(crate::handoff::sample_handoff_markdown()),
+            )
+            .unwrap();
+        let path = crate::handoff::handoff_path(&dir.path().join("tasks").join(&task.id));
+        assert!(path.is_file());
+        let loaded = crate::handoff::Handoff::read(&path).unwrap();
+        assert!(loaded.markdown.contains(&format!("- **task_id:** {}", task.id)));
+        assert!(loaded.markdown.contains("- **task_name:** with-handoff"));
+    }
+
+    #[test]
+    fn instruct_task_rejects_empty_goal() {
+        let dir = tempdir().unwrap();
+        let svc = test_service(dir.path());
+        let task = svc
+            .create_task(
+                "needs-brief",
+                false,
+                crate::task_repo::TaskRepoSource::Scratch,
+                None,
+                crate::task_repo::TaskRepoOptions::default(),
+                None,
+            )
+            .unwrap();
+        let bad = crate::handoff::sample_handoff_markdown().replace(
+            "## Goal\nShip the handoff API.\n",
+            "## Goal\n\n",
+        );
+        let err = svc.instruct_task(&task.id, &bad).unwrap_err();
+        assert!(matches!(err, TskError::InvalidHandoff { .. }));
+        let (path, exists) = svc.handoff_status(&task.id).unwrap();
+        assert!(!exists);
+        assert!(path.ends_with("workspace/HANDOFF.md"));
+    }
+
+    #[test]
     fn create_task_with_switch_enters_taskspace() {
         let dir = tempdir().unwrap();
         let svc = test_service(dir.path());
@@ -1197,6 +1307,7 @@ mod tests {
                 crate::task_repo::TaskRepoSource::Scratch,
                 None,
                 crate::task_repo::TaskRepoOptions::default(),
+                None,
             )
             .unwrap();
         let state = svc.load_state().unwrap();
@@ -1215,6 +1326,7 @@ mod tests {
                 crate::task_repo::TaskRepoSource::Scratch,
                 None,
                 crate::task_repo::TaskRepoOptions::default(),
+                None,
             )
             .unwrap();
         svc.archive_task(&task.id).unwrap();
@@ -1244,6 +1356,7 @@ mod tests {
                 crate::task_repo::TaskRepoSource::Scratch,
                 None,
                 crate::task_repo::TaskRepoOptions::default(),
+                None,
             )
             .unwrap();
 
@@ -1278,6 +1391,7 @@ mod tests {
                 crate::task_repo::TaskRepoSource::Scratch,
                 None,
                 crate::task_repo::TaskRepoOptions::default(),
+                None,
             )
             .unwrap();
 
@@ -1306,6 +1420,7 @@ mod tests {
                 crate::task_repo::TaskRepoSource::Scratch,
                 None,
                 crate::task_repo::TaskRepoOptions::default(),
+                None,
             )
             .unwrap();
         let b = svc
@@ -1315,6 +1430,7 @@ mod tests {
                 crate::task_repo::TaskRepoSource::Scratch,
                 None,
                 crate::task_repo::TaskRepoOptions::default(),
+                None,
             )
             .unwrap();
 
@@ -1348,6 +1464,7 @@ mod tests {
                 crate::task_repo::TaskRepoSource::Scratch,
                 None,
                 crate::task_repo::TaskRepoOptions::default(),
+                None,
             )
             .unwrap();
         let created_at = task.created_at;
@@ -1386,6 +1503,7 @@ mod tests {
                 crate::task_repo::TaskRepoSource::Scratch,
                 None,
                 crate::task_repo::TaskRepoOptions::default(),
+                None,
             )
             .unwrap();
         svc.archive_task(&paused.id).unwrap();
@@ -1396,6 +1514,7 @@ mod tests {
                 crate::task_repo::TaskRepoSource::Scratch,
                 None,
                 crate::task_repo::TaskRepoOptions::default(),
+                None,
             )
             .unwrap();
         assert_eq!(
@@ -1420,6 +1539,7 @@ mod tests {
                 crate::task_repo::TaskRepoSource::Scratch,
                 None,
                 crate::task_repo::TaskRepoOptions::default(),
+                None,
             )
             .unwrap();
         let listed_at = task.listed_at;
@@ -1447,6 +1567,7 @@ mod tests {
                 crate::task_repo::TaskRepoSource::Scratch,
                 None,
                 crate::task_repo::TaskRepoOptions::default(),
+                None,
             )
             .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(5));
@@ -1457,6 +1578,7 @@ mod tests {
                 crate::task_repo::TaskRepoSource::Scratch,
                 None,
                 crate::task_repo::TaskRepoOptions::default(),
+                None,
             )
             .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(5));
@@ -1492,6 +1614,7 @@ mod tests {
                 crate::task_repo::TaskRepoSource::Scratch,
                 None,
                 crate::task_repo::TaskRepoOptions::default(),
+                None,
             )
             .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(5));
@@ -1502,6 +1625,7 @@ mod tests {
                 crate::task_repo::TaskRepoSource::Scratch,
                 None,
                 crate::task_repo::TaskRepoOptions::default(),
+                None,
             )
             .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(5));
@@ -1543,6 +1667,7 @@ mod tests {
                 crate::task_repo::TaskRepoSource::Scratch,
                 None,
                 crate::task_repo::TaskRepoOptions::default(),
+                None,
             )
             .unwrap();
         let renamed = svc.rename_task(&task.id, "New Label").unwrap();
@@ -1561,6 +1686,7 @@ mod tests {
             crate::task_repo::TaskRepoSource::Scratch,
             None,
             crate::task_repo::TaskRepoOptions::default(),
+            None,
         )
         .unwrap();
         let second = svc
@@ -1570,6 +1696,7 @@ mod tests {
                 crate::task_repo::TaskRepoSource::Scratch,
                 None,
                 crate::task_repo::TaskRepoOptions::default(),
+                None,
             )
             .unwrap();
         let err = svc.rename_task(&second.id, "first").unwrap_err();
@@ -1587,6 +1714,7 @@ mod tests {
                 crate::task_repo::TaskRepoSource::Scratch,
                 None,
                 crate::task_repo::TaskRepoOptions::default(),
+                None,
             )
             .unwrap();
         let task_home = dir.path().join("tasks").join(&task.id);
@@ -1609,6 +1737,7 @@ mod tests {
                 crate::task_repo::TaskRepoSource::Scratch,
                 None,
                 crate::task_repo::TaskRepoOptions::default(),
+                None,
             )
             .unwrap();
         svc.delete_task(&task.id).unwrap();
@@ -1632,6 +1761,7 @@ mod tests {
                 crate::task_repo::TaskRepoSource::Path(checkout.clone()),
                 None,
                 crate::task_repo::TaskRepoOptions::default(),
+                None,
             )
             .unwrap();
         assert_eq!(task.name, "My Feature");
@@ -1664,6 +1794,7 @@ mod tests {
                 crate::task_repo::TaskRepoSource::Path(checkout),
                 None,
                 crate::task_repo::TaskRepoOptions::default(),
+                None,
             )
             .unwrap();
         let dest = svc
@@ -1697,6 +1828,7 @@ mod tests {
                 crate::task_repo::TaskRepoSource::Path(checkout),
                 None,
                 crate::task_repo::TaskRepoOptions::default(),
+                None,
             )
             .unwrap();
         let sibling = svc
@@ -1774,6 +1906,7 @@ mod tests {
                 crate::task_repo::TaskRepoSource::Path(source),
                 None,
                 crate::task_repo::TaskRepoOptions::default(),
+                None,
             )
             .unwrap();
         let sibling = svc
@@ -1831,6 +1964,7 @@ mod tests {
                     container_isolation: true,
                     defer_container_create: true,
                 },
+                None,
             )
             .unwrap();
         assert!(task.container_isolation);
@@ -1858,6 +1992,7 @@ mod tests {
                     create_worktree: false,
                     ..Default::default()
                 },
+                None,
             )
             .unwrap();
         assert_eq!(task.repo_path, checkout);
@@ -1875,6 +2010,7 @@ mod tests {
                 crate::task_repo::TaskRepoSource::Scratch,
                 None,
                 crate::task_repo::TaskRepoOptions::default(),
+                None,
             )
             .unwrap();
         let task_b = svc
@@ -1884,6 +2020,7 @@ mod tests {
                 crate::task_repo::TaskRepoSource::Scratch,
                 None,
                 crate::task_repo::TaskRepoOptions::default(),
+                None,
             )
             .unwrap();
 

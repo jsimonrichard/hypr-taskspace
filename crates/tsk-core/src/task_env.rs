@@ -92,6 +92,12 @@ pub fn build_task_env(
             task.repo_path.to_string_lossy().into_owned(),
         ),
         (
+            "TSK_HANDOFF".into(),
+            crate::handoff::handoff_path(&tasks_base_dir.join(&task.id))
+                .to_string_lossy()
+                .into_owned(),
+        ),
+        (
             "TSK_PRIMARY_NON_GLOBAL_WORKSPACE".into(),
             primary_non_global_workspace,
         ),
@@ -215,6 +221,14 @@ mod tests {
         assert_eq!(env["TSK_CONTEXT_MODE"], "task");
         assert_eq!(env["TSK_TASK_ID"], "tabc123");
         assert_eq!(env["TSK_TASK_REPO"], repo.display().to_string());
+        assert_eq!(
+            env["TSK_HANDOFF"],
+            base.join("tabc123")
+                .join("workspace")
+                .join("HANDOFF.md")
+                .display()
+                .to_string()
+        );
         assert_eq!(env["TSK_SOURCE_REPO"], source.display().to_string());
         assert_eq!(env["TSK_PRIMARY_NON_GLOBAL_WORKSPACE"], "tabc123-2");
         assert_eq!(env["TSK_WORKTREE"], "1");

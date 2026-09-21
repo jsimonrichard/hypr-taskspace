@@ -508,8 +508,48 @@ fn dispatch(service: Arc<Mutex<TaskService>>, method: &str, params: Value) -> Re
                 defer_container_create,
                 fork_from: crate::task_repo::ForkFrom::from_daemon_params(&params)?,
             };
-            let task = svc.create_task(name, switch, repo, cwd.as_deref(), repo_options)?;
+            let handoff = params.get("handoff").and_then(|v| v.as_str());
+            let task = svc.create_task(
+                name,
+                switch,
+                repo,
+                cwd.as_deref(),
+                repo_options,
+                handoff,
+            )?;
             Ok(serde_json::to_value(task).map_err(|e| TskError::Other(e.to_string()))?)
+        }
+        "instruct_task" => {
+            let task_id = params
+                .get("task_id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| TskError::Other("task_id required".into()))?;
+            let handoff = params
+                .get("handoff")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| TskError::Other("handoff markdown required".into()))?;
+            let path = svc.instruct_task(task_id, handoff)?;
+            Ok(json!({ "path": path }))
+        }
+        "handoff_status" => {
+            let task_id = params
+                .get("task_id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| TskError::Other("task_id required".into()))?;
+            let (path, exists) = svc.handoff_status(task_id)?;
+            Ok(json!({ "path": path, "exists": exists }))
+        }
+        "validate_handoff" => {
+            let task_id = params
+                .get("task_id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| TskError::Other("task_id required".into()))?;
+            let (path, _) = svc.handoff_status(task_id)?;
+            let handoff = svc.validate_handoff(task_id)?;
+            Ok(json!({
+                "path": path,
+                "goal": handoff.goal_oneline(),
+            }))
         }
         "switch_task" => {
             let task_id = params

@@ -790,7 +790,7 @@ impl App {
             defer_container_create: container_isolation,
             fork_from: tsk_core::ForkFrom::Default,
         };
-        match self.client.create_task(&name, true, repo, repo_options) {
+        match self.client.create_task(&name, true, repo, repo_options, None) {
             Ok(task) => {
                 // Prefer the option we just submitted — a stale daemon may omit
                 // `container_isolation` in the JSON response (serde default false).
