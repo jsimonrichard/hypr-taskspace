@@ -1,5 +1,11 @@
 # `tsk task new` fork-from options
 
+**Status (2026-09-21):** Implemented in `tsk-core` / CLI / daemon. Defaults
+unchanged (`trunk()`/`main` for jj; source `HEAD` for git). TUI new-task form
+stays on `ForkFrom::Default` (out of scope here).
+
+---
+
 ## Goal
 
 Let `tsk task new` create a linked git worktree / jj workspace from an explicit
