@@ -462,6 +462,7 @@ enum TaskCommands {
     #[command(visible_alias = "d")]
     Delete { name_or_id: String },
     /// Print the HANDOFF path (and whether it exists), or validate it.
+    #[command(visible_alias = "h")]
     Handoff {
         #[arg(value_name = "NAME_OR_ID")]
         name_or_id: Option<String>,
@@ -469,6 +470,7 @@ enum TaskCommands {
         validate: bool,
     },
     /// Write or replace workspace/HANDOFF.md for a task.
+    #[command(visible_alias = "i")]
     Instruct {
         #[arg(value_name = "NAME_OR_ID")]
         name_or_id: Option<String>,
@@ -807,7 +809,7 @@ fn run() -> Result<()> {
             } => cmd_task_handoff(name_or_id.as_deref(), validate),
             TaskCommands::Instruct { name_or_id, from } => {
                 cmd_task_instruct(name_or_id.as_deref(), from.as_deref())
-            },
+            }
             TaskCommands::Menu | TaskCommands::TuiLaunch => cmd_task_tui_launch(),
             TaskCommands::Tui => cmd_task_tui(),
             TaskCommands::Terminal { name_or_id, host } => {

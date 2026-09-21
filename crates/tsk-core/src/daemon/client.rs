@@ -400,10 +400,7 @@ impl DaemonClient {
             .get("path")
             .and_then(|p| p.as_str())
             .ok_or_else(|| TskError::Other("handoff_status missing path".into()))?;
-        let exists = v
-            .get("exists")
-            .and_then(|e| e.as_bool())
-            .unwrap_or(false);
+        let exists = v.get("exists").and_then(|e| e.as_bool()).unwrap_or(false);
         Ok((std::path::PathBuf::from(path), exists))
     }
 

@@ -283,10 +283,7 @@ fn rewrite_meta(markdown: &str, meta: &HandoffMeta) -> String {
 fn format_meta_block(meta: &HandoffMeta) -> String {
     let mut lines = vec![
         format!("- **task_id:** {}", empty_as_placeholder(&meta.task_id)),
-        format!(
-            "- **task_name:** {}",
-            empty_as_placeholder(&meta.task_name)
-        ),
+        format!("- **task_name:** {}", empty_as_placeholder(&meta.task_name)),
     ];
     if !meta.parent_plan.is_empty() {
         lines.push(format!("- **parent_plan:** {}", meta.parent_plan));
@@ -369,10 +366,8 @@ mod tests {
 
     #[test]
     fn empty_goal_fails() {
-        let md = sample_handoff_markdown().replace(
-            "## Goal\nShip the handoff API.\n",
-            "## Goal\n\n",
-        );
+        let md =
+            sample_handoff_markdown().replace("## Goal\nShip the handoff API.\n", "## Goal\n\n");
         let err = Handoff::parse(&md).unwrap_err();
         match err {
             TskError::InvalidHandoff { reason, .. } => {
@@ -384,7 +379,8 @@ mod tests {
 
     #[test]
     fn missing_required_heading_fails() {
-        let md = sample_handoff_markdown().replace("## Constraints\n- Fail closed on empty Goal\n", "");
+        let md =
+            sample_handoff_markdown().replace("## Constraints\n- Fail closed on empty Goal\n", "");
         let err = Handoff::parse(&md).unwrap_err();
         match err {
             TskError::InvalidHandoff { reason, .. } => {

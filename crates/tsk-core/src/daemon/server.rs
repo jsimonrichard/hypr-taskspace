@@ -509,14 +509,8 @@ fn dispatch(service: Arc<Mutex<TaskService>>, method: &str, params: Value) -> Re
                 fork_from: crate::task_repo::ForkFrom::from_daemon_params(&params)?,
             };
             let handoff = params.get("handoff").and_then(|v| v.as_str());
-            let task = svc.create_task(
-                name,
-                switch,
-                repo,
-                cwd.as_deref(),
-                repo_options,
-                handoff,
-            )?;
+            let task =
+                svc.create_task(name, switch, repo, cwd.as_deref(), repo_options, handoff)?;
             Ok(serde_json::to_value(task).map_err(|e| TskError::Other(e.to_string()))?)
         }
         "instruct_task" => {

@@ -60,7 +60,7 @@ Full steps, config examples, and uninstall: **[docs/install.md](docs/install.md)
 
 ### Task manager
 
-On **Omarchy**, **SUPER+Tab** and the bar task label open the control UI chosen at install time. `tsk install omarchy` (the default) toggles a modal `tsk.taskspace` overlay (exclusive keyboard focus, click-scrim to dismiss). A second press closes it instead of opening another window. Type to filter, arrows to move, **Enter** to switch a task, restore an archived one, or open New Task with the selected repo, **Esc** to dismiss. **Tab** or **←/→** cycle Tasks / Archived / Repos. **Alt+N** creates a task (or opens the desktop folder picker to register a repo), **Alt+E** renames, **Alt+D** archives or unregisters, **Alt+Shift+D** deletes, **Alt+R** restores. `tsk install omarchy --tui` keeps the bar widget and opens the floating ratatui window instead.
+On **Omarchy**, **SUPER+Tab** and the bar task label open the control UI chosen at install time. `tsk install omarchy` (the default) toggles a modal `tsk.taskspace` overlay (exclusive keyboard focus, click-scrim to dismiss). A second press closes it instead of opening another window. Type to filter, arrows to move, **Enter** to switch a task, restore an archived one, or open New Task with the selected repo, **Esc** to dismiss. **Tab** or **←/→** cycle Tasks / Archived / Repos. **Alt+N** creates a task (or opens the desktop folder picker to register a repo), **Alt+S** splits from the selected linked task (optional **Write HANDOFF**), **Alt+E** renames, **Alt+D** archives or unregisters, **Alt+Shift+D** deletes, **Alt+R** restores. `tsk install omarchy --tui` keeps the bar widget and opens the floating ratatui window instead.
 
 The **ratatui** TUI is still there for creating, renaming, and archiving tasks, and as the fallback when the overlay is not installed.
 
@@ -126,6 +126,10 @@ tsk task new followup --from-current # fork from this checkout's HEAD / jj @
 tsk task new hotfix --from main      # explicit git commit-ish or jj revset
 tsk task new next --from-workspace t231590d8
 tsk task new iso --container         # experimental Distrobox isolation
+tsk task new followup --from-current --handoff ./HANDOFF.md
+tsk task handoff                     # print workspace/HANDOFF.md path
+tsk task handoff --validate          # fail closed if missing/invalid
+tsk task instruct --from ./brief.md  # write/replace HANDOFF.md
 tsk checkout add review              # sibling worktree / jj workspace in this task
 tsk checkout add review --from main  # optional git commit-ish or jj revset
 tsk task list
@@ -139,6 +143,8 @@ tsk task browser                     # browser (Distrobox when isolation is on)
 ```
 
 Linked checkouts default to `trunk()`/`main` (jj) or the source `HEAD` (git). `--from-current` uses the checkout you are in (the current task workspace, or a git/jj root tsk can detect). If cwd is not a repo but `TSK_TASK_ID` is set, that task's checkout is used. `--from` is a git commit-ish or jj revset (including `workspace@`). `--from-workspace` names a jj workspace or another tsk task of the same repo.
+
+`HANDOFF.md` is the structured task contract at `~/tsk-tasks/<id>/workspace/HANDOFF.md` (sibling to a linked repo folder; inside the workspace for scratch). Required sections: Goal, Scope, Out of scope, Success criteria, Constraints. Principles and Handoff notes are optional. Agents see the path as `TSK_HANDOFF`. Freeform notes stay in `.tsk/agent-notes.md`. The Omarchy overlay **Alt+S** Split can fork with or without writing a HANDOFF.
 
 There is **experimental** support for container isolation with Distrobox: pass `--container` on the CLI or enable **Distrobox isolation** in the new-task form. Terminals, editor, and browser then launch via `distrobox enter`. Image defaults live under `[distrobox]` in `~/.config/tsk/config.toml`.
 

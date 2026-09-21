@@ -1280,7 +1280,9 @@ mod tests {
         let path = crate::handoff::handoff_path(&dir.path().join("tasks").join(&task.id));
         assert!(path.is_file());
         let loaded = crate::handoff::Handoff::read(&path).unwrap();
-        assert!(loaded.markdown.contains(&format!("- **task_id:** {}", task.id)));
+        assert!(loaded
+            .markdown
+            .contains(&format!("- **task_id:** {}", task.id)));
         assert!(loaded.markdown.contains("- **task_name:** with-handoff"));
     }
 
@@ -1298,10 +1300,8 @@ mod tests {
                 None,
             )
             .unwrap();
-        let bad = crate::handoff::sample_handoff_markdown().replace(
-            "## Goal\nShip the handoff API.\n",
-            "## Goal\n\n",
-        );
+        let bad = crate::handoff::sample_handoff_markdown()
+            .replace("## Goal\nShip the handoff API.\n", "## Goal\n\n");
         let err = svc.instruct_task(&task.id, &bad).unwrap_err();
         assert!(matches!(err, TskError::InvalidHandoff { .. }));
         let (path, exists) = svc.handoff_status(&task.id).unwrap();

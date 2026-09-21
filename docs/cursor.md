@@ -45,13 +45,19 @@ tsk does **not** change the system default browser (`xdg-settings get default-we
 
 Cursor and VS Code often launch via uwsm and never see the task `PATH`, so `tsk install all` (or `tsk install omarchy`) sets `workbench.externalBrowser` to `tsk-open` when that setting is unset. Links clicked in a task workspace then go through `tsk open`; the same setting in the default taskspace still opens your usual browser.
 
-Task-owned agent metadata (notes, future session index) lives at the task home:
+Task-owned agent metadata lives at the task home:
 
 ```
-~/tsk-tasks/<id>/.tsk/
-  agent-notes.md
-  agent-session.json   # future
+~/tsk-tasks/<id>/
+  workspace/
+    HANDOFF.md           # structured contract (optional; TSK_HANDOFF)
+    <repo>/              # linked checkout (scratch uses workspace/ itself)
+  .tsk/
+    agent-notes.md       # freeform human/agent scratchpad
+    agent-session.json   # future
 ```
+
+`HANDOFF.md` is written by `tsk task instruct` / `tsk task new --handoff` (or Omarchy Split with **Write HANDOFF**). It is not auto-created on every `task new`. Spawned task processes get `TSK_HANDOFF` set to that path even when the file does not exist yet.
 
 Cursor conversation content itself stays in Cursor's user data (`~/.config/Cursor/User/`, `~/.cursor/projects/`). Project `.cursor/` under a checkout is for shareable config (rules, hooks, MCP), not conversation storage.
 
