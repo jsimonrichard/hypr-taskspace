@@ -1,11 +1,12 @@
 use clap::{Parser, Subcommand};
 
 use tsk_core::{
-    allowed_workspace_names, analyze_recent_latency, build_all_modules, capture_and_save,
-    clear_hypr_log, clear_log, daemon_socket_path, detect_vcs_root, diagnose_socket2,
-    effective_share_dir, enable_for_process, ensure_repo_removable, find_repo, find_repo_by_path,
-    format_doctor_report, format_report, format_version_long, hypr_log_path, hyprland, install_all,
-    install_bins, install_chromium, install_chromium_status, install_hypr, install_hypr_status,
+    agents_pack_dir, agents_share_dir, allowed_workspace_names, analyze_recent_latency,
+    build_all_modules, capture_and_save, clear_hypr_log, clear_log, daemon_socket_path,
+    detect_vcs_root, diagnose_socket2, effective_share_dir, enable_for_process,
+    ensure_repo_removable, find_repo, find_repo_by_path, format_doctor_report, format_report,
+    format_version_long, hypr_log_path, hyprland, install_agents, install_all, install_bins,
+    install_chromium, install_chromium_status, install_hypr, install_hypr_status,
     install_omarchy_plugin, install_omarchy_prod, install_systemd_status, install_walker,
     install_walker_status, install_waybar, install_waybar_status, is_daemon_running, is_dev_config,
     is_http_url, is_systemd_unit_installed, launch_exec, launch_task_tui, live_windows_path,
@@ -15,10 +16,11 @@ use tsk_core::{
     run_native_host, session_path, stop_daemon, systemctl_is_active, systemd_restart,
     systemd_start, systemd_stop, tail_hypr_log, tail_raw, trace_path, uninstall_hypr,
     uninstall_waybar, unregister_repo, version_info, walker_exec, walker_terminal,
-    walker_watch_launch, workspace_module_key, ControlUi, DaemonClient, DaemonServer, ForkFrom,
-    InstallAllOptions, InstallBinsOptions, InstallChromiumOptions, InstallHyprOptions,
-    InstallPluginOptions, InstallProfile, InstallWalkerOptions, InstallWaybarOptions,
-    OmarchyInstallOptions, Registry, Result, TaskRepoSource, TaskService, TaskStatus, TskError,
+    walker_watch_launch, workspace_module_key, AgentsInstallOpts, ControlUi, DaemonClient,
+    DaemonServer, ForkFrom, InstallAllOptions, InstallBinsOptions, InstallChromiumOptions,
+    InstallHyprOptions, InstallPluginOptions, InstallProfile, InstallWalkerOptions,
+    InstallWaybarOptions, OmarchyInstallOptions, Registry, Result, TaskRepoSource, TaskService,
+    TaskStatus, TskError,
 };
 
 #[derive(Parser)]
@@ -140,6 +142,12 @@ enum Commands {
         #[arg(long, help = "Target a specific task by name or id")]
         task: Option<String>,
     },
+    /// Install agent skills (HANDOFF / tsk CLI) into Cursor and Claude
+    #[command(visible_alias = "ag")]
+    Agents {
+        #[command(subcommand)]
+        command: AgentsCommands,
+    },
     /// Chromium helper (session snapshot / restore / native host)
     #[command(visible_alias = "ch")]
     Chromium {
@@ -149,6 +157,29 @@ enum Commands {
     /// Chromium native-messaging host (stdio). Invoked by older tsk-chromium-host wrappers.
     #[command(name = "chromium-host", hide = true)]
     ChromiumHost,
+}
+
+#[derive(Subcommand)]
+enum AgentsCommands {
+    /// Link pack skills into ~/.cursor and ~/.claude (and optional repo .agents)
+    #[command(visible_alias = "i")]
+    Install {
+        /// Install user-global skill links
+        #[arg(long)]
+        global: bool,
+        /// Also link skills into this repo's `.agents/skills`
+        #[arg(long, value_name = "DIR")]
+        repo_path: Option<std::path::PathBuf>,
+        /// Replace existing links / share pack symlink
+        #[arg(long)]
+        force: bool,
+        /// Override pack source (default: checkout pack/ or /usr/share/tsk/pack)
+        #[arg(long, value_name = "DIR")]
+        pack_dir: Option<std::path::PathBuf>,
+        /// Override share root (default: ~/.local/share/tsk)
+        #[arg(long, value_name = "DIR")]
+        share_dir: Option<std::path::PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -888,6 +919,15 @@ fn run() -> Result<()> {
             ResetCommands::Layout => cmd_reset_layout(),
         },
         Commands::Open { urls, host, task } => cmd_open(&urls, host, task.as_deref()),
+        Commands::Agents { command } => match command {
+            AgentsCommands::Install {
+                global,
+                repo_path,
+                force,
+                pack_dir,
+                share_dir,
+            } => cmd_agents_install(global, repo_path, force, pack_dir, share_dir),
+        },
         Commands::Chromium { command } => match command {
             ChromiumCommands::Status => cmd_chromium_status(),
             ChromiumCommands::Snapshot => cmd_chromium_snapshot(),
@@ -896,6 +936,31 @@ fn run() -> Result<()> {
         },
         Commands::ChromiumHost => run_native_host(),
     }
+}
+
+fn cmd_agents_install(
+    global: bool,
+    repo_path: Option<std::path::PathBuf>,
+    force: bool,
+    pack_dir: Option<std::path::PathBuf>,
+    share_dir: Option<std::path::PathBuf>,
+) -> Result<()> {
+    let resolved_pack = pack_dir.clone().unwrap_or_else(agents_pack_dir);
+    let resolved_share = share_dir.clone().unwrap_or_else(agents_share_dir);
+    let opts = AgentsInstallOpts {
+        global,
+        repo_path,
+        force,
+        pack_dir,
+        share_dir,
+    };
+    let log = install_agents(&opts)?;
+    for line in log {
+        println!("{line}");
+    }
+    println!("pack source: {}", resolved_pack.display());
+    println!("share root: {}", resolved_share.display());
+    Ok(())
 }
 
 fn client() -> Result<DaemonClient> {

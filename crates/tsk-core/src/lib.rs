@@ -1,5 +1,6 @@
 //! Shared TSK library — models, config, registry, Hyprland, and Waybar export.
 
+pub mod agents;
 pub mod apps;
 pub mod binary;
 pub mod boot_id;
@@ -46,6 +47,9 @@ pub mod xdg;
 #[cfg(test)]
 pub(crate) mod test_env;
 
+pub use agents::{
+    agents_share_dir, install_agents, pack_dir as agents_pack_dir, AgentsInstallOpts,
+};
 pub use apps::launch_task_editor;
 pub use binary::{
     command_v_login, maybe_reexec_dev_session, path_tsk_binary, path_tsk_is_usable,

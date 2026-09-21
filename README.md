@@ -146,6 +146,15 @@ Linked checkouts default to `trunk()`/`main` (jj) or the source `HEAD` (git). `-
 
 `HANDOFF.md` is the structured task contract at `~/tsk-tasks/<id>/workspace/HANDOFF.md` (sibling to a linked repo folder; inside the workspace for scratch). Required sections: Goal, Scope, Out of scope, Success criteria, Constraints. Principles and Handoff notes are optional. Agents see the path as `TSK_HANDOFF`. Freeform notes stay in `.tsk/agent-notes.md`. The Omarchy overlay **Alt+S** Split can fork with or without writing a HANDOFF.
 
+Install Cursor/Claude skills that teach agents to read that handoff and call tsk:
+
+```bash
+tsk agents install --global          # link pack/skills into ~/.cursor and ~/.claude
+tsk agents install --global --force  # refresh stale links
+```
+
+Pack lives at checkout `pack/` (or `/usr/share/tsk/pack` when packaged). Materialized share: `~/.local/share/tsk/pack` (`TSK_PACK_DIR` / `TSK_SHARE_DIR` override). Skills: **read-handoff**, **use-tsk-cli**.
+
 There is **experimental** support for container isolation with Distrobox: pass `--container` on the CLI or enable **Distrobox isolation** in the new-task form. Terminals, editor, and browser then launch via `distrobox enter`. Image defaults live under `[distrobox]` in `~/.config/tsk/config.toml`.
 
 Task homes live under `~/tsk-tasks/<id>/`. Linked checkouts are at `~/tsk-tasks/<id>/workspace/<repo-name>` (scratch tasks use the `workspace/` directory itself). `tsk checkout add <suffix>` creates another git worktree / jj workspace in the same task (`…/workspace/<repo>-<suffix>`, named `<task-id>-<suffix>`), forking from the current checkout unless `--from` is set. Optional checkout settings live in `.tsk/repo.toml`.
