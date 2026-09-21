@@ -362,7 +362,7 @@ Item {
     }
     root.screen = "new"
     root.formName = ""
-    root.formFocus = "name"
+    root.formFocus = "repo"
     root.formRepoIndex = repoIndex
     root.formWorktree = true
     root.formContainer = false
@@ -687,7 +687,7 @@ Item {
       fields = ["name", "handoff"]
       if (root.formWriteHandoff) fields = fields.concat(["goal", "success"])
     } else {
-      fields = ["name", "repo"]
+      fields = ["repo", "name"]
       if (root.formRepo && root.formRepo.kind === "repo") fields.push("worktree")
       fields.push("container")
     }
@@ -1305,9 +1305,9 @@ Item {
           id: headerField
           width: parent.width
           height: root.headerHeight
+          visible: root.screen !== "new"
           radius: root.cornerRadius
-          readonly property bool focused: (root.screen === "new" && root.formFocus === "name")
-            || (root.screen === "split" && root.formFocus === "name")
+          readonly property bool focused: (root.screen === "split" && root.formFocus === "name")
             || root.screen === "rename"
           color: headerField.focused ? root.selectedBackground : "transparent"
 
@@ -1319,7 +1319,6 @@ Item {
             anchors.rightMargin: headerField.focused ? Style.space(12) : 0
             text: {
               const caret = headerField.focused && headerCaret.lit ? "▌" : ""
-              if (root.screen === "new") return (root.formName || "New task name…") + caret
               if (root.screen === "split") return (root.formName || "Split task name…") + caret
               if (root.screen === "rename") return (root.renameName || "Rename…") + caret
               if (root.screen === "progress") return root.progressFailed ? "Container setup failed" : "Creating container…"
@@ -1328,7 +1327,6 @@ Item {
             color: headerField.focused ? root.selectedText : root.foreground
             opacity: {
               if (headerField.focused) return 1
-              if (root.screen === "new") return root.formName ? 1 : 0.58
               if (root.screen === "split") return root.formName ? 1 : 0.58
               if (root.screen === "rename") return root.renameName ? 1 : 0.58
               if (root.screen === "progress") return 1
@@ -1351,10 +1349,10 @@ Item {
 
           MouseArea {
             anchors.fill: parent
-            enabled: root.screen === "new" || root.screen === "split" || root.screen === "rename"
+            enabled: root.screen === "split" || root.screen === "rename"
             cursorShape: Qt.IBeamCursor
             onClicked: {
-              if (root.screen === "new" || root.screen === "split") root.formFocus = "name"
+              if (root.screen === "split") root.formFocus = "name"
             }
           }
         }
@@ -1403,7 +1401,8 @@ Item {
 
         Item {
           width: parent.width
-          height: parent.height - root.headerHeight - root.footerHeight - root.contentSpacing * 2
+          height: parent.height - root.footerHeight - root.contentSpacing
+            - (headerField.visible ? root.headerHeight + root.contentSpacing : 0)
             - (root.screen === "list" ? root.tabHeight + root.contentSpacing : 0)
             - (errorBanner.visible ? errorBanner.implicitHeight + root.contentSpacing : 0)
 
@@ -1555,11 +1554,13 @@ Item {
               id: formRepoList
               width: parent.width
               height: {
-                const spacings = 2 + (newTaskWorktreeToggle.visible ? 1 : 0)
+                const spacings = 4 + (newTaskWorktreeToggle.visible ? 1 : 0)
                 return Math.max(
                   0,
                   parent.height
                     - newTaskRepoLabel.height
+                    - newTaskNameLabel.height
+                    - newTaskNameField.height
                     - (newTaskWorktreeToggle.visible ? newTaskWorktreeToggle.height : 0)
                     - newTaskContainerToggle.height
                     - parent.spacing * spacings
@@ -1602,6 +1603,57 @@ Item {
                     root.ensureFormRepoVisible()
                   }
                 }
+              }
+            }
+
+            Text {
+              id: newTaskNameLabel
+              width: parent.width
+              text: "Name"
+              color: root.foreground
+              opacity: 0.7
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            Rectangle {
+              id: newTaskNameField
+              width: parent.width
+              height: root.headerHeight
+              radius: root.cornerRadius
+              readonly property bool focused: root.formFocus === "name"
+              color: focused ? root.selectedBackground : "transparent"
+
+              Text {
+                anchors.fill: parent
+                anchors.leftMargin: parent.focused ? Style.space(12) : 0
+                anchors.rightMargin: parent.focused ? Style.space(12) : 0
+                text: {
+                  const caret = parent.focused && newTaskNameCaret.lit ? "▌" : ""
+                  return (root.formName || "New task name…") + caret
+                }
+                color: parent.focused ? root.selectedText : root.foreground
+                opacity: parent.focused || root.formName ? 1 : 0.58
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.heading
+                elide: Text.ElideRight
+                verticalAlignment: Text.AlignVCenter
+              }
+
+              Timer {
+                id: newTaskNameCaret
+                interval: 530
+                running: newTaskNameField.focused
+                repeat: true
+                property bool lit: true
+                onTriggered: lit = !lit
+                onRunningChanged: if (running) lit = true
+              }
+
+              MouseArea {
+                anchors.fill: parent
+                cursorShape: Qt.IBeamCursor
+                onClicked: root.formFocus = "name"
               }
             }
 
