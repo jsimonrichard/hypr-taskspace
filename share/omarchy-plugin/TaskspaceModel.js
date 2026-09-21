@@ -113,6 +113,7 @@ function commandErrorSummary(detail) {
 function commandFailureTitle(kind) {
   switch (String(kind || "")) {
     case "create": return "Could not create that task"
+    case "split": return "Could not split that task"
     case "restore": return "Could not restore that task"
     case "add-repo": return "Could not register that folder"
     case "switch": return "Could not switch task"
@@ -127,4 +128,42 @@ function commandFailureTitle(kind) {
 
 function isSwitchAction(kind) {
   return kind === "restore" || kind === "switch" || kind === "default"
+}
+
+/** Repo path for `tsk task new --repo-path` when splitting from a menu task. */
+function splitRepoPath(item) {
+  if (!item) return ""
+  return String(item.source_repo_path || item.repo_path || "").trim()
+}
+
+function canSplit(item) {
+  if (!item || item.kind !== "task") return false
+  if (item.status === "archived") return false
+  return !!String(item.source_repo_path || "").trim()
+}
+
+/** Build a validating HANDOFF.md from Goal + Success (other required sections stubbed). */
+function buildHandoffMarkdown(goal, success) {
+  var g = String(goal || "").trim()
+  var s = String(success || "").trim()
+  return [
+    "# HANDOFF",
+    "",
+    "## Goal",
+    g,
+    "",
+    "## Scope",
+    "1. Complete the goal above.",
+    "",
+    "## Out of scope",
+    "- Anything not listed in the goal or success criteria.",
+    "",
+    "## Success criteria",
+    s,
+    "",
+    "## Constraints",
+    "- One concern per task",
+    "- Fail closed",
+    ""
+  ].join("\n")
 }

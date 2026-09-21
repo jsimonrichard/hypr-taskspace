@@ -1934,6 +1934,8 @@ fn cmd_task_list(json: bool, include_archived: bool) -> Result<()> {
                         "current": false,
                         "repo_name": tsk_core::menu_repo_name(&t),
                         "last_active_at": t.last_active_at,
+                        "repo_path": t.repo_path,
+                        "source_repo_path": t.source_repo_path,
                     })
                 })
                 .collect();

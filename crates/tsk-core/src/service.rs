@@ -1146,6 +1146,8 @@ impl TaskService {
             status: "system".into(),
             repo_name: None,
             last_active_at: None,
+            repo_path: None,
+            source_repo_path: None,
         });
 
         let mut tasks: Vec<&Task> = state
@@ -1166,6 +1168,11 @@ impl TaskService {
                 status: task.status.as_str().into(),
                 repo_name: menu_repo_name(task),
                 last_active_at: Some(task.last_active_at),
+                repo_path: Some(task.repo_path.to_string_lossy().into_owned()),
+                source_repo_path: task
+                    .source_repo_path
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().into_owned()),
             });
         }
         Ok(items)
@@ -1189,6 +1196,12 @@ pub struct MenuTask {
     /// Newest-first overlay order (`Task::last_active_at`). Absent for the default taskspace.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_active_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Task checkout path (for overlay Split / display).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repo_path: Option<String>,
+    /// Linked source checkout when present (preferred `--repo-path` for Split).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_repo_path: Option<String>,
 }
 
 pub fn menu_repo_name(task: &Task) -> Option<String> {

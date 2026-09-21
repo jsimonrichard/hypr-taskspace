@@ -32,6 +32,12 @@ Item {
   property int formRepoIndex: 0
   property bool formWorktree: true
   property bool formContainer: false
+  property string splitSourceId: ""
+  property string splitRepoPath: ""
+  property string splitSourceLabel: ""
+  property bool formWriteHandoff: false
+  property string formHandoffGoal: ""
+  property string formHandoffSuccess: ""
   property string renameName: ""
   property string pendingTab: ""
   property string pendingError: ""
@@ -235,6 +241,8 @@ Item {
           status: item.status || "archived",
           repo_name: item.repo_name || "",
           last_active_at: item.last_active_at || "",
+          repo_path: item.repo_path || "",
+          source_repo_path: item.source_repo_path || "",
           current: false
         }
       })
@@ -260,6 +268,8 @@ Item {
         repo_name: String(item.repo_name || ""),
         current: item.current === true,
         path: String(item.path || ""),
+        repo_path: String(item.repo_path || ""),
+        source_repo_path: String(item.source_repo_path || ""),
         label: Model.rowLabel(item),
         icon: Model.rowIcon(item),
         detail: Model.rowDetail(item)
@@ -277,6 +287,8 @@ Item {
         repo_name: "",
         current: false,
         path: "",
+        repo_path: "",
+        source_repo_path: "",
         label: Model.rowLabel(action),
         icon: Model.rowIcon(action),
         detail: Model.rowDetail(action)
@@ -370,6 +382,32 @@ Item {
     if (!row || row.kind === "default" || row.kind === "repo" || row.kind === "new-task" || row.kind === "new-repo") return
     root.screen = "rename"
     root.renameName = row.label
+    root.clearCommandError()
+  }
+
+  function beginSplit() {
+    const row = root.selectedRow()
+    if (!row || row.kind !== "task" || row.status === "archived") {
+      root.showCommandError("Cannot split", "Select an active linked task to split from.")
+      return
+    }
+    const repoPath = Model.splitRepoPath(row)
+    if (!Model.canSplit(row) || !repoPath) {
+      root.showCommandError(
+        "Cannot split",
+        "Scratch tasks have no linked repo. Split only works from a git/jj task checkout."
+      )
+      return
+    }
+    root.screen = "split"
+    root.splitSourceId = String(row.taskId || "")
+    root.splitRepoPath = repoPath
+    root.splitSourceLabel = String(row.label || row.taskId || "")
+    root.formName = ""
+    root.formFocus = "name"
+    root.formWriteHandoff = false
+    root.formHandoffGoal = ""
+    root.formHandoffSuccess = ""
     root.clearCommandError()
   }
 
@@ -544,6 +582,51 @@ Item {
     root.runTsk(args, "create")
   }
 
+  function submitSplit() {
+    const name = String(root.formName || "").trim()
+    if (!name) {
+      root.formError = "Name is required"
+      root.errorTitle = ""
+      root.errorDetail = ""
+      errorDialog.opened = false
+      root.formFocus = "name"
+      return
+    }
+    if (!root.splitSourceId || !root.splitRepoPath) {
+      root.showCommandError("Cannot split", "Missing source task or repo path.")
+      return
+    }
+    let handoffPath = ""
+    if (root.formWriteHandoff) {
+      const goal = String(root.formHandoffGoal || "").trim()
+      const success = String(root.formHandoffSuccess || "").trim()
+      if (!goal) {
+        root.formError = "Goal is required when writing a HANDOFF"
+        root.formFocus = "goal"
+        return
+      }
+      if (!success) {
+        root.formError = "Success criteria are required when writing a HANDOFF"
+        root.formFocus = "success"
+        return
+      }
+      const markdown = Model.buildHandoffMarkdown(goal, success)
+      handoffPath = (Quickshell.env("XDG_RUNTIME_DIR") || "/tmp") + "/tsk-handoff-draft.md"
+      handoffDraftFile.path = handoffPath
+      handoffDraftFile.setText(markdown)
+    }
+    const args = [
+      "task", "new", name,
+      "--repo-path", root.splitRepoPath,
+      "--from-workspace", root.splitSourceId
+    ]
+    if (handoffPath) {
+      args.push("--handoff")
+      args.push(handoffPath)
+    }
+    root.runTsk(args, "split")
+  }
+
   function submitRename() {
     const row = root.selectedRow()
     const name = String(root.renameName || "").trim()
@@ -597,9 +680,15 @@ Item {
   }
 
   function cycleFormFocus(delta) {
-    let fields = ["name", "repo"]
-    if (root.formRepo && root.formRepo.kind === "repo") fields.push("worktree")
-    fields.push("container")
+    let fields
+    if (root.screen === "split") {
+      fields = ["name", "handoff"]
+      if (root.formWriteHandoff) fields = fields.concat(["goal", "success"])
+    } else {
+      fields = ["name", "repo"]
+      if (root.formRepo && root.formRepo.kind === "repo") fields.push("worktree")
+      fields.push("container")
+    }
     const index = Math.max(0, fields.indexOf(root.formFocus))
     root.formFocus = fields[(index + delta + fields.length) % fields.length]
   }
@@ -609,6 +698,31 @@ Item {
     if (event.text && event.text.length === 1 && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127)
       return target + event.text
     return null
+  }
+
+  function handleSplitKey(event) {
+    if (event.key === Qt.Key_Escape) { root.showList(); return true }
+    if (event.key === Qt.Key_Tab) { root.cycleFormFocus(event.modifiers & Qt.ShiftModifier ? -1 : 1); return true }
+    if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { root.submitSplit(); return true }
+    if (root.formFocus === "handoff" && event.key === Qt.Key_Space) {
+      root.formWriteHandoff = !root.formWriteHandoff
+      if (!root.formWriteHandoff && (root.formFocus === "goal" || root.formFocus === "success"))
+        root.formFocus = "handoff"
+      return true
+    }
+    if (root.formFocus === "name") {
+      const next = root.appendFilter(root.formName, event)
+      if (next !== null) { root.formName = next; root.clearCommandError(); return true }
+    }
+    if (root.formFocus === "goal") {
+      const next = root.appendFilter(root.formHandoffGoal, event)
+      if (next !== null) { root.formHandoffGoal = next; root.clearCommandError(); return true }
+    }
+    if (root.formFocus === "success") {
+      const next = root.appendFilter(root.formHandoffSuccess, event)
+      if (next !== null) { root.formHandoffSuccess = next; root.clearCommandError(); return true }
+    }
+    return false
   }
 
   function select(delta) {
@@ -667,6 +781,7 @@ Item {
     }
     if (event.modifiers & Qt.AltModifier) {
       if (event.key === Qt.Key_N) { root.beginCreate(); return true }
+      if (event.key === Qt.Key_S) { root.beginSplit(); return true }
       if (event.key === Qt.Key_E) { root.beginRename(); return true }
       if (event.key === Qt.Key_R) { root.requestRestore(); return true }
       if (event.key === Qt.Key_D && (event.modifiers & Qt.ShiftModifier)) { root.requestDelete(); return true }
@@ -794,9 +909,9 @@ Item {
       const kind = root.actionKind
       const failed = Number(exitCode) !== 0
       root.actionKind = ""
-      if (kind === "create") {
+      if (kind === "create" || kind === "split") {
         if (failed) {
-          root.screen = "new"
+          root.screen = kind === "split" ? "split" : "new"
           root.showCommandError(Model.commandFailureTitle(kind), detail)
         } else {
           root.clearCommandError()
@@ -906,6 +1021,13 @@ Item {
     }
   }
 
+  FileView {
+    id: handoffDraftFile
+    path: (Quickshell.env("XDG_RUNTIME_DIR") || "/tmp") + "/tsk-handoff-draft.md"
+    watchChanges: false
+    printErrors: false
+  }
+
   // Same idea as omarchy's delayed "Launching X…" OSD: stay quiet on a fast
   // switch, then show a status card if restore is still running.
   Timer {
@@ -981,6 +1103,7 @@ Item {
           let handled = false
           if (root.screen === "list") handled = root.handleListKey(event)
           else if (root.screen === "new") handled = root.handleNewKey(event)
+          else if (root.screen === "split") handled = root.handleSplitKey(event)
           else if (root.screen === "rename") handled = root.handleRenameKey(event)
           else if (root.screen === "progress") handled = root.handleProgressKey(event)
           if (handled) event.accepted = true
@@ -1173,6 +1296,7 @@ Item {
           height: root.headerHeight
           radius: root.cornerRadius
           readonly property bool focused: (root.screen === "new" && root.formFocus === "name")
+            || (root.screen === "split" && root.formFocus === "name")
             || root.screen === "rename"
           color: headerField.focused ? root.selectedBackground : "transparent"
 
@@ -1185,6 +1309,7 @@ Item {
             text: {
               const caret = headerField.focused && headerCaret.lit ? "▌" : ""
               if (root.screen === "new") return (root.formName || "New task name…") + caret
+              if (root.screen === "split") return (root.formName || "Split task name…") + caret
               if (root.screen === "rename") return (root.renameName || "Rename…") + caret
               if (root.screen === "progress") return root.progressFailed ? "Container setup failed" : "Creating container…"
               return root.filterText || (root.tab === "repos" ? "Filter repos…" : "Switch task…")
@@ -1193,6 +1318,7 @@ Item {
             opacity: {
               if (headerField.focused) return 1
               if (root.screen === "new") return root.formName ? 1 : 0.58
+              if (root.screen === "split") return root.formName ? 1 : 0.58
               if (root.screen === "rename") return root.renameName ? 1 : 0.58
               if (root.screen === "progress") return 1
               return root.filterText ? 1 : 0.58
@@ -1214,10 +1340,10 @@ Item {
 
           MouseArea {
             anchors.fill: parent
-            enabled: root.screen === "new" || root.screen === "rename"
+            enabled: root.screen === "new" || root.screen === "split" || root.screen === "rename"
             cursorShape: Qt.IBeamCursor
             onClicked: {
-              if (root.screen === "new") root.formFocus = "name"
+              if (root.screen === "new" || root.screen === "split") root.formFocus = "name"
             }
           }
         }
@@ -1471,6 +1597,120 @@ Item {
             }
           }
 
+          Column {
+            anchors.fill: parent
+            spacing: Style.space(8)
+            visible: root.screen === "split"
+
+            Text {
+              width: parent.width
+              text: "From “" + root.splitSourceLabel + "”"
+              color: root.foreground
+              opacity: 0.7
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              elide: Text.ElideMiddle
+            }
+
+            Text {
+              width: parent.width
+              text: root.splitRepoPath
+              color: root.foreground
+              opacity: 0.5
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              elide: Text.ElideMiddle
+            }
+
+            Toggle {
+              width: parent.width
+              label: "Write HANDOFF"
+              description: root.formWriteHandoff
+                ? "Create workspace/HANDOFF.md with Goal and Success criteria"
+                : "Fork only — no HANDOFF.md"
+              checked: root.formWriteHandoff
+              hasCursor: root.formFocus === "handoff"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              onClicked: {
+                root.formWriteHandoff = !root.formWriteHandoff
+                root.formFocus = "handoff"
+              }
+            }
+
+            Text {
+              width: parent.width
+              visible: root.formWriteHandoff
+              text: "Goal"
+              color: root.foreground
+              opacity: 0.7
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            Rectangle {
+              width: parent.width
+              height: Style.space(40)
+              visible: root.formWriteHandoff
+              radius: root.cornerRadius
+              color: root.formFocus === "goal" ? root.selectedBackground : "transparent"
+
+              Text {
+                anchors.fill: parent
+                anchors.leftMargin: Style.space(10)
+                anchors.rightMargin: Style.space(10)
+                text: root.formHandoffGoal || "One paragraph…"
+                color: root.formFocus === "goal" ? root.selectedText : root.foreground
+                opacity: root.formHandoffGoal ? 1 : 0.58
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+                elide: Text.ElideRight
+                verticalAlignment: Text.AlignVCenter
+              }
+
+              MouseArea {
+                anchors.fill: parent
+                onClicked: root.formFocus = "goal"
+              }
+            }
+
+            Text {
+              width: parent.width
+              visible: root.formWriteHandoff
+              text: "Success criteria"
+              color: root.foreground
+              opacity: 0.7
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+
+            Rectangle {
+              width: parent.width
+              height: Style.space(40)
+              visible: root.formWriteHandoff
+              radius: root.cornerRadius
+              color: root.formFocus === "success" ? root.selectedBackground : "transparent"
+
+              Text {
+                anchors.fill: parent
+                anchors.leftMargin: Style.space(10)
+                anchors.rightMargin: Style.space(10)
+                text: root.formHandoffSuccess || "1. Observable outcome…"
+                color: root.formFocus === "success" ? root.selectedText : root.foreground
+                opacity: root.formHandoffSuccess ? 1 : 0.58
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+                elide: Text.ElideRight
+                verticalAlignment: Text.AlignVCenter
+              }
+
+              MouseArea {
+                anchors.fill: parent
+                onClicked: root.formFocus = "success"
+              }
+            }
+          }
+
           Flickable {
             anchors.fill: parent
             visible: root.screen === "progress"
@@ -1497,11 +1737,12 @@ Item {
           text: {
             const details = root.errorDetail.length > 0 ? "Show details · " : ""
             if (root.screen === "new") return details + "Tab fields · ↑↓ repo · Space toggle · Enter create · Esc back"
+            if (root.screen === "split") return details + "Tab fields · Space handoff · Enter split · Esc back"
             if (root.screen === "rename") return details + "Enter save · Esc back"
             if (root.screen === "progress") return root.progressDone ? "Enter close" : "Creating…"
             if (root.tab === "archived") return details + "↵ restore · ⌥n new · ⌥e rename · ⌥⇧d delete · ←→ tabs"
             if (root.tab === "repos") return details + "↵ new task · ⌥n add · ⌥d remove · ←→ tabs"
-            return details + "↵ switch · ⌥n new · ⌥e rename · ⌥d archive · ⌥⇧d delete · ←→ tabs"
+            return details + "↵ switch · ⌥n new · ⌥s split · ⌥e rename · ⌥d archive · ⌥⇧d delete · ←→ tabs"
           }
           color: root.foreground
           opacity: 0.55
