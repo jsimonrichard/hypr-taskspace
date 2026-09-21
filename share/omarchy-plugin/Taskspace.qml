@@ -224,6 +224,7 @@ Item {
       root.repoError = "could not read repos"
     }
     if (root.tab === "repos" || root.screen === "new") root.rebuildDisplay()
+    if (root.screen === "new") root.ensureFormRepoVisible()
   }
 
   function sourceItems() {
@@ -367,6 +368,7 @@ Item {
     root.formContainer = false
     root.clearCommandError()
     root.reloadRepos()
+    root.ensureFormRepoVisible()
   }
 
   function beginCreate() {
@@ -691,6 +693,14 @@ Item {
     }
     const index = Math.max(0, fields.indexOf(root.formFocus))
     root.formFocus = fields[(index + delta + fields.length) % fields.length]
+    if (root.formFocus === "repo") root.ensureFormRepoVisible()
+  }
+
+  function ensureFormRepoVisible() {
+    if (!formRepoList.visible) return
+    Qt.callLater(function() {
+      formRepoList.positionViewAtIndex(root.formRepoIndex, ListView.Contain)
+    })
   }
 
   function appendFilter(target, event) {
@@ -822,6 +832,7 @@ Item {
       const count = root.formRepoChoices.length
       if (count === 0) return true
       root.formRepoIndex = (root.formRepoIndex + (event.key === Qt.Key_Up ? -1 : 1) + count) % count
+      root.ensureFormRepoVisible()
       return true
     }
     if ((root.formFocus === "worktree" || root.formFocus === "container") && event.key === Qt.Key_Space) {
@@ -1524,11 +1535,14 @@ Item {
           }
 
           Column {
+            id: newTaskForm
             anchors.fill: parent
             spacing: Style.space(8)
             visible: root.screen === "new"
+            clip: true
 
             Text {
+              id: newTaskRepoLabel
               width: parent.width
               text: "Repo"
               color: root.foreground
@@ -1537,13 +1551,30 @@ Item {
               font.pixelSize: Style.font.caption
             }
 
-            Repeater {
+            ListView {
+              id: formRepoList
+              width: parent.width
+              height: {
+                const spacings = 2 + (newTaskWorktreeToggle.visible ? 1 : 0)
+                return Math.max(
+                  0,
+                  parent.height
+                    - newTaskRepoLabel.height
+                    - (newTaskWorktreeToggle.visible ? newTaskWorktreeToggle.height : 0)
+                    - newTaskContainerToggle.height
+                    - parent.spacing * spacings
+                )
+              }
               model: root.formRepoChoices
+              clip: true
+              spacing: Style.space(4)
+              boundsBehavior: Flickable.StopAtBounds
+              currentIndex: root.formRepoIndex
 
-              Rectangle {
+              delegate: Rectangle {
                 required property int index
                 required property var modelData
-                width: parent.width
+                width: ListView.view.width
                 height: Style.space(36)
                 radius: root.cornerRadius
                 readonly property bool chosen: root.formRepoIndex === index
@@ -1568,12 +1599,14 @@ Item {
                   onClicked: {
                     root.formRepoIndex = index
                     root.formFocus = "repo"
+                    root.ensureFormRepoVisible()
                   }
                 }
               }
             }
 
             Toggle {
+              id: newTaskWorktreeToggle
               width: parent.width
               visible: root.formRepo && root.formRepo.kind === "repo"
               label: "Worktree"
@@ -1586,6 +1619,7 @@ Item {
             }
 
             Toggle {
+              id: newTaskContainerToggle
               width: parent.width
               label: "Distrobox isolation"
               description: "Launch terminal, editor, and browser in a container"
