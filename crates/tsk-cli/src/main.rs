@@ -142,12 +142,6 @@ enum Commands {
         #[arg(long, help = "Target a specific task by name or id")]
         task: Option<String>,
     },
-    /// Install agent skills (HANDOFF / tsk CLI) into Cursor and Claude
-    #[command(visible_alias = "ag")]
-    Agents {
-        #[command(subcommand)]
-        command: AgentsCommands,
-    },
     /// Chromium helper (session snapshot / restore / native host)
     #[command(visible_alias = "ch")]
     Chromium {
@@ -157,29 +151,6 @@ enum Commands {
     /// Chromium native-messaging host (stdio). Invoked by older tsk-chromium-host wrappers.
     #[command(name = "chromium-host", hide = true)]
     ChromiumHost,
-}
-
-#[derive(Subcommand)]
-enum AgentsCommands {
-    /// Link pack skills into ~/.cursor and ~/.claude (and optional repo .agents)
-    #[command(visible_alias = "i")]
-    Install {
-        /// Install user-global skill links
-        #[arg(long)]
-        global: bool,
-        /// Also link skills into this repo's `.agents/skills`
-        #[arg(long, value_name = "DIR")]
-        repo_path: Option<std::path::PathBuf>,
-        /// Replace existing links / share pack symlink
-        #[arg(long)]
-        force: bool,
-        /// Override pack source (default: checkout pack/ or /usr/share/tsk/pack)
-        #[arg(long, value_name = "DIR")]
-        pack_dir: Option<std::path::PathBuf>,
-        /// Override share root (default: ~/.local/share/tsk)
-        #[arg(long, value_name = "DIR")]
-        share_dir: Option<std::path::PathBuf>,
-    },
 }
 
 #[derive(Subcommand)]
@@ -269,6 +240,22 @@ enum ProdInstallCommands {
         dry_run: bool,
         #[arg(long, help = "Minimal output")]
         quiet: bool,
+    },
+    /// Link agent skills (read-handoff, use-tsk-cli) into Cursor and Claude
+    #[command(visible_alias = "ag")]
+    Agents {
+        /// Also link skills into this repo's `.agents/skills`
+        #[arg(long, value_name = "DIR")]
+        repo_path: Option<std::path::PathBuf>,
+        /// Replace existing links / share pack symlink
+        #[arg(long)]
+        force: bool,
+        /// Override pack source (default: checkout pack/ or /usr/share/tsk/pack)
+        #[arg(long, value_name = "DIR")]
+        pack_dir: Option<std::path::PathBuf>,
+        /// Override share root (default: ~/.local/share/tsk)
+        #[arg(long, value_name = "DIR")]
+        share_dir: Option<std::path::PathBuf>,
     },
 }
 
@@ -737,6 +724,12 @@ fn run() -> Result<()> {
             ProdInstallCommands::Chromium { dry_run, quiet } => {
                 cmd_install_chromium(dry_run, quiet)
             }
+            ProdInstallCommands::Agents {
+                repo_path,
+                force,
+                pack_dir,
+                share_dir,
+            } => cmd_install_agents(repo_path, force, pack_dir, share_dir),
         },
         Commands::Dev { command } => match command {
             DevCommands::Install {
@@ -919,15 +912,6 @@ fn run() -> Result<()> {
             ResetCommands::Layout => cmd_reset_layout(),
         },
         Commands::Open { urls, host, task } => cmd_open(&urls, host, task.as_deref()),
-        Commands::Agents { command } => match command {
-            AgentsCommands::Install {
-                global,
-                repo_path,
-                force,
-                pack_dir,
-                share_dir,
-            } => cmd_agents_install(global, repo_path, force, pack_dir, share_dir),
-        },
         Commands::Chromium { command } => match command {
             ChromiumCommands::Status => cmd_chromium_status(),
             ChromiumCommands::Snapshot => cmd_chromium_snapshot(),
@@ -938,8 +922,7 @@ fn run() -> Result<()> {
     }
 }
 
-fn cmd_agents_install(
-    global: bool,
+fn cmd_install_agents(
     repo_path: Option<std::path::PathBuf>,
     force: bool,
     pack_dir: Option<std::path::PathBuf>,
@@ -948,7 +931,7 @@ fn cmd_agents_install(
     let resolved_pack = pack_dir.clone().unwrap_or_else(agents_pack_dir);
     let resolved_share = share_dir.clone().unwrap_or_else(agents_share_dir);
     let opts = AgentsInstallOpts {
-        global,
+        global: true,
         repo_path,
         force,
         pack_dir,

@@ -149,8 +149,8 @@ Linked checkouts default to `trunk()`/`main` (jj) or the source `HEAD` (git). `-
 Install Cursor/Claude skills that teach agents to read that handoff and call tsk:
 
 ```bash
-tsk agents install --global          # link pack/skills into ~/.cursor and ~/.claude
-tsk agents install --global --force  # refresh stale links
+tsk install agents          # link pack/skills into ~/.cursor and ~/.claude
+tsk install agents --force  # refresh stale links
 ```
 
 Pack lives at checkout `pack/` (or `/usr/share/tsk/pack` when packaged). Materialized share: `~/.local/share/tsk/pack` (`TSK_PACK_DIR` / `TSK_SHARE_DIR` override). Skills: **read-handoff**, **use-tsk-cli**.

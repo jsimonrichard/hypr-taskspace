@@ -25,7 +25,7 @@ tsk task handoff [id] [--validate]
 tsk task instruct [id] --from FILE|-
 tsk checkout add <suffix> [--from REV]
 tsk task editor | terminal | browser
-tsk agents install --global [--force]
+tsk install agents [--force]
 ```
 
 ## Handoff
@@ -43,8 +43,8 @@ tsk agents install --global [--force]
 ## Install agent skills
 
 ```bash
-tsk agents install --global          # link pack into ~/.cursor and ~/.claude skills
-tsk agents install --global --force  # replace stale links
+tsk install agents          # link pack into ~/.cursor and ~/.claude skills
+tsk install agents --force  # replace stale links
 ```
 
 Materializes `~/.local/share/tsk/pack` → checkout or `/usr/share/tsk/pack`.

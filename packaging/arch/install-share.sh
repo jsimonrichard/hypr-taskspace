@@ -63,7 +63,7 @@ if [[ -f "${repo_share}/bin/tsk-chromium-host" ]]; then
   chmod 755 "${pkgdir}${share}/bin/tsk-chromium-host"
 fi
 
-# Agent skill pack (Cursor / Claude) — installed via `tsk agents install --global`
+# Agent skill pack (Cursor / Claude) — installed via `tsk install agents`
 if [[ -d "${srcdir}/pack" ]]; then
   install -d "${pkgdir}${share}/pack"
   while IFS= read -r -d '' file; do
