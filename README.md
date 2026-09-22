@@ -157,7 +157,7 @@ Pack lives at checkout `pack/` (or `/usr/share/tsk/pack` when packaged). Materia
 
 There is **experimental** support for container isolation with Distrobox: pass `--container` on the CLI or enable **Distrobox isolation** in the new-task form. Terminals, editor, and browser then launch via `distrobox enter`. Image defaults live under `[distrobox]` in `~/.config/tsk/config.toml`.
 
-Task homes live under `~/tsk-tasks/<id>/`. Linked checkouts are at `~/tsk-tasks/<id>/workspace/<repo-name>` (scratch tasks use the `workspace/` directory itself). `tsk checkout add <suffix>` creates another git worktree / jj workspace in the same task (`…/workspace/<repo>-<suffix>`, named `<task-id>-<suffix>`), forking from the current checkout unless `--from` is set. Optional checkout settings live in `.tsk/repo.toml`.
+Task homes live under `~/tsk-tasks/<id>/`. Linked checkouts are at `~/tsk-tasks/<id>/workspace/<repo-name>` (scratch tasks use the `workspace/` directory itself). `tsk checkout add <suffix>` creates another git worktree / jj workspace in the same task (`…/workspace/<repo>-<suffix>`, named `<task-id>-<suffix>`), forking from the current checkout unless `--from` is set. Optional checkout settings live in `.tsk/repo.toml` (hooks, `[browser].default_tabs`, and opt-in `copy_local` for seeding local files such as `.env` into new checkouts — see **[docs/cursor.md](docs/cursor.md)**).
 
 On create/restore, tsk runs `.tsk/on-start.sh` (opens the editor via `tsk task editor` by default). See **[docs/cursor.md](docs/cursor.md)**.
 

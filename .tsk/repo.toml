@@ -6,6 +6,11 @@
 # on_create = ".tsk/on-create.sh"
 # on_restore = ".tsk/on-restore.sh"
 
+# Untracked / local paths to seed into new linked checkouts (opt-in).
+# Loaded from this registered root; copied from the live fork checkout when
+# forking from current/workspace, else from this root. Do not commit secrets.
+# copy_local = [".env", ".env.local"]
+
 # First Chromium launch in a new taskspace (no saved session). Unset: derive
 # the repo browse page from `url` or the git/jj origin remote, else a new tab.
 # [browser]

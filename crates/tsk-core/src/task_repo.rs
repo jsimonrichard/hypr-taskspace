@@ -149,6 +149,43 @@ impl ForkFrom {
             }
         }
     }
+
+    /// Working tree to copy `copy_local` files from after a linked checkout is created.
+    ///
+    /// [`ForkFrom::Current`] / [`ForkFrom::Workspace`] use the live fork checkout;
+    /// [`ForkFrom::Default`] / [`ForkFrom::Revision`] use `source_root`.
+    pub fn resolve_local_files_root(
+        &self,
+        source_root: &Path,
+        kind: VcsKind,
+        current_checkout: Option<&Path>,
+        named_checkout: Option<&Path>,
+    ) -> Result<PathBuf> {
+        match self {
+            Self::Default | Self::Revision(_) => Ok(source_root.to_path_buf()),
+            Self::Current { .. } => {
+                let checkout = current_checkout.ok_or_else(|| TskError::NoCheckoutToFork {
+                    path: current_checkout_hint(current_checkout),
+                })?;
+                ensure_fork_checkout_in_repo(source_root, checkout, kind)?;
+                Ok(checkout.to_path_buf())
+            }
+            Self::Workspace(name) => {
+                let checkout = match named_checkout {
+                    Some(path) => path.to_path_buf(),
+                    None if kind == VcsKind::Jj => jj_workspace_checkout(source_root, name)?,
+                    None => {
+                        return Err(TskError::UnknownForkWorkspace {
+                            name: name.clone(),
+                            path: source_root.to_path_buf(),
+                        });
+                    }
+                };
+                ensure_fork_checkout_in_repo(source_root, &checkout, kind)?;
+                Ok(checkout)
+            }
+        }
+    }
 }
 
 fn current_checkout_hint(current_checkout: Option<&Path>) -> PathBuf {
@@ -375,7 +412,10 @@ pub fn add_sibling_checkout(
     let dest = sibling_checkout_path(&task_home, source_root, suffix);
     let name = sibling_workspace_name(&task.id, suffix);
     let revision = fork_from.resolve_revision(source_root, kind, current_checkout, None)?;
+    let local_files_from =
+        fork_from.resolve_local_files_root(source_root, kind, current_checkout, None)?;
     create_linked_checkout(source_root, &dest, &name, kind, revision.as_deref())?;
+    crate::repos::seed_copy_local(source_root, &local_files_from, &dest)?;
     Ok(dest)
 }
 
@@ -482,6 +522,96 @@ mod tests {
                 .resolve_revision(&repo, VcsKind::Git, None, None)
                 .unwrap(),
             None
+        );
+    }
+
+    #[test]
+    fn resolve_local_files_root_uses_source_for_default_and_revision() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("project");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        assert_eq!(
+            ForkFrom::Default
+                .resolve_local_files_root(&repo, VcsKind::Git, None, None)
+                .unwrap(),
+            repo
+        );
+        assert_eq!(
+            ForkFrom::Revision("abc".into())
+                .resolve_local_files_root(&repo, VcsKind::Git, None, None)
+                .unwrap(),
+            repo
+        );
+    }
+
+    #[test]
+    fn resolve_local_files_root_uses_current_checkout() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("project");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::process::Command::new("git")
+            .args(["init", repo.to_str().unwrap()])
+            .status()
+            .unwrap();
+        git_commit(&repo, "init");
+        let fork_wc = dir
+            .path()
+            .join("tasks")
+            .join("t1")
+            .join("workspace")
+            .join("project");
+        std::fs::create_dir_all(fork_wc.parent().unwrap()).unwrap();
+        crate::vcs::create_linked_checkout(&repo, &fork_wc, "t1", VcsKind::Git, None).unwrap();
+        assert_eq!(
+            ForkFrom::Current {
+                fallback_task_id: None,
+            }
+            .resolve_local_files_root(&repo, VcsKind::Git, Some(&fork_wc), None)
+            .unwrap(),
+            fork_wc
+        );
+    }
+
+    #[test]
+    fn add_sibling_copies_local_files_from_current_checkout() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("app");
+        std::fs::create_dir_all(source.join(".tsk")).unwrap();
+        std::process::Command::new("git")
+            .args(["init", source.to_str().unwrap()])
+            .status()
+            .unwrap();
+        git_commit(&source, "init");
+        crate::repos::save_repo_config(
+            &source,
+            &crate::repos::RepoConfig {
+                copy_local: vec![".env".into()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let tasks_base = dir.path().join("tasks");
+        let primary = tasks_base.join("tabc").join("workspace").join("app");
+        std::fs::create_dir_all(primary.parent().unwrap()).unwrap();
+        crate::vcs::create_linked_checkout(&source, &primary, "tabc", VcsKind::Git, None).unwrap();
+        std::fs::write(primary.join(".env"), "PRIMARY=1\n").unwrap();
+        std::fs::write(source.join(".env"), "SOURCE=1\n").unwrap();
+
+        let task = linked_task("tabc", primary.clone(), source);
+        let dest = add_sibling_checkout(
+            &task,
+            &tasks_base,
+            "review",
+            &ForkFrom::Current {
+                fallback_task_id: Some("tabc".into()),
+            },
+            Some(&primary),
+        )
+        .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dest.join(".env")).unwrap(),
+            "PRIMARY=1\n"
         );
     }
 

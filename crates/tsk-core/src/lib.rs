@@ -106,11 +106,12 @@ pub use install::{
 pub use models::{ContextMode, SessionState, Task, TaskStatus};
 pub use registry::Registry;
 pub use repos::{
-    collect_task_repo_paths, ensure_repo_removable, find_repo, find_repo_by_path, is_scratch_task,
-    is_task_scratch_repo, load_repo_config, load_repos, normalize_repo_path, paths_match,
-    register_repo, repo_bookmarks_path, repo_config_path, repo_display_path, repo_id_from_path,
-    save_repo_config, task_belongs_to_repo, task_source_repo_path, tasks_for_repo, unregister_repo,
-    RegisteredRepo, RepoBrowserConfig, RepoConfig, SCRATCH_TASK_LIST_LABEL,
+    collect_task_repo_paths, copy_local_files, ensure_repo_removable, find_repo, find_repo_by_path,
+    is_scratch_task, is_task_scratch_repo, load_repo_config, load_repos, normalize_repo_path,
+    paths_match, register_repo, repo_bookmarks_path, repo_config_path, repo_display_path,
+    repo_id_from_path, save_repo_config, seed_copy_local, task_belongs_to_repo,
+    task_source_repo_path, tasks_for_repo, unregister_repo, RegisteredRepo, RepoBrowserConfig,
+    RepoConfig, SCRATCH_TASK_LIST_LABEL,
 };
 pub use service::{menu_repo_name, MenuTask, TaskService};
 pub use share::{

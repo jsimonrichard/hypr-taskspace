@@ -50,6 +50,13 @@ pub struct RepoConfig {
     /// Optional Hyprland monitor name to focus before running hooks.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub on_start_monitor: Option<String>,
+    /// Repo-relative paths to copy into a new linked checkout (e.g. `.env`).
+    ///
+    /// Opt-in only; unset/empty means no copies. Loaded from the registered
+    /// source root's `.tsk/repo.toml`. Missing sources and existing dests are
+    /// skipped; absolute paths and `..` components are rejected.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub copy_local: Vec<String>,
     /// Checkout-local browser settings (`[browser]` in `.tsk/repo.toml`).
     #[serde(default, skip_serializing_if = "RepoBrowserConfig::is_empty")]
     pub browser: RepoBrowserConfig,
@@ -178,6 +185,8 @@ struct RepoConfigFile {
     #[serde(default)]
     on_start_monitor: Option<String>,
     #[serde(default)]
+    copy_local: Vec<String>,
+    #[serde(default)]
     browser: RepoBrowserConfig,
     #[serde(default, rename = "id")]
     _legacy_id: Option<String>,
@@ -203,9 +212,121 @@ pub fn load_repo_config(vcs_root: &Path) -> Result<Option<RepoConfig>> {
         on_restore: file.on_restore,
         on_start: file.on_start,
         on_start_monitor: file.on_start_monitor,
+        copy_local: file.copy_local,
         browser: file.browser,
     };
     Ok(normalize_repo_config(vcs_root, config))
+}
+
+/// Copy configured local paths from `from` into `to` after a linked checkout is created.
+///
+/// Reads `copy_local` from `source_root`'s `.tsk/repo.toml`. No-op when unset/empty.
+pub fn seed_copy_local(source_root: &Path, from: &Path, to: &Path) -> Result<()> {
+    let Some(config) = load_repo_config(source_root)? else {
+        return Ok(());
+    };
+    if config.copy_local.is_empty() {
+        return Ok(());
+    }
+    copy_local_files(from, to, &config.copy_local)
+}
+
+/// Copy repo-relative entries from `from` to `to`.
+///
+/// Missing sources and existing destinations are skipped. Absolute paths,
+/// empty entries, and `..` components return [`TskError::InvalidCopyLocalPath`].
+pub fn copy_local_files(from: &Path, to: &Path, entries: &[String]) -> Result<()> {
+    for entry in entries {
+        let rel = validate_copy_local_entry(entry)?;
+        let src = from.join(&rel);
+        let dest = to.join(&rel);
+        if !src.exists() {
+            continue;
+        }
+        if dest.exists() {
+            continue;
+        }
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent).map_err(|source| TskError::Write {
+                path: parent.to_path_buf(),
+                source,
+            })?;
+        }
+        if src.is_dir() {
+            copy_dir_recursive(&src, &dest)?;
+        } else {
+            std::fs::copy(&src, &dest).map_err(|source| TskError::Write {
+                path: dest.clone(),
+                source,
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_copy_local_entry(entry: &str) -> Result<PathBuf> {
+    let trimmed = entry.trim();
+    if trimmed.is_empty() {
+        return Err(TskError::InvalidCopyLocalPath {
+            path: entry.to_string(),
+        });
+    }
+    let path = Path::new(trimmed);
+    if path.is_absolute() {
+        return Err(TskError::InvalidCopyLocalPath {
+            path: trimmed.to_string(),
+        });
+    }
+    let mut has_normal = false;
+    for component in path.components() {
+        match component {
+            std::path::Component::Normal(_) => has_normal = true,
+            _ => {
+                return Err(TskError::InvalidCopyLocalPath {
+                    path: trimmed.to_string(),
+                });
+            }
+        }
+    }
+    if !has_normal {
+        return Err(TskError::InvalidCopyLocalPath {
+            path: trimmed.to_string(),
+        });
+    }
+    Ok(path.to_path_buf())
+}
+
+fn copy_dir_recursive(src: &Path, dest: &Path) -> Result<()> {
+    std::fs::create_dir_all(dest).map_err(|source| TskError::Write {
+        path: dest.to_path_buf(),
+        source,
+    })?;
+    for entry in std::fs::read_dir(src).map_err(|source| TskError::Read {
+        path: src.to_path_buf(),
+        source,
+    })? {
+        let entry = entry.map_err(|source| TskError::Read {
+            path: src.to_path_buf(),
+            source,
+        })?;
+        let file_type = entry.file_type().map_err(|source| TskError::Read {
+            path: entry.path(),
+            source,
+        })?;
+        let dest_child = dest.join(entry.file_name());
+        if file_type.is_dir() {
+            copy_dir_recursive(&entry.path(), &dest_child)?;
+        } else if file_type.is_file() {
+            if dest_child.exists() {
+                continue;
+            }
+            std::fs::copy(entry.path(), &dest_child).map_err(|source| TskError::Write {
+                path: dest_child,
+                source,
+            })?;
+        }
+    }
+    Ok(())
 }
 
 fn normalize_repo_config(vcs_root: &Path, mut config: RepoConfig) -> Option<RepoConfig> {
@@ -521,6 +642,7 @@ mod tests {
             on_create: None,
             on_restore: None,
             on_start_monitor: Some("eDP-1".into()),
+            copy_local: vec![".env".into(), ".env.local".into()],
             browser: RepoBrowserConfig {
                 default_tabs: vec!["https://github.com/org/app".into()],
             },
@@ -533,8 +655,122 @@ mod tests {
         assert_eq!(loaded.on_start.as_deref(), Some(".tsk/on-start.sh"));
         assert_eq!(loaded.on_start_monitor.as_deref(), Some("eDP-1"));
         assert_eq!(
+            loaded.copy_local,
+            vec![".env".to_string(), ".env.local".to_string()]
+        );
+        assert_eq!(
             loaded.browser.default_tabs,
             vec!["https://github.com/org/app"]
+        );
+    }
+
+    #[test]
+    fn repo_config_loads_copy_local_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let checkout = dir.path().join("env-app");
+        std::fs::create_dir_all(checkout.join(".tsk")).unwrap();
+        std::fs::write(
+            repo_config_path(&checkout),
+            r#"
+copy_local = [".env", "secrets/local.toml"]
+"#,
+        )
+        .unwrap();
+        let loaded = load_repo_config(&checkout).unwrap().unwrap();
+        assert_eq!(
+            loaded.copy_local,
+            vec![".env".to_string(), "secrets/local.toml".to_string()]
+        );
+    }
+
+    #[test]
+    fn copy_local_files_copies_file_and_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let from = dir.path().join("from");
+        let to = dir.path().join("to");
+        std::fs::create_dir_all(from.join("nested")).unwrap();
+        std::fs::create_dir_all(&to).unwrap();
+        std::fs::write(from.join(".env"), "SECRET=1\n").unwrap();
+        std::fs::write(from.join("nested/a.txt"), "a\n").unwrap();
+
+        copy_local_files(
+            &from,
+            &to,
+            &[".env".into(), "nested".into(), "missing.env".into()],
+        )
+        .unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(to.join(".env")).unwrap(),
+            "SECRET=1\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(to.join("nested/a.txt")).unwrap(),
+            "a\n"
+        );
+        assert!(!to.join("missing.env").exists());
+    }
+
+    #[test]
+    fn copy_local_files_skips_existing_dest() {
+        let dir = tempfile::tempdir().unwrap();
+        let from = dir.path().join("from");
+        let to = dir.path().join("to");
+        std::fs::create_dir_all(&from).unwrap();
+        std::fs::create_dir_all(&to).unwrap();
+        std::fs::write(from.join(".env"), "FROM=1\n").unwrap();
+        std::fs::write(to.join(".env"), "TO=1\n").unwrap();
+
+        copy_local_files(&from, &to, &[".env".into()]).unwrap();
+        assert_eq!(std::fs::read_to_string(to.join(".env")).unwrap(), "TO=1\n");
+    }
+
+    #[test]
+    fn copy_local_files_rejects_absolute_and_parent_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let from = dir.path().join("from");
+        let to = dir.path().join("to");
+        std::fs::create_dir_all(&from).unwrap();
+        std::fs::create_dir_all(&to).unwrap();
+
+        let abs = copy_local_files(&from, &to, &["/etc/passwd".into()]);
+        assert!(matches!(
+            abs,
+            Err(TskError::InvalidCopyLocalPath { path }) if path == "/etc/passwd"
+        ));
+        let parent = copy_local_files(&from, &to, &["../.env".into()]);
+        assert!(matches!(
+            parent,
+            Err(TskError::InvalidCopyLocalPath { path }) if path == "../.env"
+        ));
+        let empty = copy_local_files(&from, &to, &["  ".into()]);
+        assert!(matches!(empty, Err(TskError::InvalidCopyLocalPath { .. })));
+    }
+
+    #[test]
+    fn seed_copy_local_reads_config_from_source_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let source_root = dir.path().join("source");
+        let from = dir.path().join("fork-wc");
+        let to = dir.path().join("dest");
+        std::fs::create_dir_all(source_root.join(".tsk")).unwrap();
+        std::fs::create_dir_all(&from).unwrap();
+        std::fs::create_dir_all(&to).unwrap();
+        std::fs::write(from.join(".env"), "FORK=1\n").unwrap();
+        std::fs::write(source_root.join(".env"), "SOURCE=1\n").unwrap();
+        save_repo_config(
+            &source_root,
+            &RepoConfig {
+                copy_local: vec![".env".into()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        seed_copy_local(&source_root, &from, &to).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(to.join(".env")).unwrap(),
+            "FORK=1\n"
         );
     }
 

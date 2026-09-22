@@ -46,6 +46,8 @@ pub enum TskError {
     },
     #[error("fork options require a linked git worktree / jj workspace")]
     ForkRequiresLinkedCheckout,
+    #[error("invalid copy_local path '{path}': must be a relative path with no '..' components")]
+    InvalidCopyLocalPath { path: String },
     #[error("invalid checkout suffix '{suffix}'")]
     InvalidCheckoutSuffix { suffix: String },
     #[error("task {id} is a scratch workspace; sibling checkouts require a linked git/jj repo")]

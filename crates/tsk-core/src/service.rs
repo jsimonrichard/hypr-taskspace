@@ -25,12 +25,12 @@ fn resolve_create_fork(
     resolved: &crate::task_repo::ResolvedTaskRepo,
     cwd: Option<&Path>,
     repo_options: &crate::task_repo::TaskRepoOptions,
-) -> Result<Option<String>> {
-    if repo_options.fork_from.is_default() {
-        return Ok(None);
-    }
+) -> Result<(Option<String>, Option<std::path::PathBuf>)> {
     let TaskRepoSetup::Linked { source_root, kind } = &resolved.setup else {
-        return Err(TskError::ForkRequiresLinkedCheckout);
+        if !repo_options.fork_from.is_default() {
+            return Err(TskError::ForkRequiresLinkedCheckout);
+        }
+        return Ok((None, None));
     };
 
     let current_checkout = match &repo_options.fork_from {
@@ -46,12 +46,19 @@ fn resolve_create_fork(
         _ => None,
     };
 
-    repo_options.fork_from.resolve_revision(
+    let revision = repo_options.fork_from.resolve_revision(
         source_root,
         *kind,
         current_checkout.as_deref(),
         named_checkout.as_deref(),
-    )
+    )?;
+    let local_files_from = repo_options.fork_from.resolve_local_files_root(
+        source_root,
+        *kind,
+        current_checkout.as_deref(),
+        named_checkout.as_deref(),
+    )?;
+    Ok((revision, Some(local_files_from)))
 }
 
 fn write_task_handoff(
@@ -553,8 +560,18 @@ impl TaskService {
             })?;
         }
 
-        let revision = resolve_create_fork(&state, &resolved, cwd, &repo_options)?;
+        let (revision, local_files_from) =
+            resolve_create_fork(&state, &resolved, cwd, &repo_options)?;
         crate::task_repo::provision_task_checkout(&resolved, &task_id, revision.as_deref())?;
+        if let (Some(source_root), Some(from)) = (
+            match &resolved.setup {
+                crate::task_repo::TaskRepoSetup::Linked { source_root, .. } => Some(source_root),
+                _ => None,
+            },
+            local_files_from.as_deref(),
+        ) {
+            crate::repos::seed_copy_local(source_root, from, &repo_path)?;
+        }
         let branch = crate::vcs::current_branch(&repo_path);
         let source_repo_path = match &resolved.setup {
             crate::task_repo::TaskRepoSetup::Linked { source_root, .. }

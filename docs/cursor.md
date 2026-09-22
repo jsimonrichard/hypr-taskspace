@@ -15,6 +15,14 @@ Optional settings in `.tsk/repo.toml`:
 # on_create = ".tsk/on-create.sh"   # override for create only
 # on_restore = ".tsk/on-restore.sh" # override for restore only
 
+# Untracked (or otherwise local) paths to copy into a new linked checkout /
+# sibling workspace. Opt-in only — unset means no copies. Loaded from the
+# registered source root; files are read from the live fork checkout when
+# using --from-current / --from-workspace / checkout add, otherwise from that
+# source root. Missing sources and existing dests are skipped. Same-user local
+# copy of secrets (e.g. .env) is intentional; do not commit those files.
+# copy_local = [".env", ".env.local"]
+
 # First Chromium launch in a new taskspace (no saved session):
 # [browser]
 # default_tabs = ["https://github.com/org/app"]
