@@ -57,7 +57,7 @@ Override with `TSK_PACK_DIR` / `TSK_SHARE_DIR`.
 | `TSK_TASK_ID` | Active/spawned task |
 | `TSK_TASK_REPO` | Task checkout (open this in the editor) |
 | `TSK_SOURCE_REPO` | Linked source when present |
-| `TSK_HANDOFF` | HANDOFF.md path |
+| `TSK_HANDOFF` | HANDOFF.md path (only when the file exists) |
 | `~/tsk-tasks/<id>/.tsk/orch.json` | Also an orch lane (orch marker) |
 
 Missing daemon → many create/switch RPCs fail closed; start with  

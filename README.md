@@ -144,7 +144,7 @@ tsk task browser                     # browser (Distrobox when isolation is on)
 
 Linked checkouts default to `trunk()`/`main` (jj) or the source `HEAD` (git). `--from-current` uses the checkout you are in (the current task workspace, or a git/jj root tsk can detect). If cwd is not a repo but `TSK_TASK_ID` is set, that task's checkout is used. `--from` is a git commit-ish or jj revset (including `workspace@`). `--from-workspace` names a jj workspace or another tsk task of the same repo.
 
-`HANDOFF.md` is the structured task contract at `~/tsk-tasks/<id>/workspace/HANDOFF.md` (sibling to a linked repo folder; inside the workspace for scratch). Required sections: Goal, Scope, Out of scope, Success criteria, Constraints. Principles and Handoff notes are optional. Agents see the path as `TSK_HANDOFF`. Freeform notes stay in `.tsk/agent-notes.md`. The Omarchy overlay **Alt+S** Split can fork with or without writing a HANDOFF.
+`HANDOFF.md` is the structured task contract at `~/tsk-tasks/<id>/workspace/HANDOFF.md` (sibling to a linked repo folder; inside the workspace for scratch). Required sections: Goal, Scope, Out of scope, Success criteria, Constraints. Principles and Handoff notes are optional. Agents see the path as `TSK_HANDOFF` when the file exists. Freeform notes stay in `.tsk/agent-notes.md`. The Omarchy overlay **Alt+S** Split can fork with or without writing a HANDOFF.
 
 Install Cursor/Claude skills that teach agents to read that handoff and call tsk:
 

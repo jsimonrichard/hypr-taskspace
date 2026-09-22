@@ -92,12 +92,6 @@ pub fn build_task_env(
             task.repo_path.to_string_lossy().into_owned(),
         ),
         (
-            "TSK_HANDOFF".into(),
-            crate::handoff::handoff_path(&tasks_base_dir.join(&task.id))
-                .to_string_lossy()
-                .into_owned(),
-        ),
-        (
             "TSK_PRIMARY_NON_GLOBAL_WORKSPACE".into(),
             primary_non_global_workspace,
         ),
@@ -106,6 +100,11 @@ pub fn build_task_env(
             if is_worktree { "1" } else { "0" }.into(),
         ),
     ];
+
+    let handoff = crate::handoff::handoff_path(&tasks_base_dir.join(&task.id));
+    if handoff.is_file() {
+        env.push(("TSK_HANDOFF".into(), handoff.to_string_lossy().into_owned()));
+    }
 
     if let Some(source) = task.source_repo_path.as_ref() {
         env.push((
@@ -221,17 +220,29 @@ mod tests {
         assert_eq!(env["TSK_CONTEXT_MODE"], "task");
         assert_eq!(env["TSK_TASK_ID"], "tabc123");
         assert_eq!(env["TSK_TASK_REPO"], repo.display().to_string());
-        assert_eq!(
-            env["TSK_HANDOFF"],
-            base.join("tabc123")
-                .join("workspace")
-                .join("HANDOFF.md")
-                .display()
-                .to_string()
-        );
+        assert!(!env.contains_key("TSK_HANDOFF"));
         assert_eq!(env["TSK_SOURCE_REPO"], source.display().to_string());
         assert_eq!(env["TSK_PRIMARY_NON_GLOBAL_WORKSPACE"], "tabc123-2");
         assert_eq!(env["TSK_WORKTREE"], "1");
+    }
+
+    #[test]
+    fn task_env_sets_handoff_only_when_file_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path();
+        let task_home = base.join("tabc123");
+        let handoff = crate::handoff::handoff_path(&task_home);
+        fs::create_dir_all(handoff.parent().unwrap()).unwrap();
+        let repo = task_home.join("workspace").join("project");
+        let task = test_task("tabc123", repo, None);
+        let state = SessionState::default();
+
+        let without = env_map(&build_task_env(&state, &task, base, Some(false)));
+        assert!(!without.contains_key("TSK_HANDOFF"));
+
+        fs::write(&handoff, "handoff\n").unwrap();
+        let with = env_map(&build_task_env(&state, &task, base, Some(false)));
+        assert_eq!(with["TSK_HANDOFF"], handoff.display().to_string());
     }
 
     #[test]

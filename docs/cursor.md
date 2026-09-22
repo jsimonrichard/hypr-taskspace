@@ -57,7 +57,7 @@ Task-owned agent metadata lives at the task home:
     agent-session.json   # future
 ```
 
-`HANDOFF.md` is written by `tsk task instruct` / `tsk task new --handoff` (or Omarchy Split with **Write HANDOFF**). It is not auto-created on every `task new`. Spawned task processes get `TSK_HANDOFF` set to that path even when the file does not exist yet.
+`HANDOFF.md` is written by `tsk task instruct` / `tsk task new --handoff` (or Omarchy Split with **Write HANDOFF**). It is not auto-created on every `task new`. Spawned task processes get `TSK_HANDOFF` only when that file exists.
 
 Install the agent skills (`read-handoff`, `use-tsk-cli`) with `tsk agents install --global` so Cursor/Claude load them from `~/.cursor/skills` / `~/.claude/skills`.
 

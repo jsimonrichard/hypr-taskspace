@@ -15,7 +15,7 @@ orch-only `AGENT_BRIEF.md`.
 
 | Signal | Meaning |
 |--------|---------|
-| `$TSK_HANDOFF` | Absolute path (set on task spawns; file may be missing) |
+| `$TSK_HANDOFF` | Absolute path (set on task spawns only when the file exists) |
 | `$TSK_TASK_ID` | Opaque task id under `~/tsk-tasks/<id>/` |
 | `tsk task handoff` | Prints path; appends `(missing)` if absent |
 | `tsk task handoff --validate` | Fail closed if missing/invalid |
