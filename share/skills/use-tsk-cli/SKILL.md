@@ -1,10 +1,10 @@
 ---
 name: use-tsk-cli
 description: >
-  Call the tsk CLI for tasks, handoffs, checkouts, install, and agent-pack
-  install. Use when TSK_TASK_ID is set, the user mentions tsk / taskspaces /
-  Hypr Taskspace, or when creating, splitting, or instructing a task. Works
-  from any checkout — including ones not yet in tsk.
+  Call the tsk CLI for tasks, handoffs, checkouts, install, and agent
+  skills install. Use when TSK_TASK_ID is set, the user mentions tsk /
+  taskspaces / Hypr Taskspace, or when creating, splitting, or instructing
+  a task. Works from any checkout — including ones not yet in tsk.
 ---
 
 # Use `tsk`
@@ -43,12 +43,12 @@ tsk install agents [--force]
 ## Install agent skills
 
 ```bash
-tsk install agents          # link pack into ~/.cursor and ~/.claude skills
+tsk install agents          # link share/skills into ~/.cursor and ~/.claude
 tsk install agents --force  # replace stale links
 ```
 
-Materializes `~/.local/share/tsk/pack` → checkout or `/usr/share/tsk/pack`.
-Override with `TSK_PACK_DIR` / `TSK_SHARE_DIR`.
+Skills come from checkout `share/skills` or `/usr/share/tsk/skills`.
+Override the share root with `TSK_SHARE_DIR` / `--share-dir`.
 
 ## Signals
 

@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 
 use tsk_core::{
-    agents_pack_dir, agents_share_dir, allowed_workspace_names, analyze_recent_latency,
+    agent_skills_dir, agents_share_dir, allowed_workspace_names, analyze_recent_latency,
     build_all_modules, capture_and_save, clear_hypr_log, clear_log, daemon_socket_path,
     detect_vcs_root, diagnose_socket2, effective_share_dir, enable_for_process,
     ensure_repo_removable, find_repo, find_repo_by_path, format_doctor_report, format_report,
@@ -247,13 +247,10 @@ enum ProdInstallCommands {
         /// Also link skills into this repo's `.agents/skills`
         #[arg(long, value_name = "DIR")]
         repo_path: Option<std::path::PathBuf>,
-        /// Replace existing links / share pack symlink
+        /// Replace existing skill links
         #[arg(long)]
         force: bool,
-        /// Override pack source (default: checkout pack/ or /usr/share/tsk/pack)
-        #[arg(long, value_name = "DIR")]
-        pack_dir: Option<std::path::PathBuf>,
-        /// Override share root (default: ~/.local/share/tsk)
+        /// Override share root (skills at SHARE/skills; default: checkout, /usr/share/tsk, or TSK_SHARE_DIR)
         #[arg(long, value_name = "DIR")]
         share_dir: Option<std::path::PathBuf>,
     },
@@ -727,9 +724,8 @@ fn run() -> Result<()> {
             ProdInstallCommands::Agents {
                 repo_path,
                 force,
-                pack_dir,
                 share_dir,
-            } => cmd_install_agents(repo_path, force, pack_dir, share_dir),
+            } => cmd_install_agents(repo_path, force, share_dir),
         },
         Commands::Dev { command } => match command {
             DevCommands::Install {
@@ -925,24 +921,26 @@ fn run() -> Result<()> {
 fn cmd_install_agents(
     repo_path: Option<std::path::PathBuf>,
     force: bool,
-    pack_dir: Option<std::path::PathBuf>,
     share_dir: Option<std::path::PathBuf>,
 ) -> Result<()> {
-    let resolved_pack = pack_dir.clone().unwrap_or_else(agents_pack_dir);
-    let resolved_share = share_dir.clone().unwrap_or_else(agents_share_dir);
     let opts = AgentsInstallOpts {
         global: true,
         repo_path,
         force,
-        pack_dir,
-        share_dir,
+        skills_dir: None,
+        share_dir: share_dir.clone(),
     };
     let log = install_agents(&opts)?;
     for line in log {
         println!("{line}");
     }
-    println!("pack source: {}", resolved_pack.display());
-    println!("share root: {}", resolved_share.display());
+    let share_root = share_dir.unwrap_or_else(|| {
+        agent_skills_dir()
+            .parent()
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(agents_share_dir)
+    });
+    println!("share root: {}", share_root.display());
     Ok(())
 }
 

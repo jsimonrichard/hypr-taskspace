@@ -63,15 +63,14 @@ if [[ -f "${repo_share}/bin/tsk-chromium-host" ]]; then
   chmod 755 "${pkgdir}${share}/bin/tsk-chromium-host"
 fi
 
-# Agent skill pack (Cursor / Claude) — installed via `tsk install agents`
-if [[ -d "${srcdir}/pack" ]]; then
-  install -d "${pkgdir}${share}/pack"
+# Agent skills (Cursor / Claude) — linked via `tsk install agents`
+if [[ -d "${repo_share}/skills" ]]; then
   while IFS= read -r -d '' file; do
-    rel="${file#"${srcdir}/pack/"}"
-    dest="${pkgdir}${share}/pack/${rel}"
+    rel="${file#"${repo_share}/skills/"}"
+    dest="${pkgdir}${share}/skills/${rel}"
     install -d "$(dirname "$dest")"
-    install -Dm644 "$file" "$dest"
-  done < <(find "${srcdir}/pack" -type f -print0)
+    sub "$file" >"$dest"
+  done < <(find "${repo_share}/skills" -type f -print0)
 fi
 
 install -Dm644 "${srcdir}/docs/packaging.md" \

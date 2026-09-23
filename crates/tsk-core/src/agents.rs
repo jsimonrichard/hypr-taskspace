@@ -1,11 +1,10 @@
-//! Install agent skill packs into a shared data dir, then soft-link Cursor/Claude paths.
+//! Link agent skills from the tsk share tree into Cursor/Claude paths.
 //!
 //! Layout:
 //! ```text
-//! $TSK_SHARE_DIR/pack/     # default: ~/.local/share/tsk/pack
-//!   → symlink to checkout pack/ or /usr/share/tsk/pack
-//! ~/.cursor/skills/<name>  → $share/pack/skills/<name>
-//! ~/.claude/skills/<name>  → $share/pack/skills/<name>
+//! $share/skills/<name>/     # /usr/share/tsk, ~/.local/share/tsk, or checkout share/
+//! ~/.cursor/skills/<name>  → $share/skills/<name>
+//! ~/.claude/skills/<name>  → $share/skills/<name>
 //! ```
 
 use std::fs;
@@ -21,43 +20,55 @@ pub struct AgentsInstallOpts {
     /// Also link skills into `<repo>/.agents/skills` (+ vendor roots).
     pub repo_path: Option<PathBuf>,
     pub force: bool,
-    pub pack_dir: Option<PathBuf>,
+    /// Override skills directory (contains one subdirectory per skill).
+    pub skills_dir: Option<PathBuf>,
+    /// Override share root; skills are at `<share>/skills` when `skills_dir` is unset.
     pub share_dir: Option<PathBuf>,
 }
 
-/// Resolve the source pack directory (checkout `pack/` or packaged share).
-pub fn pack_dir() -> PathBuf {
-    if let Ok(p) = std::env::var("TSK_PACK_DIR") {
-        return expand(p);
-    }
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(root) = exe
-            .ancestors()
-            .find(|a| a.join("pack/skills").is_dir() && a.join("Cargo.toml").is_file())
-        {
-            return root.join("pack");
-        }
-    }
-    let packaged = PathBuf::from(SYSTEM_SHARE_DIR).join("pack");
-    if packaged.join("skills").is_dir() {
-        return packaged;
-    }
-    let under_data = tsk_data_dir().join("pack");
-    if under_data.join("skills").is_dir() {
-        return under_data;
-    }
-    // Dev: crates/tsk-core → workspace root
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .join("pack")
-}
-
-/// Shared data root that Cursor/Claude skill links point through.
+/// Resolve the share root used when looking up `skills/` (env or user data home).
 pub fn agents_share_dir() -> PathBuf {
     if let Ok(p) = std::env::var("TSK_SHARE_DIR") {
         return expand(p);
     }
     data_home().join("tsk")
+}
+
+/// Resolve `$share/skills` (checkout, packaged, or user share).
+pub fn agent_skills_dir() -> PathBuf {
+    if let Ok(p) = std::env::var("TSK_SHARE_DIR") {
+        return expand(p).join("skills");
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(root) = exe
+            .ancestors()
+            .find(|a| a.join("share/skills").is_dir() && a.join("Cargo.toml").is_file())
+        {
+            return root.join("share/skills");
+        }
+    }
+    let packaged = PathBuf::from(SYSTEM_SHARE_DIR).join("skills");
+    if packaged.is_dir() {
+        return packaged;
+    }
+    let under_data = tsk_data_dir().join("skills");
+    if under_data.is_dir() {
+        return under_data;
+    }
+    // Dev: crates/tsk-core → workspace root
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("share/skills")
+}
+
+fn resolve_skills_dir(opts: &AgentsInstallOpts) -> PathBuf {
+    if let Some(dir) = &opts.skills_dir {
+        return dir.clone();
+    }
+    if let Some(share) = &opts.share_dir {
+        return share.join("skills");
+    }
+    agent_skills_dir()
 }
 
 pub fn install_agents(opts: &AgentsInstallOpts) -> Result<Vec<String>> {
@@ -66,121 +77,34 @@ pub fn install_agents(opts: &AgentsInstallOpts) -> Result<Vec<String>> {
             "specify --global and/or --repo-path <abs>".into(),
         ));
     }
-    let source_pack = opts.pack_dir.clone().unwrap_or_else(pack_dir);
-    if !source_pack.join("skills").is_dir() {
+    let skills = resolve_skills_dir(opts);
+    if !skills.is_dir() {
         return Err(TskError::Other(format!(
-            "agent pack not found at {} (expected skills/ under pack)",
-            source_pack.display()
+            "agent skills not found at {} (expected share/skills)",
+            skills.display()
         )));
     }
-    let share = opts.share_dir.clone().unwrap_or_else(agents_share_dir);
     let mut log = Vec::new();
-    let shared_pack = ensure_shared_pack(&source_pack, &share, opts.force, &mut log)?;
+    log.push(format!("skills source: {}", skills.display()));
 
     if opts.global {
-        log.extend(install_global(&shared_pack, opts.force)?);
+        log.extend(install_global(&skills, opts.force)?);
     }
     if let Some(repo) = &opts.repo_path {
-        log.extend(install_repo(&shared_pack, repo, opts.force)?);
+        log.extend(install_repo(&skills, repo, opts.force)?);
     }
     Ok(log)
 }
 
-fn ensure_shared_pack(
-    source_pack: &Path,
-    share: &Path,
-    force: bool,
-    log: &mut Vec<String>,
-) -> Result<PathBuf> {
-    let source = fs::canonicalize(source_pack).map_err(|source| TskError::Read {
-        path: source_pack.to_path_buf(),
-        source,
-    })?;
-    fs::create_dir_all(share).map_err(|source| TskError::Write {
-        path: share.to_path_buf(),
-        source,
-    })?;
-    let shared_pack = share.join("pack");
-
-    if path_exists(&shared_pack) {
-        let meta = fs::symlink_metadata(&shared_pack).map_err(|source| TskError::Read {
-            path: shared_pack.clone(),
-            source,
-        })?;
-        if meta.file_type().is_symlink() {
-            let current = fs::read_link(&shared_pack).map_err(|source| TskError::Read {
-                path: shared_pack.clone(),
-                source,
-            })?;
-            let current_canon =
-                fs::canonicalize(share.join(&current)).unwrap_or_else(|_| current.clone());
-            if current_canon == source {
-                log.push(format!(
-                    "share pack ok: {} → {}",
-                    shared_pack.display(),
-                    source.display()
-                ));
-                return Ok(shared_pack);
-            }
-            if !force {
-                return Err(TskError::Other(format!(
-                    "refusing to replace {} (points elsewhere); pass --force",
-                    shared_pack.display()
-                )));
-            }
-            fs::remove_file(&shared_pack).map_err(|source| TskError::Write {
-                path: shared_pack.clone(),
-                source,
-            })?;
-        } else if meta.is_dir() {
-            if !force {
-                return Err(TskError::Other(format!(
-                    "refusing to replace directory {} with a symlink (pass --force)",
-                    shared_pack.display()
-                )));
-            }
-            fs::remove_dir_all(&shared_pack).map_err(|source| TskError::Write {
-                path: shared_pack.clone(),
-                source,
-            })?;
-        } else if force {
-            fs::remove_file(&shared_pack).map_err(|source| TskError::Write {
-                path: shared_pack.clone(),
-                source,
-            })?;
-        } else {
-            return Err(TskError::Other(format!(
-                "refusing to overwrite {}",
-                shared_pack.display()
-            )));
-        }
-    }
-
-    symlink_path(&source, &shared_pack)?;
-    log.push(format!(
-        "symlink {} → {}",
-        shared_pack.display(),
-        source.display()
-    ));
-    Ok(shared_pack)
-}
-
-fn install_global(shared_pack: &Path, force: bool) -> Result<Vec<String>> {
+fn install_global(skills_root: &Path, force: bool) -> Result<Vec<String>> {
     let mut log = Vec::new();
     let home = expand("~");
-    let skills_root = shared_pack.join("skills");
-    if !skills_root.is_dir() {
-        return Err(TskError::Other(format!(
-            "missing skills dir under {}",
-            shared_pack.display()
-        )));
-    }
-    for entry in fs::read_dir(&skills_root).map_err(|source| TskError::Read {
-        path: skills_root.clone(),
+    for entry in fs::read_dir(skills_root).map_err(|source| TskError::Read {
+        path: skills_root.to_path_buf(),
         source,
     })? {
         let entry = entry.map_err(|source| TskError::Read {
-            path: skills_root.clone(),
+            path: skills_root.to_path_buf(),
             source,
         })?;
         if !entry
@@ -204,7 +128,7 @@ fn install_global(shared_pack: &Path, force: bool) -> Result<Vec<String>> {
     Ok(log)
 }
 
-fn install_repo(shared_pack: &Path, repo: &Path, force: bool) -> Result<Vec<String>> {
+fn install_repo(skills_root: &Path, repo: &Path, force: bool) -> Result<Vec<String>> {
     if !repo.is_dir() {
         return Err(TskError::Other(format!(
             "repo path not found: {}",
@@ -212,18 +136,17 @@ fn install_repo(shared_pack: &Path, repo: &Path, force: bool) -> Result<Vec<Stri
         )));
     }
     let mut log = Vec::new();
-    let skills_src = shared_pack.join("skills");
     let dest_root = repo.join(".agents/skills");
     fs::create_dir_all(&dest_root).map_err(|source| TskError::Write {
         path: dest_root.clone(),
         source,
     })?;
-    for entry in fs::read_dir(&skills_src).map_err(|source| TskError::Read {
-        path: skills_src.clone(),
+    for entry in fs::read_dir(skills_root).map_err(|source| TskError::Read {
+        path: skills_root.to_path_buf(),
         source,
     })? {
         let entry = entry.map_err(|source| TskError::Read {
-            path: skills_src.clone(),
+            path: skills_root.to_path_buf(),
             source,
         })?;
         if !entry
@@ -403,7 +326,7 @@ fn symlink_path(target: &Path, link: &Path) -> Result<()> {
     {
         let _ = (target, link);
         Err(TskError::Other(
-            "agent pack install requires unix symlinks".into(),
+            "agent skills install requires unix symlinks".into(),
         ))
     }
 }
@@ -416,45 +339,40 @@ mod tests {
     #[test]
     fn install_global_links_skills() {
         let dir = tempdir().unwrap();
-        let pack = dir.path().join("pack");
-        let skill = pack.join("skills/read-handoff");
+        let skills = dir.path().join("skills");
+        let skill = skills.join("read-handoff");
         fs::create_dir_all(&skill).unwrap();
         fs::write(skill.join("SKILL.md"), "# test\n").unwrap();
 
-        let share = dir.path().join("share");
         let home = dir.path().join("home");
         fs::create_dir_all(home.join(".cursor")).unwrap();
-        // expand("~") uses HOME
         std::env::set_var("HOME", &home);
 
         let log = install_agents(&AgentsInstallOpts {
             global: true,
             repo_path: None,
             force: false,
-            pack_dir: Some(pack.clone()),
-            share_dir: Some(share.clone()),
+            skills_dir: Some(skills.clone()),
+            share_dir: None,
         })
         .unwrap();
-        assert!(log
-            .iter()
-            .any(|l| l.contains("share pack") || l.contains("symlink")));
+        assert!(log.iter().any(|l| l.contains("skills source")));
         let linked = home.join(".cursor/skills/read-handoff");
         assert!(linked.symlink_metadata().unwrap().file_type().is_symlink());
         assert!(linked.join("SKILL.md").is_file());
-        assert!(share
-            .join("pack")
-            .symlink_metadata()
-            .unwrap()
-            .file_type()
-            .is_symlink());
     }
 
     #[test]
-    fn pack_dir_finds_workspace_pack() {
-        let p = pack_dir();
+    fn agent_skills_dir_finds_workspace_share() {
+        let p = agent_skills_dir();
         assert!(
-            p.join("skills").is_dir() || p.ends_with("pack"),
-            "unexpected pack_dir {}",
+            p.is_dir() || p.ends_with("skills"),
+            "unexpected agent_skills_dir {}",
+            p.display()
+        );
+        assert!(
+            p.join("read-handoff").is_dir() || !p.exists(),
+            "expected read-handoff under {}",
             p.display()
         );
     }

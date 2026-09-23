@@ -149,11 +149,11 @@ Linked checkouts default to `trunk()`/`main` (jj) or the source `HEAD` (git). `-
 Install Cursor/Claude skills that teach agents to read that handoff and call tsk:
 
 ```bash
-tsk install agents          # link pack/skills into ~/.cursor and ~/.claude
+tsk install agents          # link share/skills into ~/.cursor and ~/.claude
 tsk install agents --force  # refresh stale links
 ```
 
-Pack lives at checkout `pack/` (or `/usr/share/tsk/pack` when packaged). Materialized share: `~/.local/share/tsk/pack` (`TSK_PACK_DIR` / `TSK_SHARE_DIR` override). Skills: **read-handoff**, **use-tsk-cli**.
+Skills live at checkout `share/skills/` (or `/usr/share/tsk/skills` when packaged). Override the share root with `TSK_SHARE_DIR` or `--share-dir`. Skills: **read-handoff**, **use-tsk-cli**.
 
 There is **experimental** support for container isolation with Distrobox: pass `--container` on the CLI or enable **Distrobox isolation** in the new-task form. Terminals, editor, and browser then launch via `distrobox enter`. Image defaults live under `[distrobox]` in `~/.config/tsk/config.toml`.
 

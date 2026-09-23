@@ -16,6 +16,7 @@ This installs:
 | `/usr/share/tsk/omarchy-plugin/` | Omarchy bar-widget + overlay (`tsk.taskspace`) |
 | `/usr/share/tsk/waybar/` | Waybar CFFI snippet + styles |
 | `/usr/share/tsk/chromium/` | Helper extension source (packed by `tsk install chromium`) |
+| `/usr/share/tsk/skills/` | Agent skills (`tsk install agents` links into Cursor/Claude) |
 | `/usr/share/tsk/bin/tsk-chromium-host` | Native-messaging wrapper |
 | `/usr/share/tsk/bin/xdg-open` | Taskspace `xdg-open` wrapper (installed into `~/.local/share/tsk/task-bin`) |
 | `/usr/share/tsk/bin/tsk-open` | URL opener for `$BROWSER` / Cursor `workbench.externalBrowser` |

@@ -542,6 +542,12 @@ fn copy_share_tree(cfg: &TskConfig, share_src: &Path, tsk_cmd: &str) -> Result<(
         &share_str,
         tsk_cmd,
     )?;
+    copy_hypr_tree(
+        &share_src.join("skills"),
+        &share_dir.join("skills"),
+        &share_str,
+        tsk_cmd,
+    )?;
     Ok(())
 }
 

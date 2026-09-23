@@ -67,7 +67,7 @@ Task-owned agent metadata lives at the task home:
 
 `HANDOFF.md` is written by `tsk task instruct` / `tsk task new --handoff` (or Omarchy Split with **Write HANDOFF**). It is not auto-created on every `task new`. Spawned task processes get `TSK_HANDOFF` only when that file exists.
 
-Install the agent skills (`read-handoff`, `use-tsk-cli`) with `tsk install agents` so Cursor/Claude load them from `~/.cursor/skills` / `~/.claude/skills`.
+Install the agent skills (`read-handoff`, `use-tsk-cli`) with `tsk install agents` so Cursor/Claude load them from `~/.cursor/skills` / `~/.claude/skills` (sourced from `share/skills` / `/usr/share/tsk/skills`).
 
 Cursor conversation content itself stays in Cursor's user data (`~/.config/Cursor/User/`, `~/.cursor/projects/`). Project `.cursor/` under a checkout is for shareable config (rules, hooks, MCP), not conversation storage.
 
